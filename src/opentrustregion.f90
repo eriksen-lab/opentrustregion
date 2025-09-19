@@ -81,48 +81,49 @@ module opentrustregion
 
     ! interfaces for callback functions
     abstract interface
-        function hess_x_type(x) result(hess_x)
+        function hess_x_type(x, error) result(hess_x)
             import :: rp
 
             real(rp), intent(in) :: x(:)
-
+            logical, intent(out) :: error
             real(rp) :: hess_x(size(x))
         end function hess_x_type
     end interface
 
     abstract interface
-        subroutine update_orbs_type(kappa, func, grad, h_diag, hess_x_funptr)
+        subroutine update_orbs_type(kappa, func, grad, h_diag, hess_x_funptr, error)
             import :: rp, hess_x_type
 
             real(rp), intent(in) :: kappa(:)
-
             real(rp), intent(out) :: func, grad(:), h_diag(:)
             procedure(hess_x_type), intent(out), pointer :: hess_x_funptr
+            logical, intent(out) :: error
         end subroutine update_orbs_type
     end interface
 
     abstract interface
-        function obj_func_type(kappa) result(func)
+        function obj_func_type(kappa, error) result(func)
             import :: rp
 
             real(rp), intent(in) :: kappa(:)
-
+            logical, intent(out) :: error
             real(rp) :: func
         end function obj_func_type
     end interface
 
     abstract interface
-        function precond_type(residual, mu) result(precond_residual)
+        function precond_type(residual, mu, error) result(precond_residual)
             import :: rp
 
             real(rp), intent(in) :: residual(:), mu
-
+            logical, intent(out) :: error
             real(rp) :: precond_residual(size(residual))
         end function precond_type
     end interface
 
     abstract interface
-        function conv_check_type() result(converged)
+        function conv_check_type(error) result(converged)
+            logical, intent(out) :: error
             logical :: converged
         end function conv_check_type
     end interface
@@ -216,7 +217,8 @@ contains
         do imacro = 1, settings%n_macro
             if (.not. max_precision_reached) then
                 ! calculate cost function, gradient and Hessian diagonal
-                call update_orbs(kappa, func, grad, h_diag, hess_x_funptr)
+                call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error)
+                if (error) return
 
                 ! perform sanity check
                 if (imacro == 1) then
@@ -239,7 +241,8 @@ contains
                     else
                         if (use_precond) then
                             kappa_norm = sqrt(ddot(n_param, kappa, 1, &
-                                                   precond(kappa, 0.d0), 1))
+                                                   precond(kappa, 0.d0, error), 1))
+                            if (error) return
                             
                         else
                             kappa_norm = sqrt(ddot(n_param, kappa, 1, &
@@ -271,7 +274,8 @@ contains
             ! check for convergence and stability
             if (present(conv_check)) then
                 if (associated(conv_check)) then
-                    conv_check_passed = conv_check()
+                    conv_check_passed = conv_check(error)
+                    if (error) return
                 else
                     conv_check_passed = .false.
                 end if
@@ -291,7 +295,8 @@ contains
                         do i = 1, stability_n_points
                             n_kappa = 10.d0**(-(i - 1)/ &
                                               real(stability_n_points - 1, rp)*10.d0)
-                            new_func = obj_func(n_kappa*kappa)
+                            new_func = obj_func(n_kappa*kappa, error)
+                            if (error) return
                             if (new_func < func) then
                                 kappa = n_kappa*kappa
                                 exit
@@ -347,7 +352,8 @@ contains
                                                   obj_func, hess_x_funptr, &
                                                   use_precond, precond, settings, &
                                                   trust_radius, solution, imicro, &
-                                                  max_precision_reached)
+                                                  max_precision_reached, error)
+                if (error) return
             end if
 
             ! perform line search
@@ -466,7 +472,8 @@ contains
         ! calculate linear transformations of basis vectors
         allocate (h_basis(n_param, ntrial))
         do i = 1, ntrial
-            h_basis(:, i) = hess_x_funptr(red_space_basis(:, i))
+            h_basis(:, i) = hess_x_funptr(red_space_basis(:, i), error)
+            if (error) return
         end do
 
         ! construct augmented Hessian in reduced space
@@ -503,7 +510,8 @@ contains
             if (.not. settings%jacobi_davidson .or. iter <= 30) then
                 ! precondition residual
                 if (use_precond) then
-                    basis_vec = precond(residual, 0.d0)
+                    basis_vec = precond(residual, 0.d0, error)
+                    if (error) return
                 else
                     basis_vec = level_shifted_diag_precond(residual, 0.d0, h_diag)
                 end if
@@ -513,7 +521,8 @@ contains
                 if (error) return
 
                 ! add linear transformation of new basis vector
-                h_basis_vec = hess_x_funptr(basis_vec)
+                h_basis_vec = hess_x_funptr(basis_vec, error)
+                if (error) return
 
                 ! increment Hessian linear transformations
                 tot_hess_x = tot_hess_x + 1
@@ -537,7 +546,8 @@ contains
                              h_basis_vec, 1) - &
                         ddot(n_param, basis_vec, 1, &
                              h_basis(:, size(red_space_basis, 2)), 1)) > 1d-12) then
-                    h_basis_vec = hess_x_funptr(basis_vec)
+                    h_basis_vec = hess_x_funptr(basis_vec, error)
+                    if (error) return
                 end if
                 
             end if
@@ -793,8 +803,10 @@ contains
         error = .false.
 
         ! evaluate function at upper and lower bounds
-        f_lower = obj_func(lower*kappa)
-        f_upper = obj_func(upper*kappa)
+        f_lower = obj_func(lower*kappa, error)
+        if (error) return
+        f_upper = obj_func(upper*kappa, error)
+        if (error) return
 
         ! ensure f_a > f_b
         if (f_upper > f_lower) then
@@ -811,7 +823,8 @@ contains
 
         ! default step
         n_c = n_b + golden_ratio*(n_b - n_a)
-        f_c = obj_func(n_c*kappa)
+        f_c = obj_func(n_c*kappa, error)
+        if (error) return
 
         ! continue looping until function at middle point is lower than at brackets
         iter = 0
@@ -829,7 +842,8 @@ contains
             ! check if u is between n_b and n_c
             if ((n_u - n_c)*(n_b - n_u) > 0.0) then
                 ! evaluate function at n_u
-                f_u = obj_func(n_u*kappa)
+                f_u = obj_func(n_u*kappa, error)
+                if (error) return
 
                 ! check if minimum between n_b and n_c
                 if (f_u < f_c) then
@@ -847,15 +861,18 @@ contains
 
                 ! parabolic fit did not help, default step
                 n_u = n_c + golden_ratio*(n_c - n_b)
-                f_u = obj_func(n_u*kappa)
+                f_u = obj_func(n_u*kappa, error)
+                if (error) return
             ! limit parabolic fit to its maximum allowed value
             else if ((n_u - n_u_lim)*(n_u_lim - n_c) >= 0.d0) then
                 n_u = n_u_lim
-                f_u = obj_func(n_u*kappa)
+                f_u = obj_func(n_u*kappa, error)
+                if (error) return
             ! parabolic fit is between n_c and its allowed limit
             else if ((n_u - n_u_lim)*(n_c - n_u) > 0.d0) then
                 ! evaluate function at n_u
-                f_u = obj_func(n_u*kappa)
+                f_u = obj_func(n_u*kappa, error)
+                if (error) return
 
                 if (f_u < f_c) then
                     n_b = n_c
@@ -863,12 +880,14 @@ contains
                     n_u = n_c + golden_ratio*(n_c - n_b)
                     f_b = f_c
                     f_c = f_u
-                    f_u = obj_func(n_u*kappa)
+                    f_u = obj_func(n_u*kappa, error)
+                    if (error) return
                 end if
             ! reject parabolic fit and use default step
             else
                 n_u = n_c + golden_ratio*(n_c - n_b)
-                f_u = obj_func(n_u*kappa)
+                f_u = obj_func(n_u*kappa, error)
+                if (error) return
             end if
             ! remove oldest point
             n_a = n_b
@@ -1101,6 +1120,9 @@ contains
         real(rp) :: trial(size(grad))
         real(rp), external :: dnrm2
 
+        ! initialize error flag
+        error = .false.
+
         min_idx = minloc(h_diag, dim=1)
 
         if (h_diag(min_idx) < 0.d0) then
@@ -1137,6 +1159,9 @@ contains
         integer(ip) :: i
         real(rp) :: trial(size(red_space_basis, 1))
         real(rp), external :: dnrm2
+
+        ! initialize error flag
+        error = .false.
 
         do i = size(red_space_basis, 2) - settings%n_random_trial_vectors + 1, &
             size(red_space_basis, 2)
@@ -1401,7 +1426,7 @@ contains
     end function orthogonal_projection
 
     subroutine jacobi_davidson_correction(hess_x_funptr, vector, solution, eigval, &
-                                          corr_vector, hess_vector)
+                                          corr_vector, hess_vector, error)
         !
         ! this subroutine performs the Jacobi-Davidson correction but also returns the 
         ! Hessian linear transformation since this can be reused
@@ -1409,14 +1434,19 @@ contains
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         real(rp), intent(in) :: vector(:), solution(:), eigval
         real(rp), intent(out) :: corr_vector(:), hess_vector(:)
+        logical, intent(out) :: error
 
         real(rp), allocatable :: proj_vector(:)
+
+        ! initialize error flag
+        error = .false.
         
         ! project solution out of vector
         proj_vector = orthogonal_projection(vector, solution)
 
         ! get Hessian linear transformation of projected vector
-        hess_vector = hess_x_funptr(proj_vector)
+        hess_vector = hess_x_funptr(proj_vector, error)
+        if (error) return
 
         ! finish construction of correction
         corr_vector = orthogonal_projection(hess_vector - eigval * proj_vector, &
@@ -1476,7 +1506,8 @@ contains
         if (present(guess)) then
             vec = guess
             call jacobi_davidson_correction(hess_x_funptr, vec, solution, eigval, &
-                                            matvec, hvec)
+                                            matvec, hvec, error)
+            if (error) return
             tot_hess_x = tot_hess_x + 1
         else
             vec = 0.d0
@@ -1530,7 +1561,9 @@ contains
             v = y / beta
 
             ! apply Jacobi-Davidson projector to trial vector
-            call jacobi_davidson_correction(hess_x_funptr, v, solution, eigval, y, hv)
+            call jacobi_davidson_correction(hess_x_funptr, v, solution, eigval, y, hv, &
+                                            error)
+            if (error) return
             tot_hess_x = tot_hess_x + 1
 
             ! get new trial vector
@@ -1825,6 +1858,9 @@ contains
                     initial_residual_norm, new_func, ratio, minres_tol
         real(rp), external :: dnrm2, ddot
 
+        ! initialize error flag
+        error = .false.
+
         ! generate trial vectors
         red_space_basis = generate_trial_vectors(grad, grad_norm, h_diag, settings, &
                                                  error)
@@ -1839,7 +1875,8 @@ contains
         ! calculate linear transformations of basis vectors
         allocate (h_basis(n_param, ntrial))
         do i = 1, ntrial
-            h_basis(:, i) = hess_x_funptr(red_space_basis(:, i))
+            h_basis(:, i) = hess_x_funptr(red_space_basis(:, i), error)
+            if (error) return
         end do
 
         ! construct augmented Hessian in reduced space
@@ -1922,7 +1959,8 @@ contains
                          residual_norm > 0.8*initial_residual_norm) .or. &
                         imicro > 0.8 * settings%n_micro) then
                         ! evaluate function at approximate point
-                        new_func = obj_func(solution)
+                        new_func = obj_func(solution, error)
+                        if (error) return
 
                         ! calculate ratio of evaluated function and predicted function
                         ratio = (new_func - func) / ddot(n_param, solution, 1, &
@@ -1953,7 +1991,8 @@ contains
                 if (.not. jacobi_davidson_started) then
                     ! precondition residual
                     if (use_precond) then
-                        basis_vec = precond(residual, mu)
+                        basis_vec = precond(residual, mu, error)
+                        if (error) return
                     else
                         basis_vec = level_shifted_diag_precond(residual, mu, h_diag)
                     end if
@@ -1963,7 +2002,8 @@ contains
                     if (error) return
 
                     ! add linear transformation of new basis vector
-                    h_basis_vec = hess_x_funptr(basis_vec)
+                    h_basis_vec = hess_x_funptr(basis_vec, error)
+                    if (error) return
 
                     ! increment Hessian linear transformations
                     tot_hess_x = tot_hess_x + 1
@@ -1988,7 +2028,8 @@ contains
                                  h_basis_vec, 1) - &
                             ddot(n_param, basis_vec, 1, &
                                  h_basis(:, size(red_space_basis, 2)), 1)) > 1d-12) then
-                        h_basis_vec = hess_x_funptr(basis_vec)
+                        h_basis_vec = hess_x_funptr(basis_vec, error)
+                        if (error) return
                     end if
 
                 end if
@@ -2016,7 +2057,8 @@ contains
 
             if (.not. func_evaluated) then
                 ! evaluate function at predicted point
-                new_func = obj_func(solution)
+                new_func = obj_func(solution, error)
+                if (error) return
 
                 ! calculate ratio of evaluated function and predicted function
                 ratio = (new_func - func) / ddot(n_param, solution, 1, &
@@ -2041,7 +2083,7 @@ contains
     subroutine truncated_conjugate_gradient(func, grad, h_diag, n_param, obj_func, &
                                             hess_x_funptr, use_precond, precond, &
                                             settings, trust_radius, solution, imicro, &
-                                            max_precision_reached)
+                                            max_precision_reached, error)
         !
         ! this subroutine performs truncated conjugate gradient to solve the trust 
         ! region subproblem
@@ -2056,7 +2098,7 @@ contains
         real(rp), intent(inout) :: trust_radius
         real(rp), intent(out) :: solution(:)
         integer(ip), intent(out) :: imicro
-        logical, intent(out) :: max_precision_reached
+        logical, intent(out) :: max_precision_reached, error
 
         logical :: accept_step, micro_converged
         real(rp) :: model_func, initial_residual_norm, curvature, step_size, &
@@ -2070,6 +2112,9 @@ contains
                                  solutions(:, :), h_solutions(:, :)
         integer(ip) :: i
         real(rp), external :: ddot, dnrm2
+
+        ! initialize error flag
+        error = .false.
 
         ! allocate arrays
         allocate (h_solution(n_param))
@@ -2098,7 +2143,8 @@ contains
 
         ! initialize preconditioned residual and direction,
         if (use_precond) then
-            precond_residual = precond(residual, 0.d0)
+            precond_residual = precond(residual, 0.d0, error)
+            if (error) return
         else
             precond_residual = abs_diag_precond(residual, h_diag)
         end if
@@ -2108,7 +2154,8 @@ contains
         micro_converged = .false.
         do imicro = 1, settings%n_micro - 1
             ! get Hessian linear transformation of direction
-            hess_direction = hess_x_funptr(direction)
+            hess_direction = hess_x_funptr(direction, error)
+            if (error) return
 
             ! increment Hessian linear transformations
             tot_hess_x = tot_hess_x + 1
@@ -2121,8 +2168,10 @@ contains
 
             ! precondition current solution and direction
             if (use_precond) then
-                precond_solution = precond(solution, 0.d0)
-                precond_direction = precond(direction, 0.d0)
+                precond_solution = precond(solution, 0.d0, error)
+                if (error) return
+                precond_direction = precond(direction, 0.d0, error)
+                if (error) return
             else
                 precond_solution = abs_diag_precond(solution, h_diag)
                 precond_direction = abs_diag_precond(direction, h_diag)
@@ -2176,7 +2225,8 @@ contains
             ! get residual for model
             residual_new = residual + step_size * hess_direction
             if (use_precond) then
-                precond_residual_new = precond(residual_new, 0.d0)
+                precond_residual_new = precond(residual_new, 0.d0, error)
+                if (error) return
             else
                 precond_residual_new = abs_diag_precond(residual_new, h_diag)
             end if
@@ -2202,7 +2252,8 @@ contains
         end do
 
         ! evaluate function at predicted point
-        new_func = obj_func(solution)
+        new_func = obj_func(solution, error)
+        if (error) return
 
         if (abs(new_func - func) / max(abs(new_func), abs(func)) > 1.d-14) then
             ! calculate ratio of evaluated function and predicted function
@@ -2236,8 +2287,10 @@ contains
 
                             ! precondition current solution and direction
                             if (use_precond) then
-                                precond_solution = precond(solution, 0.d0)
-                                precond_direction = precond(direction, 0.d0)
+                                precond_solution = precond(solution, 0.d0, error)
+                                if (error) return
+                                precond_direction = precond(direction, 0.d0, error)
+                                if (error) return
                             else
                                 precond_solution = abs_diag_precond(solution, h_diag)
                                 precond_direction = abs_diag_precond(direction, h_diag)
@@ -2263,7 +2316,8 @@ contains
                             h_solution = h_solution + step_size * hess_direction
 
                             ! evaluate function at predicted point
-                            new_func = obj_func(solution)
+                            new_func = obj_func(solution, error)
+                            if (error) return
 
                             ! calculate ratio of evaluated function and predicted 
                             ! function

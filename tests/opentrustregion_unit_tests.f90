@@ -108,33 +108,54 @@ contains
 
     end subroutine hartmann6d_hessian
 
-    function hess_x(x)
+    function hartmann6d_hess_x(x)
+        !
+        ! this function defiones the Hessian linear transformation operation for the
+        ! Hartmann 6D function
+        !
+        real(rp), intent(in) :: x(:)
+
+        real(rp) :: hartmann6d_hess_x(size(x))
+
+        hartmann6d_hess_x = matmul(hess, x)
+
+    end function hartmann6d_hess_x
+
+    function hess_x(x, error)
         !
         ! this function describes the Hessian linear transformation operation for the
         ! Hartmann 6D function
         !
         real(rp), intent(in) :: x(:)
+        logical, intent(out) :: error
 
         real(rp) :: hess_x(size(x))
 
-        hess_x = matmul(hess, x)
+        ! initialize error flag
+        error = .false.
+
+        hess_x = hartmann6d_hess_x(x)
 
     end function hess_x
 
-    function obj_func(delta_vars) result(func)
+    function obj_func(delta_vars, error) result(func)
         !
         ! this function describes the objective function evaluation for the Hartmann
         ! 6D function
         !
         real(rp), intent(in) :: delta_vars(:)
+        logical, intent(out) :: error
 
         real(rp) :: func
+
+        ! initialize error flag
+        error = .false.
 
         func = hartmann6d_func(curr_vars + delta_vars)
 
     end function obj_func
 
-    subroutine update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr)
+    subroutine update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error)
         !
         ! this function describes the orbital update equivalent for the Hartmann 6D
         ! function
@@ -142,10 +163,14 @@ contains
         use opentrustregion, only: hess_x_type
 
         real(rp), intent(in) :: delta_vars(:)
-
         real(rp), intent(out) :: func, grad(:), h_diag(:)
         procedure(hess_x_type), intent(out), pointer :: hess_x_funptr
+        logical, intent(out) :: error
+
         integer(ip) :: i
+
+        ! initialize error flag
+        error = .false.
 
         ! update variables
         curr_vars = curr_vars + delta_vars
@@ -519,7 +544,7 @@ contains
         use opentrustregion, only: obj_func_type, bracket
 
         type(settings_type) :: settings
-        procedure(obj_func_type), pointer :: obj_func
+        procedure(obj_func_type), pointer :: obj_func_funptr
         real(rp) :: vars(6), lower, upper, n
         logical :: error
 
@@ -530,9 +555,9 @@ contains
         call setup_settings(settings)
 
         ! define procedure pointer
-        obj_func => hartmann6d_func
+        obj_func_funptr => obj_func
 
-        ! define starting point
+        ! define direction
         vars = [0.20d0, 0.15d0, 0.48d0, 0.28d0, 0.31d0, 0.66d0]
 
         ! define lower and upper bound
@@ -541,26 +566,26 @@ contains
 
         ! perform bracket and determine if new point decreases objective function in
         ! comparison to lower and upper bound
-        n = bracket(obj_func, vars, lower, upper, settings, error)
+        n = bracket(obj_func_funptr, vars, lower, upper, settings, error)
         if (error) then
             write (stderr, *) "test_bracket failed: Produced error."
             test_bracket = .false.
         end if
-        if (obj_func(n*vars) >= obj_func(lower*vars) .and. obj_func(n*vars) >= &
-            obj_func(upper*vars)) then
+        if (hartmann6d_func(n*vars) >= hartmann6d_func(lower*vars) .and. &
+            hartmann6d_func(n*vars) >= hartmann6d_func(upper*vars)) then
             write (stderr, *) "test_bracket failed: Line search does not produce "// &
                 "lower function value than starting points."
             test_bracket = .false.
         end if
 
         ! try different order
-        n = bracket(obj_func, vars, upper, lower, settings, error)
+        n = bracket(obj_func_funptr, vars, upper, lower, settings, error)
         if (error) then
             write (stderr, *) "test_bracket failed: Produced error."
             test_bracket = .false.
         end if
-        if (obj_func(n*vars) >= obj_func(lower*vars) .and. obj_func(n*vars) >= &
-            obj_func(upper*vars)) then
+        if (hartmann6d_func(n*vars) >= hartmann6d_func(lower*vars) .and. &
+            hartmann6d_func(n*vars) >= hartmann6d_func(upper*vars)) then
             write (stderr, *) "test_bracket failed: Line search does not produce "// &
                 "lower function value than starting points."
             test_bracket = .false.
@@ -1326,6 +1351,7 @@ contains
 
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp), dimension(6) :: vars, vector, solution, corr_vector, hess_vector
+        logical :: error
 
         ! assume tests pass
         test_jacobi_davidson_correction = .true.
@@ -1344,7 +1370,11 @@ contains
 
         ! calculate Jacobi-Davidson correction and compare values
         call jacobi_davidson_correction(hess_x_funptr, vector, solution, 0.5d0, &
-                                        corr_vector, hess_vector)
+                                        corr_vector, hess_vector, error)
+        if (error) then
+            write (stderr, *) "test_jacobi_davidson_correction failed: Returned error."
+            test_jacobi_davidson_correction = .false.
+        end if
         if (sum(abs(corr_vector - [-96.940677944d0, 203.929698480d0, -216.199768920d0, &
                                    100.656941418d0, -90.624469448d0, 212.045768918d0]) &
                 ) > 1d-8) then
@@ -1393,11 +1423,11 @@ contains
         hess_x_funptr => hess_x
 
         ! define Rayleigh quotient
-        mu = dot_product(solution, hess_x(solution))
+        mu = dot_product(solution, hartmann6d_hess_x(solution))
 
         ! define right hand side based on residual, this ensures rhs is orthogonal to 
         ! solution if mu describes the Rayleigh quotient and solution is normalized
-        rhs = hess_x(solution) - mu * solution
+        rhs = hartmann6d_hess_x(solution) - mu * solution
 
         ! run minimum residual method, check if Jacobi-Davidson correction equation is 
         ! solved and whether Hessian linear transformation is correct, if rhs and 
@@ -1408,15 +1438,16 @@ contains
         call minres(-rhs, hess_x_funptr, solution, mu, 1d-14, vector, hess_vector, &
                     settings, error)
         corr_vector = vector - dot_product(vector, solution) * solution
-        corr_vector = hess_x(corr_vector) - mu * corr_vector
+        corr_vector = hartmann6d_hess_x(corr_vector) - mu * corr_vector
         corr_vector = corr_vector - dot_product(corr_vector, solution) * solution
         if (sum(abs(corr_vector + rhs)) > tol) then
             write (stderr, *) "test_minres failed: Returned solution does not "// & 
                 "solve Jacobi-Davidson correction equation."
             test_minres = .false.
         end if
-        if (sum(abs(hess_vector + dot_product(vector, solution) * hess_x(solution) - &
-                    hess_x(vector))) > tol) then
+        if (sum(abs(hess_vector + dot_product(vector, solution) * &
+                    hartmann6d_hess_x(solution) - hartmann6d_hess_x(vector))) > tol) &
+            then
             write (stderr, *) "test_minres failed: Returned Hessian linear "// &
                 "transformation wrong."
             test_minres = .false.
@@ -1791,14 +1822,14 @@ contains
                 "not zero near minimum."
             test_level_shifted_davidson = .false.
         end if
-        if (sum(abs(grad + hess_x(solution))) > settings%local_red_factor * grad_norm) &
-            then
+        if (sum(abs(grad + hartmann6d_hess_x(solution))) > &
+            settings%local_red_factor * grad_norm) then
             write (stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not describe Newton step near minimum."
             test_level_shifted_davidson = .false.
         end if
-        ratio = (obj_func_funptr(solution) - func) / &
-                dot_product(solution, grad + 0.5d0*hess_x_funptr(solution))
+        ratio = (hartmann6d_func(curr_vars + solution) - func) / &
+                dot_product(solution, grad + 0.5d0*hartmann6d_hess_x(solution))
         solution_norm = norm2(solution)
         if ((ratio < trust_radius_shrink_ratio .and. solution_norm > trust_radius &
              / trust_radius_shrink_factor) .or. &
@@ -1839,14 +1870,14 @@ contains
                 "not negative near saddle point."
             test_level_shifted_davidson = .false.
         end if
-        if (sum(abs(grad + hess_x(solution) - mu * solution)) > &
+        if (sum(abs(grad + hartmann6d_hess_x(solution) - mu * solution)) > &
             settings%global_red_factor * grad_norm) then
             write (stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not describe level-shifted Newton step near saddle point."
             test_level_shifted_davidson = .false.
         end if
-        ratio = (obj_func_funptr(solution) - func) / &
-                dot_product(solution, grad + 0.5d0*hess_x_funptr(solution))
+        ratio = (hartmann6d_func(curr_vars + solution) - func) / &
+                dot_product(solution, grad + 0.5d0*hartmann6d_hess_x(solution))
         solution_norm = norm2(solution)
         if ((trust_radius_shrink_ratio > ratio .and. &
              abs(solution_norm - (trust_radius / trust_radius_shrink_factor) ** 2) > &
@@ -1884,15 +1915,15 @@ contains
                 "not negative near saddle point with Jacobi-Davidson solver."
             test_level_shifted_davidson = .false.
         end if
-        if (sum(abs(grad + hess_x(solution) - mu * solution)) > &
+        if (sum(abs(grad + hartmann6d_hess_x(solution) - mu * solution)) > &
             settings%global_red_factor * grad_norm) then
             write (stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not describe level-shifted Newton step near saddle point with "// &
                 "Jacobi-Davidson solver."
             test_level_shifted_davidson = .false.
         end if
-        ratio = (obj_func_funptr(solution) - func) / &
-                dot_product(solution, grad + 0.5d0*hess_x_funptr(solution))
+        ratio = (hartmann6d_func(curr_vars + solution) - func) / &
+                dot_product(solution, grad + 0.5d0*hartmann6d_hess_x(solution))
         solution_norm = norm2(solution)
         if ((trust_radius_shrink_ratio > ratio .and. &
              abs(solution_norm - (trust_radius / trust_radius_shrink_factor) ** 2) > &
@@ -1955,9 +1986,15 @@ contains
         call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
                                           obj_func_funptr, hess_x_funptr, .false., &
                                           precond_funptr, settings, trust_radius, &
-                                          solution, imicro, max_precision_reached)
-        ratio = (obj_func_funptr(solution) - func) / &
-                dot_product(solution, grad + 0.5d0*hess_x_funptr(solution))
+                                          solution, imicro, max_precision_reached, &
+                                          error)
+        if (error) then
+            write (stderr, *) "test_truncated_jacobi_davidson failed: Produced "// &
+                "error near minimum."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        ratio = (hartmann6d_func(curr_vars + solution) - func) / &
+                dot_product(solution, grad + 0.5d0*hartmann6d_hess_x(solution))
         if (ratio <= 0.d0) then
             write (stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not reduce function value near minimum."
@@ -1988,9 +2025,15 @@ contains
         call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
                                           obj_func_funptr, hess_x_funptr, .false., &
                                           precond_funptr, settings, trust_radius, &
-                                          solution, imicro, max_precision_reached)
-        ratio = (obj_func_funptr(solution) - func) / &
-                dot_product(solution, grad + 0.5d0*hess_x_funptr(solution))
+                                          solution, imicro, max_precision_reached, &
+                                          error)
+        if (error) then
+            write (stderr, *) "test_truncated_jacobi_davidson failed: Produced "// &
+                "error near saddle point."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        ratio = (hartmann6d_func(curr_vars + solution) - func) / &
+                dot_product(solution, grad + 0.5d0*hartmann6d_hess_x(solution))
         if (ratio <= 0.d0) then
             write (stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not reduce function value near saddle point."

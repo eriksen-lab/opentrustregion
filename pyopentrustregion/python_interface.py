@@ -45,7 +45,7 @@ except OSError:
         raise FileNotFoundError("Cannot find opentrustregion library.")
 
 
-def solver_py_interface(
+def solver(
     obj_func: Callable[[np.ndarray], float],
     update_orbs: Callable[
         [np.ndarray],
@@ -74,21 +74,21 @@ def solver_py_interface(
     # types so we interface to Fortran subroutines by creating pointers to the relevant
     # data
     hess_x_interface_type = CFUNCTYPE(
-        None, POINTER(c_double), POINTER(POINTER(c_double))
+        c_bool, POINTER(c_double), POINTER(POINTER(c_double))
     )
     update_orbs_interface_type = CFUNCTYPE(
-        None,
+        c_bool,
         POINTER(c_double),
         POINTER(c_double),
         POINTER(POINTER(c_double)),
         POINTER(POINTER(c_double)),
         POINTER(hess_x_interface_type),
     )
-    obj_func_interface_type = CFUNCTYPE(c_double, POINTER(c_double))
+    obj_func_interface_type = CFUNCTYPE(c_bool, POINTER(c_double), POINTER(c_double))
     precond_interface_type = CFUNCTYPE(
-        None, POINTER(c_double), POINTER(c_double), POINTER(POINTER(c_double))
+        c_bool, POINTER(c_double), POINTER(c_double), POINTER(POINTER(c_double))
     )
-    conv_check_interface_type = CFUNCTYPE(c_bool)
+    conv_check_interface_type = CFUNCTYPE(c_bool, POINTER(c_bool))
     logger_interface_type = CFUNCTYPE(None, c_char_p)
 
     @update_orbs_interface_type
@@ -109,7 +109,10 @@ def solver_py_interface(
 
         # update orbitals and retrieve objective function, gradient, Hessian diagonal
         # and Hessian linear transformation function
-        func_ptr[0], grad, h_diag, hess_x = update_orbs(kappa)
+        try:
+            func_ptr[0], grad, h_diag, hess_x = update_orbs(kappa)
+        except RuntimeError:
+            return True
 
         # convert numpy arrays to pointers
         grad_ptr[0] = grad.ctypes.data_as(POINTER(c_double))
@@ -125,23 +128,35 @@ def solver_py_interface(
             x = np.ctypeslib.as_array(x_ptr, shape=(n_param,))
 
             # perform linear transformation
-            hx = hess_x(x)
+            try:
+                hx = hess_x(x)
+            except RuntimeError:
+                return True
 
             # convert numpy array to pointer
             hx_ptr[0] = hx.ctypes.data_as(POINTER(c_double))
 
+            return False
+
         # store the function pointer in hess_x_ptr
         hess_x_funptr[0] = hess_x_interface
 
+        return False
+
     @obj_func_interface_type
-    def obj_func_interface(kappa_ptr):
+    def obj_func_interface(kappa_ptr, func_ptr):
         """
         this function returns the function value
         """
         # convert orbital rotation matrix pointer to numpy array
         kappa = np.ctypeslib.as_array(kappa_ptr, shape=(n_param,))
 
-        return obj_func(kappa)
+        try:
+            func_ptr[0] = obj_func(kappa)
+        except RuntimeError:
+            return True
+
+        return False
 
     @precond_interface_type
     def precond_interface(residual_ptr, mu_ptr, precond_residual_ptr):
@@ -157,17 +172,27 @@ def solver_py_interface(
         mu = mu_ptr[0]
 
         # get preconditioner
-        precond_residual = precond(residual, mu)
+        try:
+            precond_residual = precond(residual, mu)
+        except RuntimeError:
+            return True
 
         # convert numpy array to pointer
         precond_residual_ptr[0] = precond_residual.ctypes.data_as(POINTER(c_double))
 
+        return False
+
     @conv_check_interface_type
-    def conv_check_interface():
+    def conv_check_interface(conv_ptr):
         """
         this function performs a convergence check
         """
-        return conv_check()
+        try:
+            conv_ptr[0] = conv_check()
+        except RuntimeError:
+            return True
+
+        return False
 
     @logger_interface_type
     def logger_interface(message):
@@ -178,12 +203,11 @@ def solver_py_interface(
         logger(string_at(message).decode("utf-8"))
 
     # define result and argument types
-    libopentrustregion.solver.restype = None
+    libopentrustregion.solver.restype = c_bool
     libopentrustregion.solver.argtypes = [
         c_void_p,
         c_void_p,
         c_long,
-        POINTER(c_bool),
         c_void_p,
         c_void_p,
         POINTER(c_bool),
@@ -203,15 +227,11 @@ def solver_py_interface(
         c_void_p,
     ]
 
-    # initialize return variables
-    error = c_bool(False)
-
     # call Fortran function
-    libopentrustregion.solver(
+    error = libopentrustregion.solver(
         update_orbs_interface,
         obj_func_interface,
         n_param,
-        byref(error),
         None if precond is None else precond_interface,
         None if conv_check is None else conv_check_interface,
         None if stability is None else byref(c_bool(stability)),
@@ -243,7 +263,7 @@ def solver_py_interface(
         raise RuntimeError("OpenTrustRegion solver produced error.")
 
 
-def stability_check_py_interface(
+def stability_check(
     h_diag: np.ndarray,
     hess_x: Callable[[np.ndarray], np.ndarray],
     n_param: int,
@@ -258,10 +278,10 @@ def stability_check_py_interface(
     # callback function ctypes specifications, ctypes can only deal with simple return
     # types so we interface to Fortran subroutines by creating data to the relevant data
     hess_x_interface_type = CFUNCTYPE(
-        None, POINTER(c_double), POINTER(POINTER(c_double))
+        c_bool, POINTER(c_double), POINTER(POINTER(c_double))
     )
     precond_interface_type = CFUNCTYPE(
-        None, POINTER(c_double), POINTER(c_double), POINTER(POINTER(c_double))
+        c_bool, POINTER(c_double), POINTER(c_double), POINTER(POINTER(c_double))
     )
     logger_interface_type = CFUNCTYPE(None, c_char_p)
 
@@ -275,10 +295,15 @@ def stability_check_py_interface(
         x = np.ctypeslib.as_array(x_ptr, shape=(n_param,))
 
         # perform linear transformation
-        hx = hess_x(x)
+        try:
+            hx = hess_x(x)
+        except RuntimeError:
+            return True
 
         # convert numpy array to pointer
         hx_ptr[0] = hx.ctypes.data_as(POINTER(c_double))
+
+        return False
 
     @precond_interface_type
     def precond_interface(residual_ptr, mu_ptr, precond_residual_ptr):
@@ -291,10 +316,15 @@ def stability_check_py_interface(
         mu = mu_ptr[0]
 
         # perform linear transformation
-        precond_residual = precond(residual, mu)
+        try:
+            precond_residual = precond(residual, mu)
+        except RuntimeError:
+            return True
 
         # convert numpy array to pointer
         precond_residual_ptr[0] = precond_residual.ctypes.data_as(POINTER(c_double))
+
+        return False
 
     @logger_interface_type
     def logger_interface(message):
@@ -302,14 +332,13 @@ def stability_check_py_interface(
         logger(string_at(message).decode("utf-8"))
 
     # define result and argument types
-    libopentrustregion.stability_check.restype = None
+    libopentrustregion.stability_check.restype = c_bool
     libopentrustregion.stability_check.argtypes = [
         POINTER(c_double),
         c_void_p,
         c_long,
         POINTER(c_bool),
         POINTER(c_double),
-        POINTER(c_bool),
         c_void_p,
         POINTER(c_bool),
         POINTER(c_double),
@@ -322,16 +351,14 @@ def stability_check_py_interface(
     # initialize return variables
     stable = c_bool(False)
     kappa = np.empty(n_param, dtype=np.float64)
-    error = c_bool(False)
 
     # call Fortran function
-    libopentrustregion.stability_check(
+    error = libopentrustregion.stability_check(
         h_diag.ctypes.data_as(POINTER(c_double)),
         hess_x_interface,
         n_param,
         byref(stable),
         kappa.ctypes.data_as(POINTER(c_double)),
-        byref(error),
         None if precond is None else precond_interface,
         None if jacobi_davidson is None else byref(c_bool(jacobi_davidson)),
         None if conv_tol is None else byref(c_double(conv_tol)),

@@ -8,13 +8,12 @@
 extern "C" {
 #endif
 
-void solver(
-    const void (*update_orbs)(const double*, double*, double**, double**, void (**)(const double*, double**)),
-    const double (*obj_func)(const double*),
+bool solver(
+    const bool (*update_orbs)(const double*, double*, double**, double**, bool (**)(const double*, double**)),
+    const bool (*obj_func)(const double*, double*),
     const int n_param,
-    const bool* error,
-    const void (*precond)(const double*, const double, double*),
-    const bool (*conv_check)(),
+    const bool (*precond)(const double*, const double, double**),
+    const bool (*conv_check)(bool*),
     const bool* stability_ptr,
     const bool* line_search_ptr,
     const bool* davidson_ptr,
@@ -32,14 +31,13 @@ void solver(
     const void (*logger)(const char*)
 );
 
-void stability_check(
+bool stability_check(
     const double* h_diag,
-    const void (*hess_x)(const double*, double**),
+    const bool (*hess_x)(const double*, double**),
     const int n_param,
     bool stable,
     double* kappa,
-    const bool* error,
-    const void (*precond_ptr)(const double*, const double, double*),
+    const bool (*precond)(const double*, const double, double**),
     const bool* jacobi_davidson_ptr,
     const double* conv_tol_ptr,
     const int* n_random_trial_vectors_ptr,

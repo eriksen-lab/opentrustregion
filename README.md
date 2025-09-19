@@ -44,7 +44,8 @@ The optimization process is initiated by calling a solver function. This functio
   - The objective function value
   - The gradient
   - The Hessian diagonal
-  - A `hess_x` function that performs a Hessian linear transformation for a trial function
+  - A `hess_x` function that performs a Hessian linear transformation for a trial function, also returns a logical which indicates whether the function has encountered an error
+  - A logical which indicates whether the function has encountered an error
 - **`obj_func`** (function): Accepts the variable change and returns the objective function value.
 - **`n_param`** (integer): Specifies the number of parameters to be optimized.
 - **`error`** (boolean): Returns whether the solver has produced an error.
@@ -52,8 +53,8 @@ The optimization process is initiated by calling a solver function. This functio
 ### Optional Arguments
 The optimization process can be fine-tuned using the following optional arguments:
 
-- **`precond`** (function): Accepts a vector and a level shift and outputs a preconditioned vector.
-- **`conv_check`** (function): Returns whether the optimization has converged due to some supplied convergence criterion.
+- **`precond`** (function): Accepts a vector and a level shift and outputs a preconditioned vector and a logical which indicates whether the function has encountered an error.
+- **`conv_check`** (function): Returns whether the optimization has converged due to some supplied convergence criterion and a logical which indicates whether the function has encountered an error.
 - **`stability`** (boolean): Determines whether a stability check is performed upon convergence.
 - **`line_search`** (boolean): Determines whether a line search is performed after every macro iteration.
 - **`davidson`** (boolean): Determines whether level-shifted augmented Hessian with Davidson or truncated conjugate gradient is utilized to solve the trust-region subsystem.
@@ -76,13 +77,13 @@ A separate `stability_check` function is available to verify whether the current
 ### Required Arguments
 
 - **`h_diag`** (real array): Represents the Hessian diagonal at the current point.
-- **`hess_x`** (function): Performs a Hessian linear transformation of a trial vector at the current point.
+- **`hess_x`** (function): Performs a Hessian linear transformation of a trial vector at the current point, also returns a logical which indicates whether the function has encountered an error.
 - **`stable`** (boolean): Returns whether the current point is stable.
 - **`kappa`** (boolean): Returns descent direction if current point is not stable
 
 ### Optional Arguments
 
-- **`precond`** (function): Accepts a vector and a level shift and outputs a preconditioned vector.
+- **`precond`** (function): Accepts a vector and a level shift and outputs a preconditioned vector and a logical which indicates whether the function has encountered an error.
 - **`jacobi_davidson`** (boolean): Determines whether Jacobi-Davidson is performed whenever difficult convergence is encountered for Davidson iterations.
 - **`conv_tol`** (real): Convergence criterion for the residual norm.
 - **`n_random_trial_vectors`** (integer): Number of random trial vectors used to start the Davidson iterations.

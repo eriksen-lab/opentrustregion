@@ -21,9 +21,9 @@ except ImportError:
 
 # check if pyopentrustregion is installed or import module in same directory
 try:
-    from pyopentrustregion import solver_py_interface, stability_check_py_interface
+    from pyopentrustregion import solver, stability_check
 except ImportError:
-    from python_interface import solver_py_interface, stability_check_py_interface
+    from python_interface import solver, stability_check
 
 # load the testsuite library
 ext = "dylib" if sys.platform == "darwin" else "so"
@@ -207,13 +207,13 @@ class PyInterfaceTests(unittest.TestCase):
             return
 
         # call solver python interface without optional arguments
-        solver_py_interface(mock_obj_func, mock_update_orbs, 3)
+        solver(mock_obj_func, mock_update_orbs, 3)
 
         # initialize logging boolean
         test_logger = False
 
         # call solver python interface with optional arguments
-        solver_py_interface(
+        solver(
             mock_obj_func,
             mock_update_orbs,
             3,
@@ -242,7 +242,7 @@ class PyInterfaceTests(unittest.TestCase):
 
         self.assertTrue(
             libtestsuite.test_solver_result() or not test_logger,
-            "solver_py_interface failed",
+            "test_solver_py_interface failed",
         )
         print("test_solver_py_interface PASSED")
 
@@ -276,30 +276,25 @@ class PyInterfaceTests(unittest.TestCase):
             return
 
         # call stability check python interface without optional arguments
-        stable, kappa = stability_check_py_interface(h_diag, mock_hess_x, 3)
+        stable, kappa = stability_check(h_diag, mock_hess_x, 3)
 
-        if stable:
-            print(
-                "test_stability_check_py_interface failed: Returned stability boolean "
-                "wrong."
-            )
-        self.assertFalse(
-            stable,
+        msg = (
             "test_stability_check_py_interface failed: Returned stability boolean "
-            "wrong.",
+            "wrong."
         )
+        if stable:
+            print(msg)
+        self.assertFalse(stable, msg)
+        msg = "test_stability_check_py_interface failed: Returned direction wrong."
         if not np.allclose(kappa, np.full(3, 1.0, dtype=np.float64)):
-            print("test_stability_check_py_interface failed: Returned direction wrong.")
-        self.assertTrue(
-            np.allclose(kappa, np.full(3, 1.0, dtype=np.float64)),
-            "test_stability_check_py_interface failed: Returned direction wrong.",
-        )
+            print(msg)
+        self.assertTrue(np.allclose(kappa, np.full(3, 1.0, dtype=np.float64)), msg)
 
         # initialize logging boolean
         test_logger = False
 
         # call stability check python interface with optional arguments
-        stable, kappa = stability_check_py_interface(
+        stable, kappa = stability_check(
             h_diag,
             mock_hess_x,
             3,

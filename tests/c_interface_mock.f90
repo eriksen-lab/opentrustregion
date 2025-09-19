@@ -39,17 +39,16 @@ contains
 
     end function test_stability_check_result
 
-    subroutine mock_solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, &
-                                     n_param_c, error_c, precond_c_funptr, &
-                                     conv_check_c_funptr, stability_c_ptr, &
-                                     line_search_c_ptr, davidson_c_ptr, &
-                                     jacobi_davidson_c_ptr, &
-                                     prefer_jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                     n_random_trial_vectors_c_ptr, &
-                                     start_trust_radius_c_ptr, n_macro_c_ptr, &
-                                     n_micro_c_ptr, global_red_factor_c_ptr, &
-                                     local_red_factor_c_ptr, seed_c_ptr, &
-                                     verbose_c_ptr, logger_c_funptr) &
+    function mock_solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, &
+                                   n_param_c, precond_c_funptr, conv_check_c_funptr, &
+                                   stability_c_ptr, line_search_c_ptr, davidson_c_ptr, &
+                                   jacobi_davidson_c_ptr, &
+                                   prefer_jacobi_davidson_c_ptr, conv_tol_c_ptr, &
+                                   n_random_trial_vectors_c_ptr, &
+                                   start_trust_radius_c_ptr, n_macro_c_ptr, &
+                                   n_micro_c_ptr, global_red_factor_c_ptr, &
+                                   local_red_factor_c_ptr, seed_c_ptr, verbose_c_ptr, &
+                                   logger_c_funptr) result(error_c) &
         bind(C, name="mock_solver")
         !
         ! this subroutine is a mock routine for the solver C wrapper subroutine
@@ -57,7 +56,6 @@ contains
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr, &
                                              precond_c_funptr, conv_check_c_funptr, &
                                              logger_c_funptr
-        logical(c_bool), intent(out) :: error_c
         integer(c_long), intent(in), value :: n_param_c
         type(c_ptr), intent(in), value :: stability_c_ptr, line_search_c_ptr, &
                                           davidson_c_ptr, jacobi_davidson_c_ptr, &
@@ -68,6 +66,7 @@ contains
                                           n_micro_c_ptr, global_red_factor_c_ptr, &
                                           local_red_factor_c_ptr, seed_c_ptr, &
                                           verbose_c_ptr
+        logical(c_bool) :: error_c
 
         type(c_funptr) :: hess_x_c_funptr
         procedure(update_orbs_c_type), pointer :: update_orbs_funptr
@@ -88,16 +87,32 @@ contains
                                     n_micro_ptr, seed_ptr, verbose_ptr
         procedure(logger_c_type), pointer :: logger_funptr
         character(:), allocatable, target :: message
+        logical(c_bool) :: error, converged
 
         ! get Fortran pointer to passed orbital update routine and call it
         call c_f_procpointer(cptr=update_orbs_c_funptr, fptr=update_orbs_funptr)
         kappa = 1.0_c_double
-        call update_orbs_funptr(kappa, func, grad_c_ptr, h_diag_c_ptr, hess_x_c_funptr)
+        error = update_orbs_funptr(kappa, func, grad_c_ptr, h_diag_c_ptr, &
+                                   hess_x_c_funptr)
+
+        ! check for error
+        if (error) then
+            write (stderr, *) "test_solver_py_interface failed: Passed orbital "// &
+                "updating function returned error."
+            test_solver_interface = .false.
+        end if
 
         ! get Fortran pointer to Hessian linear transformation function and call it
         call c_f_procpointer(cptr=hess_x_c_funptr, fptr=hess_x_funptr)
         x = 1.0_c_double
-        call hess_x_funptr(x, hess_x_c_ptr)
+        error = hess_x_funptr(x, hess_x_c_ptr)
+
+        ! check for error
+        if (error) then
+            write (stderr, *) "test_solver_py_interface failed: Passed Hessian "// &
+                "linear transformation function returned error."
+            test_solver_interface = .false.
+        end if
 
         ! get Fortran pointers to generated arrays and check whether these are filled
         ! correctly
@@ -128,7 +143,14 @@ contains
 
         ! get Fortran pointer to passed objective function and call it
         call c_f_procpointer(cptr=obj_func_c_funptr, fptr=obj_func_funptr)
-        func = obj_func_funptr(kappa)
+        error = obj_func_funptr(kappa, func)
+
+        ! check for error
+        if (error) then
+            write (stderr, *) "test_solver_py_interface failed: Passed objective "// &
+                "function returned error."
+            test_solver_interface = .false.
+        end if
 
         ! check if generated function value is correct
         if (abs(func - 3.0_c_double) > tol) then
@@ -179,13 +201,16 @@ contains
                 test_solver_interface = .false.
             end if
 
-            ! get Fortran pointer to passed preconditioner function and call it
+            ! get Fortran pointer to passed preconditioner function, call it and check
+            ! result
             call c_f_procpointer(cptr=precond_c_funptr, fptr=precond_funptr)
             residual = 1.0_c_double
-            call precond_funptr(residual, 5.0_c_double, precond_residual_c_ptr)
-
-            ! convert to Fortran pointer and check if generated preconditioned residual 
-            ! is correct
+            error = precond_funptr(residual, 5.0_c_double, precond_residual_c_ptr)
+            if (error) then
+                write (stderr, *) "test_solver_py_interface failed: Passed "// &
+                    "preconditioner function returned error."
+                test_solver_interface = .false.
+            end if
             call c_f_pointer(cptr=precond_residual_c_ptr, fptr=precond_residual_ptr, &
                              shape=[n_param_c])
             if (any(abs(precond_residual_ptr - 5.0_c_double) > tol)) then
@@ -197,7 +222,13 @@ contains
             ! get Fortran pointer to passed convergence check function, call it and 
             ! check result
             call c_f_procpointer(cptr=conv_check_c_funptr, fptr=conv_check_funptr)
-            if (.not. conv_check_funptr()) then
+            error = conv_check_funptr(converged)
+            if (error) then
+                write (stderr, *) "test_solver_py_interface failed: Passed "// &
+                    "convergence check function returned error."
+                test_solver_interface = .false.
+            end if
+            if (.not. converged) then
                 write (stderr, *) "test_solver_py_interface failed: Returned "// &
                     "convergence logical of convergence check function wrong."
                 test_solver_interface = .false.
@@ -247,15 +278,14 @@ contains
         ! move on to optional argument test for next test
         solver_default = .false.
 
-    end subroutine mock_solver_c_wrapper
+    end function mock_solver_c_wrapper
 
-    subroutine mock_stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, &
-                                              stable_c, kappa_c, error_c, &
-                                              precond_c_funptr, jacobi_davidson_c_ptr, &
-                                              conv_tol_c_ptr, &
-                                              n_random_trial_vectors_c_ptr, &
-                                              n_iter_c_ptr, verbose_c_ptr, &
-                                              logger_c_funptr) &
+    function mock_stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, &
+                                            stable_c, kappa_c, precond_c_funptr, &
+                                            jacobi_davidson_c_ptr, conv_tol_c_ptr, &
+                                            n_random_trial_vectors_c_ptr, &
+                                            n_iter_c_ptr, verbose_c_ptr, &
+                                            logger_c_funptr) result(error_c) &
         bind(C, name="mock_stability_check")
         !
         ! this subroutine is a mock routine for the stability check C wrapper
@@ -265,11 +295,12 @@ contains
         real(c_double), intent(in), dimension(n_param_c) :: h_diag_c
         type(c_funptr), intent(in), value :: hess_x_c_funptr, precond_c_funptr, &
                                              logger_c_funptr
-        logical(c_bool), intent(out) :: stable_c, error_c
+        logical(c_bool), intent(out) :: stable_c
         real(c_double), intent(out) :: kappa_c(n_param_c)
         type(c_ptr), value, intent(in) :: jacobi_davidson_c_ptr, conv_tol_c_ptr, &
                                           n_random_trial_vectors_c_ptr, n_iter_c_ptr, &
                                           verbose_c_ptr
+        logical(c_bool) :: error_c
 
         procedure(hess_x_c_type), pointer :: hess_x_funptr
         procedure(precond_c_type), pointer :: precond_funptr
@@ -281,6 +312,7 @@ contains
         integer(c_long), pointer :: n_random_trial_vectors_ptr, n_iter_ptr, verbose_ptr
         procedure(logger_c_type), pointer :: logger_funptr
         character(:), allocatable, target :: message
+        logical :: error
 
         ! check if Hessian diagonal is passed correctly
         if (any(abs(h_diag_c - 3.0_c_double) > tol)) then
@@ -289,13 +321,16 @@ contains
             test_stability_check_interface = .false.
         end if
 
-        ! get Fortran pointer to Hessian linear transformation function and call it
+        ! get Fortran pointer to Hessian linear transformation function, call it and 
+        ! check result
         call c_f_procpointer(cptr=hess_x_c_funptr, fptr=hess_x_funptr)
         x = 1.0_c_double
-        call hess_x_funptr(x, hess_x_c_ptr)
-
-        ! get Fortran pointer to generated array and check whether it is filled
-        ! correctly
+        error = hess_x_funptr(x, hess_x_c_ptr)
+        if (error) then
+            write (stderr, *) "test_stability_check_py_interface failed: Passed "// &
+                "Hessian linear transformation function returned error."
+            test_stability_check_interface = .false.
+        end if
         call c_f_pointer(cptr=hess_x_c_ptr, fptr=hess_x_ptr, shape=[n_param_c])
         if (any(abs(hess_x_ptr - 4.0_c_double) > tol)) then
             write (stderr, *) "test_stability_check_py_interface failed: Returned "// &
@@ -329,13 +364,15 @@ contains
                 test_stability_check_interface = .false.
             end if
 
-            ! get Fortran pointer to passed precond function and call it
+            ! get Fortran pointer to passed precond function, call it and check result
             call c_f_procpointer(cptr=precond_c_funptr, fptr=precond_funptr)
             residual = 1.0_c_double
-            call precond_funptr(residual, 5.0_c_double, precond_residual_c_ptr)
-
-            ! convert to Fortran pointer and check if generated preconditioned residual 
-            ! is correct
+            error = precond_funptr(residual, 5.0_c_double, precond_residual_c_ptr)
+            if (error) then
+                write (stderr, *) "test_stability_check_py_interface failed: "// &
+                    "Passed preconditioner function returned error."
+                test_stability_check_interface = .false.
+            end if
             call c_f_pointer(cptr=precond_residual_c_ptr, fptr=precond_residual_ptr, &
                              shape=[n_param_c])
             if (any(abs(precond_residual_ptr - 5.0_c_double) > tol)) then
@@ -375,6 +412,6 @@ contains
         ! move on to optional argument test for next test
         stability_check_default = .false.
 
-    end subroutine mock_stability_check_c_wrapper
+    end function mock_stability_check_c_wrapper
 
 end module c_interface_mock
