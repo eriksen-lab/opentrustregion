@@ -10,6 +10,7 @@ import unittest
 from importlib import resources
 from ctypes import CDLL, c_bool
 from unittest.mock import patch
+from pathlib import Path
 
 # check if numpy is available
 try:
@@ -347,6 +348,12 @@ class SystemTests(unittest.TestCase):
         print(50 * "-")
         print("Running system tests for OpenTrustRegion...")
         print(50 * "-")
+        test_data = Path(__file__).parent / "test_data"
+        if not os.path.isdir(test_data):
+            raise RuntimeError(
+                "test_data directory does not exist in same directory as testsuite.py."
+            )
+        libtestsuite.set_test_data_path(str(test_data).encode("utf-8"))
         return super().setUpClass()
 
 

@@ -8,3 +8,6 @@ version = "0.1.0"
 description = "Python interface to OpenTrustRegion Fortran library"
 authors = [{ name = "Jonas Greiner", email = "jongr@kemi.dtu.dk" }]
 dependencies = ["numpy"]
+
+[tool.setuptools.package-data]
+"pyopentrustregion" = ["test_data/*"]

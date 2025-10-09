@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(opentrustregion Fortran C)
+project(OpenTrustRegion LANGUAGES Fortran C)
 include(GNUInstallDirs)
 
 # default build type
@@ -12,7 +12,6 @@ if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     set(CMAKE_Fortran_FLAGS_DEBUG "-g -Wall -Wextra -fcheck=all -fbacktrace")
     set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -march=native")
 elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
-    set(CMAKE_Fortran_FLAGS "-fpscomp logicals")
     set(CMAKE_Fortran_FLAGS_DEBUG "-g -warn all -traceback")
     set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -xHost")
 endif()
@@ -63,12 +62,6 @@ target_link_libraries(
     testsuite
     PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} opentrustregion
 )
-
-# get the absolute path to the test data directory and add it as a definition so the
-# Fortran code can access it
-set(TEST_DATA_PATH "${CMAKE_SOURCE_DIR}/tests/data")
-add_definitions(-DTEST_DATA_PATH=\"${TEST_DATA_PATH}\")
-target_compile_definitions(testsuite PRIVATE TEST_DATA_PATH="${TEST_DATA_PATH}")
 
 # enable preprocessing
 set_source_files_properties(tests/opentrustregion_system_tests.f90 PROPERTIES Fortran_PREPROCESS ON)
