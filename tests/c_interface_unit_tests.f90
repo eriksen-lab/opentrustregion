@@ -8,12 +8,11 @@ module c_interface_unit_tests
 
     use opentrustregion, only: rp, ip, stderr
     use c_interface, only: c_rp, c_ip
-    use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_loc, c_null_ptr, c_funptr, &
-                                           c_funloc, c_null_funptr, c_char
+    use test_reference, only: tol
+    use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_loc, c_funptr, c_funloc, &
+                                           c_char, c_associated
 
     implicit none
-
-    real(rp), parameter :: tol = 1e-10_rp
 
     ! number of parameters
     integer(c_ip), parameter :: n_param = 3_c_ip
@@ -117,34 +116,13 @@ contains
         !
         ! this function tests the C wrapper for the solver
         !
-        use c_interface, only: solver, solver_c_wrapper
+        use c_interface, only: solver_settings_type_c, solver, solver_c_wrapper
         use opentrustregion_mock, only: mock_solver, test_passed
+        use test_reference, only: assignment(=), ref_settings_c
 
-        type(c_funptr) :: update_orbs_c_funptr, obj_func_c_funptr, &
-                          precond_c_funptr = c_null_funptr, &
-                          conv_check_c_funptr = c_null_funptr, &
-                          logger_c_funptr = c_null_funptr
+        type(c_funptr) :: update_orbs_c_funptr, obj_func_c_funptr
+        type(solver_settings_type_c) :: settings
         integer(c_ip) :: error
-        integer(c_ip), target :: n_random_trial_vectors = 5_c_ip, n_macro = 300_c_ip, &
-                                 n_micro = 200_c_ip, seed = 33_c_ip, verbose = 3_c_ip
-        logical(c_bool), target :: stability = .false., line_search = .true., &
-                                   davidson = .false., jacobi_davidson = .false., &
-                                   prefer_jacobi_davidson = .true.
-        real(c_rp), target :: conv_tol = 1e-3_c_rp, start_trust_radius = 0.2_c_rp, &
-                              global_red_factor = 1e-2_c_rp, &
-                              local_red_factor = 1e-3_c_rp
-        type(c_ptr) :: stability_c_ptr = c_null_ptr, line_search_c_ptr = c_null_ptr, &
-                       davidson_c_ptr = c_null_ptr, &
-                       jacobi_davidson_c_ptr = c_null_ptr, &
-                       prefer_jacobi_davidson_c_ptr = c_null_ptr, &
-                       conv_tol_c_ptr = c_null_ptr, &
-                       n_random_trial_vectors_c_ptr = c_null_ptr, &
-                       start_trust_radius_c_ptr = c_null_ptr, &
-                       n_macro_c_ptr = c_null_ptr, &
-                       n_micro_c_ptr = c_null_ptr, &
-                       global_red_factor_c_ptr = c_null_ptr, &
-                       local_red_factor_c_ptr = c_null_ptr, &
-                       seed_c_ptr = c_null_ptr, verbose_c_ptr = c_null_ptr
 
         ! assume tests pass
         test_solver_c_wrapper = .true.
@@ -156,61 +134,18 @@ contains
         update_orbs_c_funptr = c_funloc(mock_update_orbs)
         obj_func_c_funptr = c_funloc(mock_obj_func)
 
-        ! call solver first without associated optional arguments which should produce
-        ! default values
-        error = solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param, &
-                                 precond_c_funptr, conv_check_c_funptr, &
-                                 stability_c_ptr, line_search_c_ptr, davidson_c_ptr, &
-                                 jacobi_davidson_c_ptr, prefer_jacobi_davidson_c_ptr, &
-                                 conv_tol_c_ptr, n_random_trial_vectors_c_ptr, &
-                                 start_trust_radius_c_ptr, n_macro_c_ptr, &
-                                 n_micro_c_ptr, global_red_factor_c_ptr, &
-                                 local_red_factor_c_ptr, seed_c_ptr, verbose_c_ptr, &
-                                 logger_c_funptr)
-                              
-
-        ! check if test has passed
-        test_solver_c_wrapper = test_passed
-
-        ! check if output variables are as expected
-        if (error /= 0) then
-            test_solver_c_wrapper = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Returned error "// &
-                "boolean wrong."
-        end if
-
-        ! associate optional arguments with values
-        precond_c_funptr = c_funloc(mock_precond)
-        conv_check_c_funptr = c_funloc(mock_conv_check)
-        stability_c_ptr = c_loc(stability)
-        line_search_c_ptr = c_loc(line_search)
-        davidson_c_ptr = c_loc(davidson)
-        jacobi_davidson_c_ptr = c_loc(jacobi_davidson)
-        prefer_jacobi_davidson_c_ptr = c_loc(prefer_jacobi_davidson)
-        conv_tol_c_ptr = c_loc(conv_tol)
-        n_random_trial_vectors_c_ptr = c_loc(n_random_trial_vectors)
-        start_trust_radius_c_ptr = c_loc(start_trust_radius)
-        n_macro_c_ptr = c_loc(n_macro)
-        n_micro_c_ptr = c_loc(n_micro)
-        global_red_factor_c_ptr = c_loc(global_red_factor)
-        local_red_factor_c_ptr = c_loc(local_red_factor)
-        seed_c_ptr = c_loc(seed)
-        verbose_c_ptr = c_loc(verbose)
-        logger_c_funptr = c_funloc(mock_logger)
+        ! associate optional settings with values
+        settings = ref_settings_c
+        settings%precond = c_funloc(mock_precond)
+        settings%conv_check = c_funloc(mock_conv_check)
+        settings%logger = c_funloc(mock_logger)
 
         ! initialize logger logical
-        test_logger = .true.     
+        test_logger = .true.
 
-        ! call solver with associated optional arguments
+        ! call solver
         error = solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param, &
-                                 precond_c_funptr, conv_check_c_funptr, &
-                                 stability_c_ptr, line_search_c_ptr, davidson_c_ptr, &
-                                 jacobi_davidson_c_ptr, prefer_jacobi_davidson_c_ptr, &
-                                 conv_tol_c_ptr, n_random_trial_vectors_c_ptr, &
-                                 start_trust_radius_c_ptr, n_macro_c_ptr, &
-                                 n_micro_c_ptr, global_red_factor_c_ptr, &
-                                 local_red_factor_c_ptr, seed_c_ptr, verbose_c_ptr, &
-                                 logger_c_funptr)
+                                 settings)
 
         ! check if logging subroutine was correctly called
         if (.not. test_logger) then
@@ -235,23 +170,17 @@ contains
         !
         ! this function tests the C wrapper for the stability check
         !
-        use c_interface, only: stability_check, stability_check_c_wrapper
+        use c_interface, only: stability_settings_type_c, stability_check, &
+                               stability_check_c_wrapper
         use opentrustregion_mock, only: mock_stability_check, test_passed
+        use test_reference, only: assignment(=), ref_settings_c, tol_c
 
+        type(c_funptr) :: hess_x_c_funptr
         real(c_rp), allocatable, target :: h_diag(:), kappa(:)
-        type(c_funptr) :: hess_x_c_funptr, precond_c_funptr = c_null_funptr, &
-                          logger_c_funptr = c_null_funptr
+        type(stability_settings_type_c) :: settings
         logical(c_bool) :: stable
         type(c_ptr) :: h_diag_c_ptr, kappa_c_ptr
         integer(c_ip) :: error
-        logical(c_bool), target :: jacobi_davidson = .false.
-        real(c_rp), target :: conv_tol = 1e-3_c_rp
-        integer(c_ip), target :: n_random_trial_vectors = 3_c_ip, n_iter = 50_c_ip, &
-                                 verbose = 3_c_ip
-        type(c_ptr) :: jacobi_davidson_c_ptr = c_null_ptr, &
-                       conv_tol_c_ptr = c_null_ptr, &
-                       n_random_trial_vectors_c_ptr = c_null_ptr, &
-                       n_iter_c_ptr = c_null_ptr, verbose_c_ptr = c_null_ptr
 
         ! assume tests pass
         test_stability_check_c_wrapper = .true.
@@ -267,50 +196,17 @@ contains
         h_diag_c_ptr = c_loc(h_diag)
         h_diag = 3.0_c_rp
 
-        ! call stability check first without associated optional arguments which should 
-        ! produce default values
+        ! associate optional arguments with values
+        settings = ref_settings_c
+        settings%precond = c_funloc(mock_precond)
+        settings%logger = c_funloc(mock_logger)
+
+        ! call stability check first without initialized returned direction
         error = stability_check_c_wrapper(h_diag_c_ptr, hess_x_c_funptr, n_param, &
-                                          stable, kappa_c_ptr, precond_c_funptr, &
-                                          jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                          n_random_trial_vectors_c_ptr, n_iter_c_ptr, &
-                                          verbose_c_ptr, logger_c_funptr)
+                                          stable, settings, kappa_c_ptr)
 
         ! check if test has passed
         test_stability_check_c_wrapper = test_passed
-
-        ! check if output variables are as expected
-        if (stable) then
-            test_stability_check_c_wrapper = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
-                "stability boolean wrong."
-        end if
-
-        if (error /= 0) then
-            test_stability_check_c_wrapper = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
-                "error boolean wrong."
-        end if
-
-        ! associate optional arguments with values
-        allocate(kappa(n_param))
-        kappa_c_ptr = c_loc(kappa)
-        precond_c_funptr = c_funloc(mock_precond)
-        jacobi_davidson_c_ptr = c_loc(jacobi_davidson)
-        conv_tol_c_ptr = c_loc(conv_tol)
-        n_random_trial_vectors_c_ptr = c_loc(n_random_trial_vectors)
-        n_iter_c_ptr = c_loc(n_iter)
-        verbose_c_ptr = c_loc(verbose)
-        logger_c_funptr = c_funloc(mock_logger)
-
-        ! initialize logger logical
-        test_logger = .true.
-
-        ! call stability check with associated optional arguments
-        error = stability_check_c_wrapper(h_diag_c_ptr, hess_x_c_funptr, n_param, &
-                                          stable, kappa_c_ptr, precond_c_funptr, &
-                                          jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                          n_random_trial_vectors_c_ptr, n_iter_c_ptr, &
-                                          verbose_c_ptr, logger_c_funptr)
 
         ! check if logging subroutine was correctly called
         if (.not. test_logger) then
@@ -326,7 +222,38 @@ contains
                 "stability boolean wrong."
         end if
 
-        if (any(abs(kappa - 1.0_c_rp) > tol)) then
+        if (error /= 0) then
+            test_stability_check_c_wrapper = .false.
+            write (stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
+                "error boolean wrong."
+        end if
+
+        ! associate returned direction with value
+        allocate(kappa(n_param))
+        kappa_c_ptr = c_loc(kappa)
+
+        ! initialize logger logical
+        test_logger = .true.
+
+        ! call stability check with initilized returned direction
+        error = stability_check_c_wrapper(h_diag_c_ptr, hess_x_c_funptr, n_param, &
+                                          stable, settings, kappa_c_ptr)
+
+        ! check if logging subroutine was correctly called
+        if (.not. test_logger) then
+            test_stability_check_c_wrapper = .false.
+            write (stderr, *) "test_stability_check_c_wrapper failed: Called "// &
+                "logging subroutine wrong."
+        end if
+
+        ! check if output variables are as expected
+        if (stable) then
+            test_stability_check_c_wrapper = .false.
+            write (stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
+                "stability boolean wrong."
+        end if
+
+        if (any(abs(kappa - 1.0_c_rp) > tol_c)) then
             test_stability_check_c_wrapper = .false.
             write (stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
                 "direction wrong."
@@ -607,56 +534,250 @@ contains
 
     end function test_logger_c_wrapper
 
-    logical(c_bool) function test_set_default_c_ptr() bind(C)
+    logical(c_bool) function test_init_solver_settings_c() bind(C)
         !
-        ! this function tests the function that sets default values for variables
+        ! this function tests that the solver settings initialization routine correctly 
+        ! initializes all settings to their default values
         !
-        use c_interface, only: set_default_c_ptr
+        use c_interface, only: solver_settings_type_c, init_solver_settings_c, &
+                               default_settings => default_solver_settings_c
+        use test_reference, only: operator(/=)
 
-        real(c_rp), target :: real_target = 2.0_c_rp
-        logical(c_bool), target :: bool_target = .true.
-        integer(c_ip), target :: int_target = 2_c_ip
+        type(solver_settings_type_c) :: settings
 
-        ! assume tests pass
-        test_set_default_c_ptr = .true.
+        ! assume test passes
+        test_init_solver_settings_c = .true.
 
-        ! test different combinations and types of optional and default arguments
-        if (abs(set_default_c_ptr(c_loc(real_target), 1.0_rp) - 2.0_rp) > tol) then
-            write (stderr, *) "test_set_default_c_ptr failed: Optional real "// &
-                "argument not set correctly."
-            test_set_default_c_ptr = .false.
+        ! initialize settings
+        call init_solver_settings_c(settings)
+
+        ! check function pointers
+        if (c_associated(settings%precond) .or. c_associated(settings%conv_check) .or. &
+            c_associated(settings%logger)) then
+            write (stderr, *) "test_init_solver_settings_c failed: Function "// &
+                "pointers should not be initialized."
+            test_init_solver_settings_c = .false.
         end if
 
-        if (abs(set_default_c_ptr(c_null_ptr, 1.0_rp) - 1.0_rp) > tol) then
-            write (stderr, *) "test_set_default_c_ptr failed: Default real "// &
-                "argument not set correctly."
-            test_set_default_c_ptr = .false.
+        ! check settings
+        if (settings /= default_settings) then
+            write (stderr, *) "test_init_solver_settings_c failed: Settings not "// &
+                "initialized correctly."
+            test_init_solver_settings_c = .false. 
         end if
 
-        if (set_default_c_ptr(c_loc(bool_target), .false.) .neqv. .true.) then
-            write (stderr, *) "test_set_default_c_ptr failed: Optional logical "// &
-                "argument not set correctly."
-            test_set_default_c_ptr = .false.
+    end function test_init_solver_settings_c
+
+    logical(c_bool) function test_init_stability_settings_c() bind(C)
+        !
+        ! this function tests that the stability check settings initialization routine 
+        ! correctly initializes all settings to their default values
+        !
+        use c_interface, only: stability_settings_type_c, init_stability_settings_c, &
+                               default_settings => default_stability_settings_c
+        use test_reference, only: operator(/=)
+
+        type(stability_settings_type_c) :: settings
+
+        ! assume test passes
+        test_init_stability_settings_c = .true.
+
+        ! initialize settings
+        call init_stability_settings_c(settings)
+
+        ! check function pointers
+        if (c_associated(settings%precond) .or. c_associated(settings%logger)) then
+            write (stderr, *) "test_init_stability_settings_c failed: Function "// &
+                "pointers should not be initialized."
+            test_init_stability_settings_c = .false.
         end if
 
-        if (set_default_c_ptr(c_null_ptr, .false.) .neqv. .false.) then
-            write (stderr, *) "test_set_default_c_ptr failed: Default logical "// &
-                "argument not set correctly."
-            test_set_default_c_ptr = .false.
+        ! check settings
+        if (settings /= default_settings) then
+            write (stderr, *) "test_init_stability_settings_c failed: Settings not "// &
+                "initialized correctly."
+            test_init_stability_settings_c = .false. 
         end if
 
-        if (set_default_c_ptr(c_loc(int_target), 1) /= 2) then
-            write (stderr, *) "test_set_default_c_ptr failed: Optional integer "// &
-                "argument not set correctly."
-            test_set_default_c_ptr = .false.
+    end function test_init_stability_settings_c
+
+    logical(c_bool) function test_assign_solver_f_c() bind(C)
+        !
+        ! this function tests that the function that converts solver settings from C to 
+        ! Fortran correctly perform this conversion
+        !
+        use c_interface, only: solver_settings_type_c, assignment(=)
+        use opentrustregion, only: solver_settings_type
+        use test_reference, only: assignment(=), ref_settings_c, operator(/=), &
+                                  ref_settings
+
+        type(solver_settings_type_c) :: settings_c
+        type(solver_settings_type) :: settings
+        real(rp), allocatable :: residual(:), precond_residual(:)
+        integer(ip) :: error
+        logical :: converged
+
+        ! assume test passes
+        test_assign_solver_f_c = .true.
+
+        ! initialize the C settings with custom values
+        settings_c = ref_settings_c
+        settings_c%precond = c_funloc(mock_precond)
+        settings_c%conv_check = c_funloc(mock_conv_check)
+        settings_c%logger = c_funloc(mock_logger)
+
+        ! convert to Fortran settings
+        settings = settings_c
+
+        ! check preconditioner function
+        if (.not. associated(settings%precond)) then
+            test_assign_solver_f_c = .false.
+            write (stderr, *) "test_assign_solver_f_c failed: Preconditioner "// &
+                "function not associated with value."
+        else
+            allocate(residual(n_param), precond_residual(n_param))
+            residual = 1.0_rp
+            call settings%precond(residual, 5.0_rp, precond_residual, error)
+            if (error /= 0) then
+                test_assign_solver_f_c = .false.
+                write (stderr, *) "test_assign_solver_f_c failed: Preconditioner "// &
+                    "function produced error."
+            end if
+            if (any(abs(precond_residual - 5.0_rp) > tol)) then
+                test_assign_solver_f_c = .false.
+                write (stderr, *) "test_assign_solver_f_c failed: Returned "// &
+                    "preconditioner of preconditioner function wrong."
+            end if
+            deallocate(residual, precond_residual)
         end if
 
-        if (set_default_c_ptr(c_null_ptr, 1) /= 1) then
-            write (stderr, *) "test_set_default_c_ptr failed: Default integer "// &
-                "argument not set correctly."
-            test_set_default_c_ptr = .false.
+        ! check convergence check
+        if (.not. associated(settings%conv_check)) then
+            test_assign_solver_f_c = .false.
+            write (stderr, *) "test_assign_solver_f_c failed: Convergence check "// &
+                "function not associated with value."
+        else
+            converged = settings%conv_check(error)
+            if (error /= 0) then
+                test_assign_solver_f_c = .false.
+                write (stderr, *) "test_assign_solver_f_c failed: Convergence "// &
+                    "check function produced error."
+            end if
+            if (.not. converged) then
+                test_assign_solver_f_c = .false.
+                write (stderr, *) "test_assign_solver_f_c failed: Returned "// &
+                    "convergence logical of convergence check function wrong."
+            end if
         end if
 
-    end function test_set_default_c_ptr
+        ! check logging function
+        if (.not. associated(settings%logger)) then
+            test_assign_solver_f_c = .false.
+            write (stderr, *) "test_assign_solver_f_c failed: Logging function "// &
+                "not associated with value."
+        else
+            test_logger = .true.
+            call settings%logger("test")
+            if (.not. test_logger) then
+                test_assign_solver_f_c = .false.
+                write (stderr, *) "test_assign_solver_f_c failed: Called logging "// &
+                    "subroutine wrong."
+            end if
+        end if
+
+        ! check against reference values
+        if (settings /= ref_settings) then
+            write (stderr, *) "test_assign_solver_f_c failed: Settings not "// &
+                "converted correctly."
+            test_assign_solver_f_c = .false.
+        end if
+
+        ! check initialization flag
+        if (.not. settings%initialized) then
+            write (stderr, *) "test_assign_solver_f_c failed: Settings not marked "// &
+                "as initialized."
+            test_assign_solver_f_c = .false.
+        end if
+
+    end function test_assign_solver_f_c
+
+    logical(c_bool) function test_assign_stability_f_c() bind(C)
+        !
+        ! this function tests that the function that converts stability check settings 
+        ! from C to Fortran correctly performs this conversion
+        !
+        use c_interface, only: stability_settings_type_c, assignment(=)
+        use opentrustregion, only: stability_settings_type
+        use test_reference, only: assignment(=), ref_settings_c, operator(/=), &
+                                  ref_settings
+
+        type(stability_settings_type_c) :: settings_c
+        type(stability_settings_type)   :: settings
+        real(rp), allocatable :: residual(:), precond_residual(:)
+        integer(ip) :: error
+
+        ! assume test passes
+        test_assign_stability_f_c = .true.
+
+        ! initialize the C settings with custom values
+        settings_c = ref_settings_c
+        settings_c%precond = c_funloc(mock_precond)
+        settings_c%logger  = c_funloc(mock_logger)
+
+        ! convert to Fortran settings
+        settings = settings_c
+
+        ! check preconditioner function
+        if (.not. associated(settings%precond)) then
+            test_assign_stability_f_c = .false.
+            write (stderr, *) "test_assign_stability_f_c failed: Preconditioner "// &
+                "function not associated."
+        else
+            allocate(residual(n_param), precond_residual(n_param))
+            residual = 1.0_rp
+            call settings%precond(residual, 5.0_rp, precond_residual, error)
+            if (error /= 0) then
+                test_assign_stability_f_c = .false.
+                write (stderr, *) "test_assign_stability_f_c failed: "// &
+                    "Preconditioner function produced error."
+            end if
+            if (any(abs(precond_residual - 5.0_rp) > tol)) then
+                test_assign_stability_f_c = .false.
+                write (stderr, *) "test_assign_stability_f_c failed: Returned "// &
+                    "preconditioner output wrong."
+            end if
+            deallocate(residual, precond_residual)
+        end if
+
+        ! check logging function
+        if (.not. associated(settings%logger)) then
+            test_assign_stability_f_c = .false.
+            write (stderr, *) "test_assign_stability_f_c failed: Logging function "// &
+                "not associated."
+        else
+            test_logger = .true.
+            call settings%logger("stability test")
+            if (.not. test_logger) then
+                test_assign_stability_f_c = .false.
+                write (stderr, *) "test_assign_stability_f_c failed: Logging "// &
+                    "callback did not trigger."
+            end if
+        end if
+
+        ! check against reference values
+        if (settings /= ref_settings) then
+            write (stderr, *) "test_assign_stability_f_c failed: Settings not "// &
+                "converted correctly."
+            test_assign_stability_f_c = .false.
+        end if
+
+        ! check initialization flag
+        if (.not. settings%initialized) then
+            test_assign_stability_f_c = .false.
+            write (stderr, *) "test_assign_stability_f_c failed: Settings not "// &
+                "marked as initialized."
+        end if
+
+    end function test_assign_stability_f_c
 
 end module c_interface_unit_tests

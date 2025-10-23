@@ -62,8 +62,94 @@ The optimization process is initiated by calling a `solver` subroutine. This rou
 - **`n_param`** (integer): Specifies the number of parameters to be optimized.
 - **`error`** (integer): An integer code indicating the success or failure of the solver. The error code structure is explained below.
 
-### Optional Arguments
-The optimization process can be fine-tuned using the following optional arguments:
+---
+
+The following Fortran snippet demonstrates how to use the `solver` interface:
+
+```fortran
+use opentrustregion, only: ip, rp, update_orbs_type, obj_func_type, solver_settings_type, solver
+
+procedure(update_orbs_type), pointer :: update_orbs_funptr
+procedure(obj_func_type), pointer :: obj_func_funptr
+integer(ip) :: n_param, error
+type(solver_settings_type) :: settings
+
+! set callback function pointers to existing implementations
+update_orbs_funptr => update_orbs
+obj_func_funptr => obj_func
+
+! initialize settings
+call settings%init(error)
+
+! override default settings
+settings%conv_tol = 1e-6_rp
+settings%n_macro = 100
+
+! run solver
+call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+```
+
+- Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
+- `n_param` is also assumed to be defined elsewhere.
+- Solver settings are initialized using the `init()` method of the derived type, and default settings can be overridden (here, `conv_tol` and `n_macro`).
+- Finally, the `solver` is called with the initialized settings and callback functions.
+
+---
+
+The following C snippet demonstrates the equivalent usage through the C interface:
+
+```c
+#include <stdint.h>
+#include "opentrustregion.h"
+
+c_ip n_param;
+
+// set callback function pointers to existing implementations
+update_orbs_type update_orbs_funptr = (void*)update_orbs;
+obj_func_type obj_func_funptr = (void*)obj_func;
+
+// initialize settings
+struct solver_settings_type settings
+struct solver_settings_type settings = solver_settings_init();
+
+// override default settings
+settings.conv_tol = 1e-6;
+settings.n_macro = 100;
+
+// run solver
+c_ip error = solver(update_orbs_funptr, obj_func_funptr, n_param, settings);
+```
+
+- Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
+- `n_param` is also assumed to be defined elsewhere.
+- Solver settings are initialized via a small helper function `solver_settings_init()`, which returns a struct with default values. Individual settings (here, `conv_tol` and `n_macro`) can then be overridden.
+- Finally, the `solver` is called with the initialized settings and callback functions and directly returns an error code in typical C fashion.
+
+---
+
+The following Python snippet demonstrates the equivalent usage through the Python interface:
+
+```python
+from pyopentrustregion import SolverSettings, solver
+
+# initialize settings
+settings = SolverSettings()
+
+# override default settings
+settings.conv_tol = 1e-6
+settings.n_macro = 100
+
+# run solver
+solver(update_orbs, obj_func, n_param, settings)
+```
+
+- Callback functions (`update_orbs`, `obj_func`) are defined elsewhere in the program.
+- `n_param` is also assumed to be defined elsewhere.
+- Solver settings are initialized via the `SolverSettings` class, which returns an object with default values; individual settings (here, `conv_tol`, and `n_macro`) can then be overridden.
+- Finally, the `solver` is called with the initialized settings and callback functions and errors can be caught in pythonic fashion in the form of a `RuntimeException`.
+
+### Optional Settings
+The optimization process can be fine-tuned using the following settings:
 
 - **`precond`** (subroutine): Applies a preconditioner to a residual vector. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors).
 - **`conv_check`** (function): Returns whether the optimization has converged due to some supplied convergence criterion. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions.
@@ -94,10 +180,107 @@ A separate `stability_check` subroutine is available to verify whether the curre
   - Returns an integer error code (0 for success, positive integers < 100 for errors)
 - **`stable`** (boolean): Returns whether the current point is stable.
 - **`error`** (integer): An integer code indicating the success or failure of the solver. The error code structure is explained below.
-
-### Optional Arguments
-
 - **`kappa`** (real array): If the memory is provided and the current point is not stable (as can be checked from return code of `stable`), the descent direction is written in-place in this array.
+
+---
+
+The following Fortran snippet demonstrates how to use the stability check interface:
+
+```fortran
+use opentrustregion, only: ip, rp, stability_settings_type, hess_x_type, stability_check
+
+real(rp), allocatable :: h_diag(:), kappa(:)
+procedure(hess_x_type), pointer :: hess_x_funptr
+integer(ip) :: n_param, error
+logical :: stable
+type(stability_settings_type) :: settings
+
+! set callback function pointer to existing implementation
+hess_x_funptr => hess_x
+
+! initialize settings
+call settings%init(error)
+
+! override default settings
+settings%conv_tol = 1e-6_rp
+settings%n_iter = 100
+
+! run stability check
+call stability_check(h_diag, hess_x_funptr, n_param, stable, error, settings, kappa=kappa)
+```
+
+- `hess_x_funptr` points to an existing Hessian–vector product implementation elsewhere in the program.
+- `n_param` is also assumed to be defined elsewhere.
+- Stability settings are initialized via the `init()` method of the derived type and can be overridden (here, `conv_tol` and `n_iter`).
+- The `stable` logical output receives the result of the stability check.
+- The descent direction `kappa` is optional and is only returned if provided.
+
+---
+
+The following C snippet demonstrates the equivalent usage through the C interface:
+
+```c
+#include <stdint.h>
+#include "opentrustregion.h"
+
+c_ip n_param;
+c_bool stable;
+
+// set callback function pointer to existing implementation
+hess_x_type hess_x_funptr = hess_x;
+
+// initialize settings
+struct stability_settings_type settings = stability_settings_init();
+
+// override default settings
+settings.conv_tol = 1e-6;
+settings.n_iter = 100;
+
+// pointers to Hessian diagonal and descent direction
+double* h_diag;
+double* kappa;
+
+// run stability check
+c_ip = stability_check(h_diag, hess_x_funptr, n_param, &stable, settings, kappa);
+```
+
+- `hess_x_funptr` points to an existing Hessian–vector product implementation elsewhere in the program.
+- `n_param` and `h_diag` are assumed to be defined elsewhere.
+- Stability settings are initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol` and `n_iter`) can then be overridden.
+- The `stable` output receives the result of the stability check which directly returns an error code in typical C fashion.
+- The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `nullptr`.
+
+---
+
+The following Python snippet demonstrates the equivalent usage through the Python interface:
+
+```python
+from pyopentrustregion import StabilitySettings, stability_check
+
+# initialize settings
+settings = StabilitySettings()
+
+# override default settings
+settings.conv_tol = 1e-6
+settings.n_iter = 100
+
+# Hessian diagonal and descent direction arrays
+h_diag = np.asarray(h_diag, dtype=np.float64)
+kappa = np.empty(n_param, dtype=np.float64)
+
+# run stability check
+stable = stability_check(h_diag, hess_x, n_param, settings, kappa=kappa)
+```
+
+- `hess_x` is an existing Hessian–vector product implementation elsewhere in the program.
+- `n_param` and `h_diag` are assumed to be defined elsewhere.
+- Stability settings are initialized via the `StabilitySettings` class, which returns an object with default values; individual settings (here, `conv_tol`) can then be overridden.
+- The `stable` output receives the result of the stability check and errors can be caught in pythonic fashion in the form of a `RuntimeException`.
+- The descent direction `kappa` is optional and is only returned if provided.
+
+### Optional Settings
+The stability check can be fine-tuned using the following settings:
+
 - **`precond`** (subroutine): Applies a preconditioner to a residual vector. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors).
 - **`jacobi_davidson`** (boolean): Determines whether Jacobi-Davidson is performed whenever difficult convergence is encountered for Davidson iterations.
 - **`conv_tol`** (real): Convergence criterion for the residual norm.
@@ -105,9 +288,6 @@ A separate `stability_check` subroutine is available to verify whether the curre
 - **`n_iter`** (integer): Maximum number of Davidson iterations.
 - **`verbose`** (integer): Controls the verbosity of output during the stability check.
 - **`logger`** (function): Accepts a log message. Logging is otherwise routed to stdout.
-
----
-Both the `solver` and `stability_check` functions can be directly accessed from Fortran, C, or Python using the same arguments but within the appropriate language.
 
 ## Error Code Structure
 

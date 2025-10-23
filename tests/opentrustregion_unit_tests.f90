@@ -6,12 +6,11 @@
 
 module opentrustregion_unit_tests
 
-    use opentrustregion, only: rp, ip, stderr, settings_type
-    use iso_c_binding, only: c_bool
+    use opentrustregion, only: rp, ip, stderr
+    use test_reference, only: tol
+    use, intrinsic :: iso_c_binding, only: c_bool
 
     implicit none
-
-    real(rp), parameter :: tol = 1e-10_rp
 
     ! parameters for 6D Hartmann function
     real(rp), parameter :: alpha(4) = [1.0_rp, 1.2_rp, 3.0_rp, 3.2_rp]
@@ -198,8 +197,12 @@ contains
         !
         ! this subroutine sets up a settings object for tests
         !
-        class(settings_type), intent(inout) :: settings
+        use opentrustregion, only: settings_type
 
+        class(settings_type), intent(inout) :: settings
+        integer(ip) :: error
+
+        call settings%init(error)
         settings%verbose = 3
         settings%logger => logger
 
@@ -209,8 +212,9 @@ contains
         !
         ! this function tests the solver subroutine
         !
-        use opentrustregion, only: update_orbs_type, obj_func_type, solver, &
-                                   solver_conv_tol_default
+        use opentrustregion, only: update_orbs_type, obj_func_type, &
+                                   solver_settings_type, solver, &
+                                   default_settings => default_solver_settings
 
         integer(ip), parameter :: n_param = 6
         real(rp), parameter :: var_thres = 1e-6_rp
@@ -218,6 +222,7 @@ contains
         real(rp), allocatable :: final_grad(:)
         procedure(update_orbs_type), pointer :: update_orbs_funptr
         procedure(obj_func_type), pointer :: obj_func_funptr
+        type(solver_settings_type) :: settings
 
         ! assume tests pass
         test_solver = .true.
@@ -227,19 +232,22 @@ contains
         update_orbs_funptr => update_orbs
         obj_func_funptr => obj_func
 
+        ! initialize settings
+        call settings%init(error)
+
         ! allocate space for the final gradient
         allocate(final_grad(n_param))
 
         ! run solver, check if error has occured and check whether gradient is zero and 
         ! agrees with correct minimum
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
             write (stderr, *) "test_solver failed: Produced error."
             test_solver = .false.
         end if
         call hartmann6d_gradient(curr_vars, final_grad)
         if (norm2(final_grad)/sqrt(real(n_param, kind=rp)) > &
-            solver_conv_tol_default) then
+            default_settings%conv_tol) then
             write (stderr, *) "test_solver failed: Solver did not find stationary "// &
                 "point."
             test_solver = .false.
@@ -256,14 +264,14 @@ contains
 
         ! run solver, check if error has occured and check whether gradient is zero and 
         ! agrees with correct minimum
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
             write (stderr, *) "test_solver failed: Produced error."
             test_solver = .false.
         end if
         call hartmann6d_gradient(curr_vars, final_grad)
         if (norm2(final_grad)/sqrt(real(n_param, kind=rp)) > &
-            solver_conv_tol_default) then
+            default_settings%conv_tol) then
             write (stderr, *) "test_solver failed: Solver did not find stationary "// &
                 "point."
             test_solver = .false.
@@ -281,14 +289,14 @@ contains
 
         ! run solver, check if error has occured and check whether gradient is zero and 
         ! agrees with correct minimum
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
             write (stderr, *) "test_solver failed: Produced error."
             test_solver = .false.
         end if
         call hartmann6d_gradient(curr_vars, final_grad)
         if (norm2(final_grad)/sqrt(real(n_param, kind=rp)) > &
-            solver_conv_tol_default) then
+            default_settings%conv_tol) then
             write (stderr, *) "test_solver failed: Solver did not find stationary "// &
                 "point."
             test_solver = .false.
@@ -308,12 +316,13 @@ contains
         !
         ! this function tests the stability check subroutine
         !
-        use opentrustregion, only: hess_x_type, stability_check
+        use opentrustregion, only: hess_x_type, stability_settings_type, stability_check
 
         real(rp) :: vars(6), h_diag(6), direction(6)
         procedure(hess_x_type), pointer :: hess_x_funptr
         logical :: stable
         integer(ip) :: error, i
+        type(stability_settings_type) :: settings
 
         ! assume tests pass
         test_stability_check = .true.
@@ -325,9 +334,12 @@ contains
         h_diag = [(hess(i, i), i=1, size(h_diag))]
         hess_x_funptr => hess_x_fun
 
+        ! initialize settings
+        call settings%init(error)
+
         ! run stability, check if error has occured check and determine whether minimum 
         ! is stable and the returned direction vanishes
-        call stability_check(h_diag, hess_x_funptr, stable, error, direction)
+        call stability_check(h_diag, hess_x_funptr, stable, error, settings, direction)
         if (error /= 0) then
             write (stderr, *) "test_stability_check failed: Produced error."
             test_stability_check = .false.
@@ -352,7 +364,7 @@ contains
 
         ! run stability check, check if error has occured and determine whether saddle 
         ! point is unstable and the returned direction is correct
-        call stability_check(h_diag, hess_x_funptr, stable, error, direction)
+        call stability_check(h_diag, hess_x_funptr, stable, error, settings, direction)
         if (error /= 0) then
             write (stderr, *) "test_stability_check failed: Produced error."
             test_stability_check = .false.
@@ -378,9 +390,9 @@ contains
         !
         ! this function tests the Newton step subroutine
         !
-        use opentrustregion, only: newton_step
+        use opentrustregion, only: solver_settings_type, newton_step
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         real(rp) :: red_space_basis(6, 3), vars(6), grad(6), grad_norm, &
                     aug_hess(4, 4), solution(6), red_space_solution(3)
         integer(ip) :: i, j, error
@@ -443,9 +455,9 @@ contains
         !
         ! this function tests the bisection subroutine
         !
-        use opentrustregion, only: bisection
+        use opentrustregion, only: solver_settings_type, bisection
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         real(rp) :: red_space_basis(6, 3), vars(6), grad(6), grad_norm, &
                     aug_hess(4, 4), solution(6), red_space_solution(3), trust_radius, mu
         integer(ip) :: i, j, error
@@ -550,9 +562,9 @@ contains
         !
         ! this function tests the bisection subroutine
         !
-        use opentrustregion, only: obj_func_type, bracket
+        use opentrustregion, only: solver_settings_type, obj_func_type, bracket
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         procedure(obj_func_type), pointer :: obj_func_funptr
         real(rp) :: vars(6), lower, upper, n
         integer(ip) :: error
@@ -689,9 +701,9 @@ contains
         ! this function tests the subroutine for determining the minimum eigenvalue and
         ! corresponding eigenvector for a symmetric matrix
         !
-        use opentrustregion, only: symm_mat_min_eig
+        use opentrustregion, only: solver_settings_type, symm_mat_min_eig
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         real(rp) :: matrix(3, 3)
         real(rp) :: eigval, eigvec(3)
         integer(ip) :: error
@@ -732,9 +744,9 @@ contains
         ! this function tests the function for determining the minimum eigenvalue for
         ! a symmetric matrix
         !
-        use opentrustregion, only: min_eigval
+        use opentrustregion, only: solver_settings_type, min_eigval
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         real(rp) :: matrix(3, 3), matrix_min_eigval
         integer(ip) :: error
 
@@ -819,9 +831,9 @@ contains
         ! this function tests the function which generates trial vectors for the
         ! Davidson procedure
         !
-        use opentrustregion, only: generate_trial_vectors
+        use opentrustregion, only: solver_settings_type, generate_trial_vectors
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         real(rp), allocatable :: red_space_basis(:, :)
         real(rp) :: grad(4), h_diag(4), grad_norm
         integer(ip) :: error, i, j
@@ -918,9 +930,9 @@ contains
         ! this function tests the function which generates random trial vectors for the
         ! Davidson procedure
         !
-        use opentrustregion, only: generate_random_trial_vectors
+        use opentrustregion, only: solver_settings_type, generate_random_trial_vectors
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         real(rp), allocatable :: red_space_basis(:, :)
         integer(ip) :: error, i, j
 
@@ -965,9 +977,9 @@ contains
         ! this function tests the Gram-Schmidt subroutine which orthonormalizes a 
         ! vector to a given basis
         !
-        use opentrustregion, only: gram_schmidt
+        use opentrustregion, only: solver_settings_type, gram_schmidt
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         real(rp) :: vector(4), lin_trans_vector(4), vector_small(2), space(4, 2), &
                     symm_matrix(4, 4), lin_trans_space(4, 2), space_small(2, 2)
         integer(ip) :: error
@@ -1072,86 +1084,39 @@ contains
         !
         ! this function tests the subroutine which initializes the solver settings
         !
-        use opentrustregion, only: logger_type, solver_settings_type, &
-                                   init_solver_settings, solver_stability_default, &
-                                   solver_line_search_default, &
-                                   solver_davidson_default, &
-                                   solver_jacobi_davidson_default, &
-                                   solver_prefer_jacobi_davidson_default, &
-                                   solver_conv_tol_default, &
-                                   solver_n_random_trial_vectors_default, &
-                                   solver_start_trust_radius_default, &
-                                   solver_n_macro_default, solver_n_micro_default, &
-                                   solver_global_red_factor_default, &
-                                   solver_local_red_factor_default, &
-                                   solver_seed_default, solver_verbose_default
+        use opentrustregion, only: solver_settings_type, &
+                                   default_settings => default_solver_settings
+        use test_reference, only: operator(/=)
 
         type(solver_settings_type) :: settings
-        procedure(logger_type), pointer :: logger_funptr
+        integer(ip) :: error
 
         ! assume tests pass
         test_init_solver_settings = .true.
 
-        ! call routine without optional arguments
-        call init_solver_settings(settings)
+        ! initialize settings
+        call settings%init(error)
 
-        ! check if default values are correctly set
-        if ((settings%stability .neqv. solver_stability_default) .or. &
-            (settings%line_search .neqv. solver_line_search_default) .or. &
-            (settings%davidson .neqv. solver_davidson_default) .or. &
-            (settings%jacobi_davidson .neqv. solver_jacobi_davidson_default) .or. &
-            (settings%prefer_jacobi_davidson .neqv. &
-             solver_prefer_jacobi_davidson_default) .or. &
-            abs(settings%conv_tol - solver_conv_tol_default) > tol .or. &
-            settings%n_random_trial_vectors /= solver_n_random_trial_vectors_default &
-            .or. abs(settings%start_trust_radius - solver_start_trust_radius_default) &
-            > tol .or. settings%n_macro /= solver_n_macro_default .or. &
-            settings%n_micro /= solver_n_micro_default .or. &
-            abs(settings%global_red_factor - solver_global_red_factor_default) > tol &
-            .or. abs(settings%local_red_factor - solver_local_red_factor_default) > &
-            tol .or. settings%seed /= solver_seed_default .or. &
-            settings%verbose /= solver_verbose_default .or. &
+        ! check function pointers
+        if (error /= 0) then
+            write (stderr, *) "test_init_solver_settings failed: Function raised "// &
+                "error."
+            test_init_solver_settings = .false.
+        end if
+
+        ! check function pointers
+        if (associated(settings%precond) .or. associated(settings%conv_check) .or. &
             associated(settings%logger)) then
-            write (stderr, *) "test_init_solver_settings failed: Default arguments "// &
-                "not set correctly."
+            write (stderr, *) "test_init_solver_settings failed: Function pointers "// &
+                "should not be initialized."
             test_init_solver_settings = .false.
         end if
 
-        ! set pointer for logging routine
-        logger_funptr => logger
-
-        ! call routine with optional arguments
-        call init_solver_settings(settings, stability=.false., line_search=.true., &
-                                  davidson=.false., jacobi_davidson=.false., &
-                                  prefer_jacobi_davidson=.true., conv_tol=1e-3_rp, &
-                                  n_random_trial_vectors=5, start_trust_radius=0.2_rp, &
-                                  n_macro=300, n_micro=200, global_red_factor=1e-2_rp, &
-                                  local_red_factor=1e-3_rp, seed=33, verbose=3, &
-                                  logger=logger_funptr)
-
-        ! check if optional values are correctly set
-        if ((settings%stability .neqv. .false.) .or. &
-            (settings%line_search .neqv. .true.) .or. &
-            (settings%davidson .neqv. .false.) .or. &
-            (settings%jacobi_davidson .neqv. .false.) .or. &
-            (settings%prefer_jacobi_davidson .neqv. .true.) .or. &
-            abs(settings%conv_tol - 1e-3_rp) > tol .or. &
-            settings%n_random_trial_vectors /= 5 .or. &
-            abs(settings%start_trust_radius - 0.2_rp) > tol .or. settings%n_macro &
-            /= 300 .or. settings%n_micro /= 200 .or. &
-            abs(settings%global_red_factor - 1e-2_rp) > tol .or. &
-            abs(settings%local_red_factor - 1e-3_rp) > tol .or. &
-            settings%seed /= 33 .or. settings%verbose /= 3 .or. &
-            .not. associated(settings%logger)) then
-            write (stderr, *) "test_init_solver_settings failed: Optional "// &
-                "arguments not set correctly."
+        ! check settings
+        if (settings /= default_settings) then
+            write (stderr, *) "test_init_solver_settings failed: Settings not "// &
+                "initialized correctly."
             test_init_solver_settings = .false.
-        end if
-        if (associated(settings%logger)) then
-            call settings%logger("test")
-            if (log_message /= "test") write (stderr, *) &
-                "test_init_solver_settings failed: Optional logging subroutine "// &
-                "not set correctly."
         end if
 
     end function test_init_solver_settings
@@ -1161,112 +1126,41 @@ contains
         ! this function tests the subroutine which initializes the stability check
         ! settings
         !
-        use opentrustregion, only: logger_type, stability_settings_type, &
-                                   init_stability_settings, &
-                                   stability_jacobi_davidson_default, &
-                                   stability_conv_tol_default, &
-                                   stability_n_random_trial_vectors_default, &
-                                   stability_n_iter_default, stability_verbose_default
+        use opentrustregion, only: stability_settings_type, &
+                                   default_settings => default_stability_settings
+        use test_reference, only: operator(/=)
 
         type(stability_settings_type) :: settings
-        procedure(logger_type), pointer :: logger_funptr
+        integer(ip) :: error
 
         ! assume tests pass
         test_init_stability_settings = .true.
 
-        ! call routine without optional arguments
-        call init_stability_settings(settings)
+        ! initialize settings
+        call settings%init(error)
 
-        ! check if default values are correctly set
-        if ((settings%jacobi_davidson .neqv. stability_jacobi_davidson_default) .or. &
-            abs(settings%conv_tol - stability_conv_tol_default) > tol .or. &
-            settings%n_random_trial_vectors /= &
-            stability_n_random_trial_vectors_default .or. settings%n_iter /= &
-            stability_n_iter_default .or. settings%verbose /= &
-            stability_verbose_default .or. associated(settings%logger)) then
-            write (stderr, *) "test_init_stability_settings failed: Default "// &
-                "arguments not set correctly."
+        ! check function pointers
+        if (error /= 0) then
+            write (stderr, *) "test_init_stability_settings failed: Function "// &
+                "raised error."
             test_init_stability_settings = .false.
         end if
 
-        ! set pointer for logger routine
-        logger_funptr => logger
-
-        ! call routine with optional arguments
-        call init_stability_settings(settings, jacobi_davidson=.false., &
-                                     conv_tol=1e-3_rp, n_random_trial_vectors=3, &
-                                     n_iter=50, verbose=3, logger=logger_funptr)
-
-        ! check if optional values are correctly set
-        if ((settings%jacobi_davidson .neqv. .false.) .or. &
-            abs(settings%conv_tol - 1e-3_rp) > tol .or. &
-            settings%n_random_trial_vectors /= 3 .or. settings%n_iter /= 50 .or. &
-            settings%verbose /= 3 .or. .not. associated(settings%logger)) then
-            write (stderr, *) "test_init_stability_settings failed: Optional "// &
-                "arguments not set correctly."
+        ! check function pointers
+        if (associated(settings%precond) .or. associated(settings%logger)) then
+            write (stderr, *) "test_init_stability_settings failed: Function "// &
+                "pointers should not be initialized."
             test_init_stability_settings = .false.
         end if
-        if (associated(settings%logger)) then
-            call settings%logger("test")
-            if (log_message /= "test") write (stderr, *) &
-                "test_init_stability_settings failed: Optional logging subroutine "// &
-                "not set correctly."
+
+        ! check settings
+        if (settings /= default_settings) then
+            write (stderr, *) "test_init_stability_settings failed: Settings not "// &
+                "initialized correctly."
+            test_init_stability_settings = .false.
         end if
 
     end function test_init_stability_settings
-
-    logical(c_bool) function test_set_default() bind(C)
-        !
-        ! this function tests the subroutine which sets default values
-        !
-        use opentrustregion, only: set_default
-
-        ! assume tests pass
-        test_set_default = .true.
-
-        ! check if optional arguments are correctly set for reals
-        if (abs(set_default(2.0_rp, 1.0_rp) - 2.0_rp) > tol) then
-            write (stderr, *) "test_set_default failed: Optional real argument not "// &
-                "set correctly."
-            test_set_default = .false.
-        end if
-
-        ! check if default arguments are correctly set for reals
-        if (abs(set_default(default_value=1.0_rp) - 1.0_rp) > tol) then
-            write (stderr, *) "test_set_default failed: Default real argument not "// &
-                "set correctly."
-            test_set_default = .false.
-        end if
-
-        ! check if optional arguments are correctly set for logicals
-        if (set_default(.true., .false.) .neqv. .true.) then
-            write (stderr, *) "test_set_default failed: Optional logical argument "// &
-                "not set correctly."
-            test_set_default = .false.
-        end if
-
-        ! check if default arguments are correctly set for logicals
-        if (set_default(default_value=.false.) .neqv. .false.) then
-            write (stderr, *) "test_set_default failed: Default logical argument "// &
-                "not set correctly."
-            test_set_default = .false.
-        end if
-
-        ! check if optional arguments are correctly set for integers
-        if (set_default(2, 1) /= 2) then
-            write (stderr, *) "test_set_default failed: Optional integer argument "// &
-                "not set correctly."
-            test_set_default = .false.
-        end if
-
-        ! check if default arguments are correctly set for integers
-        if (set_default(default_value=1) /= 1) then
-            write (stderr, *) "test_set_default failed: Default integer argument "// &
-                "not set correctly."
-            test_set_default = .false.
-        end if
-
-    end function test_set_default
 
     logical(c_bool) function test_level_shifted_diag_precond() bind(C)
         !
@@ -1351,9 +1245,10 @@ contains
         !
         ! this function tests the Jacobi-Davidson correction subroutine
         !
-        use opentrustregion, only: hess_x_type, jacobi_davidson_correction
+        use opentrustregion, only: solver_settings_type, hess_x_type, &
+                                   jacobi_davidson_correction
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp), dimension(6) :: vars, vector, solution, corr_vector, hess_vector
         integer(ip) :: error
@@ -1404,9 +1299,9 @@ contains
         !
         ! this function tests the minimum residual method subroutine
         !
-        use opentrustregion, only: hess_x_type, minres
+        use opentrustregion, only: solver_settings_type, hess_x_type, minres
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp), dimension(6) :: vars, rhs, solution, vector, hess_vector, corr_vector
         real(rp) :: mu
@@ -1491,7 +1386,7 @@ contains
         !
         ! this function tests the subroutine that prints the result table
         !
-        use opentrustregion, only: solver_settings_type, print_results
+        use opentrustregion, only: solver_settings_type
 
         type(solver_settings_type) :: settings
 
@@ -1503,7 +1398,7 @@ contains
 
         ! print row of results table without optional arguments and check if row is 
         ! correct
-        call print_results(settings, 1, 2.0_rp, 3.0_rp)
+        call settings%print_results(1, 2.0_rp, 3.0_rp)
         if (log_message /= "        1   |     2.00000000000000E+00   "// &
             "|   3.00E+00   |      -      |        -   |        -     |      -   ") then
             write (stderr, *) "test_print_results failed: Printed row without "// &
@@ -1512,7 +1407,7 @@ contains
         end if
 
         ! print row of results table with optional arguments
-        call print_results(settings, 1, 2.0_rp, 3.0_rp, 4.0_rp, 5, 6, 7.0_rp, 8.0_rp)
+        call settings%print_results(1, 2.0_rp, 3.0_rp, 4.0_rp, 5, 6, 7.0_rp, 8.0_rp)
         if (log_message /= "        1   |     2.00000000000000E+00   "// &
             "|   3.00E+00   |   4.00E+00  |   0 |   5  |    7.00E+00  |  8.00E+00") then
             write (stderr, *) "test_print_results failed: Printed row with "// &
@@ -1526,9 +1421,9 @@ contains
         !
         ! this function tests the logging subroutine
         !
-        use opentrustregion, only: log
+        use opentrustregion, only: solver_settings_type, log
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
 
         ! assume tests pass
         test_log = .true.
@@ -1537,7 +1432,7 @@ contains
         call setup_settings(settings)
 
         ! check if logging is correctly performed according to verbosity level when 
-        ! logger is provided 
+        ! logger is provided
         call log(settings, "This is a test message.", 1)
         if (trim(log_message) /= " This is a test message.") then
             write (stderr, *) "test_log failed: Log message is not printed "// &
@@ -1604,8 +1499,7 @@ contains
         ! this function tests the subroutine which determines whether to accept a 
         ! trust-region step
         !
-        use opentrustregion, only: solver_settings_type, &
-                                   accept_trust_region_step, &
+        use opentrustregion, only: solver_settings_type, accept_trust_region_step, &
                                    trust_radius_shrink_ratio, &
                                    trust_radius_expand_ratio, &
                                    trust_radius_shrink_factor, &
@@ -1778,9 +1672,8 @@ contains
         !
         ! this function tests the level-shifted Davidson subroutine
         !
-        use opentrustregion, only: obj_func_type, hess_x_type, precond_type, &
-                                   solver_settings_type, level_shifted_davidson, &
-                                   trust_radius_shrink_ratio, &
+        use opentrustregion, only: obj_func_type, hess_x_type, solver_settings_type, &
+                                   level_shifted_davidson, trust_radius_shrink_ratio, &
                                    trust_radius_expand_ratio, &
                                    trust_radius_shrink_factor, &
                                    trust_radius_expand_factor
@@ -1791,7 +1684,6 @@ contains
         integer(ip) :: i, imicro, imicro_jacobi_davidson, error
         procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
-        procedure(precond_type), pointer :: precond_funptr
         type(solver_settings_type) :: settings
         logical :: jacobi_davidson_started, max_precision_reached
 
@@ -1825,10 +1717,9 @@ contains
         ! describes the Newton step
         call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, &
-                                    .false., precond_funptr, trust_radius, solution, &
-                                    mu, imicro, imicro_jacobi_davidson, &
-                                    jacobi_davidson_started, max_precision_reached, &
-                                    error)
+                                    trust_radius, solution, mu, imicro, &
+                                    imicro_jacobi_davidson, jacobi_davidson_started, &
+                                    max_precision_reached, error)
         if (error /= 0) then
             write (stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "near minimum."
@@ -1873,10 +1764,9 @@ contains
         ! and describes a level-shifted Newton step
         call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, &
-                                    .false., precond_funptr, trust_radius, solution, &
-                                    mu, imicro, imicro_jacobi_davidson, &
-                                    jacobi_davidson_started, max_precision_reached, &
-                                    error)
+                                    trust_radius, solution, mu, imicro, &
+                                    imicro_jacobi_davidson, jacobi_davidson_started, &
+                                    max_precision_reached, error)
         if (error /= 0) then
             write (stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "near saddle point."
@@ -1918,10 +1808,9 @@ contains
         ! boundary and describes a level-shifted Newton step
         call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, &
-                                    .false., precond_funptr, trust_radius, solution, &
-                                    mu, imicro, imicro_jacobi_davidson, &
-                                    jacobi_davidson_started, max_precision_reached, &
-                                    error)
+                                    trust_radius, solution, mu, imicro, &
+                                    imicro_jacobi_davidson, jacobi_davidson_started, &
+                                    max_precision_reached, error)
         if (error /= 0) then
             write (stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "near saddle point with Jacobi-Davidson solver."
@@ -1962,8 +1851,8 @@ contains
         !
         ! this function tests the truncated conjugate gradient subroutine
         !
-        use opentrustregion, only: obj_func_type, hess_x_type, precond_type, &
-                                   solver_settings_type, truncated_conjugate_gradient, &
+        use opentrustregion, only: obj_func_type, hess_x_type, solver_settings_type, &
+                                   truncated_conjugate_gradient, &
                                    trust_radius_shrink_ratio, &
                                    trust_radius_expand_ratio, &
                                    trust_radius_shrink_factor, &
@@ -1975,7 +1864,6 @@ contains
         integer(ip) :: i, imicro, error
         procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
-        procedure(precond_type), pointer :: precond_funptr
         type(solver_settings_type) :: settings
         logical :: max_precision_reached
         real(rp), parameter :: h_diag_floor = 1e-10_rp
@@ -2002,10 +1890,9 @@ contains
         ! run truncated conjugate gradient, check whether the solution lies at the 
         ! trust region boundary and reduces the function value
         call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, .false., &
-                                          precond_funptr, settings, trust_radius, &
-                                          solution, imicro, max_precision_reached, &
-                                          error)
+                                          obj_func_funptr, hess_x_funptr, settings, &
+                                          trust_radius, solution, imicro, &
+                                          max_precision_reached, error)
         if (error /= 0) then
             write (stderr, *) "test_truncated_jacobi_davidson failed: Produced "// &
                 "error near minimum."
@@ -2041,10 +1928,9 @@ contains
         ! run truncated conjugate gradient, check whether the solution lies at the 
         ! trust region boundary and reduces the function value
         call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, .false., &
-                                          precond_funptr, settings, trust_radius, &
-                                          solution, imicro, max_precision_reached, &
-                                          error)
+                                          obj_func_funptr, hess_x_funptr, settings, &
+                                          trust_radius, solution, imicro, &
+                                          max_precision_reached, error)
         if (error /= 0) then
             write (stderr, *) "test_truncated_jacobi_davidson failed: Produced "// &
                 "error near saddle point."
@@ -2078,9 +1964,9 @@ contains
         ! this function tests the subroutine that adds the error origin to an error 
         ! code
         !
-        use opentrustregion, only: add_error_origin
+        use opentrustregion, only: solver_settings_type, add_error_origin
 
-        type(settings_type) :: settings
+        type(solver_settings_type) :: settings
         integer(ip) :: error
 
         ! assume tests pass

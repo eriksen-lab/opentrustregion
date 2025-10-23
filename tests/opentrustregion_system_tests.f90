@@ -11,8 +11,6 @@ module opentrustregion_system_tests
 
     implicit none
 
-    real(rp), parameter :: tol = 1e-10_rp
-
     integer(ip) :: n_ao, n_mo, n_param
     real(rp), allocatable :: r_ao_ints(:, :, :), r2_ao_ints(:, :), mo_coeff(:, :), &
                              r_mo_ints(:, :, :), rii_rij_rjj_rji(:, :)
@@ -45,12 +43,15 @@ contains
         !
         ! this function tests the Foster-Boys localization on water
         !
-        use opentrustregion, only: update_orbs_type, obj_func_type, solver, &
-                                   hess_x_type, stability_check
+        use opentrustregion, only: update_orbs_type, obj_func_type, &
+                                   solver_settings_type, solver,  hess_x_type, &
+                                   stability_settings_type, stability_check
 
         procedure(update_orbs_type), pointer :: update_orbs_funptr
         procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
+        type(solver_settings_type) :: solver_settings
+        type(stability_settings_type) :: stability_settings
         integer(ip) :: ios, error
         real(rp), allocatable :: kappa(:), grad(:), h_diag(:)
         real(rp) :: func
@@ -95,8 +96,12 @@ contains
         update_orbs_funptr => update_orbs
         obj_func_funptr => obj_func
 
+        ! initialize settings
+        call solver_settings%init(error)
+
         ! call solver
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, &
+                    solver_settings)
 
         ! check if error has occured
         if (error /= 0) then
@@ -117,8 +122,11 @@ contains
             test_h2o_atomic_fb = .false.
         end if
 
+        ! initialize settings
+        call stability_settings%init(error)
+
         ! perform stability check
-        call stability_check(h_diag, hess_x_funptr, stable, error)
+        call stability_check(h_diag, hess_x_funptr, stable, error, stability_settings)
 
         ! check if error has occured
         if (error /= 0) then
@@ -145,12 +153,15 @@ contains
         ! this function tests the Foster-Boys localization on water starting from a
         ! saddle point
         !
-        use opentrustregion, only: update_orbs_type, obj_func_type, solver, &
-                                   hess_x_type, stability_check
+        use opentrustregion, only: update_orbs_type, obj_func_type, &
+                                   solver_settings_type, solver, hess_x_type, &
+                                   stability_settings_type, stability_check
 
         procedure(update_orbs_type), pointer :: update_orbs_funptr
         procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
+        type(solver_settings_type) :: solver_settings
+        type(stability_settings_type) :: stability_settings
         integer(ip) :: ios, error
         real(rp), allocatable :: kappa(:), grad(:), h_diag(:)
         real(rp) :: func
@@ -195,8 +206,12 @@ contains
         update_orbs_funptr => update_orbs
         obj_func_funptr => obj_func
 
+        ! initialize settings
+        call solver_settings%init(error)
+
         ! call solver
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, &
+                    solver_settings)
 
         ! check if error has occured
         if (error /= 0) then
@@ -217,8 +232,11 @@ contains
             test_h2o_saddle_fb = .false.
         end if
 
+        ! initialize settings
+        call stability_settings%init(error)
+
         ! perform stability check
-        call stability_check(h_diag, hess_x_funptr, stable, error)
+        call stability_check(h_diag, hess_x_funptr, stable, error, stability_settings)
 
         ! check if error has occured
         if (error /= 0) then
