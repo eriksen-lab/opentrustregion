@@ -6,22 +6,28 @@
 
 module c_interface
 
-    use opentrustregion, only: rp, ip, solver_type, stability_check_type, &
+    use opentrustregion, only: rp, ip, kw_len, solver_type, stability_check_type, &
                                standard_solver => solver, &
-                               standard_stability_check => stability_check
+                               standard_stability_check => stability_check, &
+                               default_solver_settings, default_stability_settings
     use, intrinsic :: iso_c_binding, only: c_double, c_int64_t, c_int32_t, c_bool, &
                                            c_ptr, c_funptr, c_f_pointer, &
                                            c_f_procpointer, c_associated, c_char, &
-                                           c_null_char
+                                           c_null_char, c_null_funptr
 
     implicit none
 
     integer, parameter :: c_rp = c_double
 #ifdef USE_ILP64
     integer, parameter :: c_ip = c_int64_t  ! 64-bit integers
+    logical(c_bool), bind(C) :: ilp64 = .true._c_bool
 #else
     integer, parameter :: c_ip = c_int32_t  ! 32-bit integers
+    logical(c_bool), bind(C) :: ilp64 = .false._c_bool
 #endif
+
+    ! maximum keyword length
+    integer(c_ip), bind(C) :: kw_len_c = kw_len
 
     ! define procedure pointer which will point to the Fortran procedures
     procedure(update_orbs_c_type), pointer :: update_orbs_before_wrapping => null()
@@ -89,46 +95,40 @@ module c_interface
         subroutine logger_c_type(message) bind(C)
             import :: c_char
 
-            character(kind=c_char), intent(in) :: message(*)
+            character(c_char), intent(in) :: message(*)
         end subroutine logger_c_type
     end interface
 
-    ! interface for setting default values
-    interface set_default_c_ptr
-        module procedure set_default_c_ptr_integer, set_default_c_ptr_real, &
-            set_default_c_ptr_logical
-    end interface
+    ! derived type for solver settings
+    type, bind(C) :: solver_settings_type_c
+        type(c_funptr) :: precond, conv_check, logger
+        logical(c_bool) :: stability, line_search, initialized
+        real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
+        integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
+                         jacobi_davidson_start, seed, verbose
+        character(c_char) :: subsystem_solver(kw_len + 1)
+    end type
+
+    type, bind(C) :: stability_settings_type_c
+        type(c_funptr) :: precond, logger
+        logical(c_bool) :: initialized
+        real(c_rp) :: conv_tol
+        integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
+                         verbose
+        character(c_char) :: diag_solver(kw_len + 1)
+    end type
 
     ! interfaces for solver and stability C wrapper subroutines
     interface
         function solver_c_wrapper_type(update_orbs_c_funptr, obj_func_c_funptr, &
-                                       n_param_c, precond_c_funptr, &
-                                       conv_check_c_funptr, stability_c_ptr, &
-                                       line_search_c_ptr, davidson_c_ptr, &
-                                       jacobi_davidson_c_ptr, &
-                                       prefer_jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                       n_random_trial_vectors_c_ptr, &
-                                       start_trust_radius_c_ptr, n_macro_c_ptr, &
-                                       n_micro_c_ptr, global_red_factor_c_ptr, &
-                                       local_red_factor_c_ptr, seed_c_ptr, &
-                                       verbose_c_ptr, logger_c_funptr) result(error_c) &
+                                       n_param_c, settings_c) result(error_c) &
             bind(C, name="solver")
 
-        import :: c_funptr, c_ip, c_ptr      
+        import :: c_funptr, c_ip, solver_settings_type_c
 
-        type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr, &
-                                             precond_c_funptr, conv_check_c_funptr, &
-                                             logger_c_funptr
+        type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
-        type(c_ptr), intent(in), value :: stability_c_ptr, line_search_c_ptr, &
-                                          davidson_c_ptr, jacobi_davidson_c_ptr, &
-                                          prefer_jacobi_davidson_c_ptr, &
-                                          conv_tol_c_ptr, &
-                                          n_random_trial_vectors_c_ptr, &
-                                          start_trust_radius_c_ptr, n_macro_c_ptr, &
-                                          n_micro_c_ptr, global_red_factor_c_ptr, &
-                                          local_red_factor_c_ptr, seed_c_ptr, &
-                                          verbose_c_ptr
+        type(solver_settings_type_c), intent(in), value :: settings_c
         integer(c_ip) :: error_c
 
         end function solver_c_wrapper_type
@@ -136,24 +136,17 @@ module c_interface
 
     interface
         function stability_check_c_wrapper_type(h_diag_c_ptr, hess_x_c_funptr, &
-                                                n_param_c, stable_c, kappa_c_ptr, &
-                                                precond_c_funptr, &
-                                                jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                                n_random_trial_vectors_c_ptr, &
-                                                n_iter_c_ptr, verbose_c_ptr, &
-                                                logger_c_funptr) result(error_c) &
+                                                n_param_c, stable_c, settings_c, &
+                                                kappa_c_ptr) result(error_c) &
             bind(C, name="stability_check")
 
-            import :: c_ptr, c_ip, c_funptr, c_bool
+            import :: c_ptr, c_ip, c_funptr, c_bool, stability_settings_type_c
 
-            type(c_ptr), intent(in), value :: h_diag_c_ptr, kappa_c_ptr, &
-                                               jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                               n_random_trial_vectors_c_ptr, &
-                                               n_iter_c_ptr, verbose_c_ptr
+            type(c_ptr), intent(in), value :: h_diag_c_ptr, kappa_c_ptr
             integer(c_ip), intent(in), value :: n_param_c
-            type(c_funptr), intent(in), value :: hess_x_c_funptr, precond_c_funptr, &
-                                                 logger_c_funptr
+            type(c_funptr), intent(in), value :: hess_x_c_funptr
             logical(c_bool), intent(out) :: stable_c
+            type(stability_settings_type_c), intent(in), value :: settings_c
             integer(c_ip) :: error_c
 
         end function stability_check_c_wrapper_type
@@ -169,82 +162,33 @@ module c_interface
     procedure(stability_check_c_wrapper_type), pointer :: &
         stability_check_c_wrapper_ptr => stability_check_c_wrapper
 
+    ! interfaces for converting C settings to Fortran settings
+    interface assignment(=)
+        module procedure assign_solver_f_c
+        module procedure assign_stability_f_c
+        module procedure assign_solver_c_f
+        module procedure assign_stability_c_f
+    end interface
+
 contains
 
     function solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param_c, &
-                              precond_c_funptr, conv_check_c_funptr, stability_c_ptr, &
-                              line_search_c_ptr, davidson_c_ptr, &
-                              jacobi_davidson_c_ptr, prefer_jacobi_davidson_c_ptr, &
-                              conv_tol_c_ptr, n_random_trial_vectors_c_ptr, &
-                              start_trust_radius_c_ptr, n_macro_c_ptr, n_micro_c_ptr, &
-                              global_red_factor_c_ptr, local_red_factor_c_ptr, &
-                              seed_c_ptr, verbose_c_ptr, logger_c_funptr) &
-        result(error_c) bind(C, name="solver")
+                              settings_c) result(error_c) bind(C, name="solver")
         !
         ! this subroutine wraps the solver subroutine to convert C variables to Fortran
         ! variables
         !
-        use opentrustregion, only: solver_stability_default, &
-                                   solver_line_search_default, &
-                                   solver_davidson_default, &
-                                   solver_jacobi_davidson_default, &
-                                   solver_prefer_jacobi_davidson_default, &
-                                   solver_conv_tol_default, &
-                                   solver_n_random_trial_vectors_default, &
-                                   solver_start_trust_radius_default, &
-                                   solver_n_macro_default, solver_n_micro_default, &
-                                   solver_global_red_factor_default, &
-                                   solver_local_red_factor_default, &
-                                   solver_seed_default, solver_verbose_default
-                                   
+        use opentrustregion, only: solver_settings_type
 
-        type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr, &
-                                             precond_c_funptr, conv_check_c_funptr, &
-                                             logger_c_funptr
+        type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
-        type(c_ptr), intent(in), value :: stability_c_ptr, line_search_c_ptr, &
-                                          davidson_c_ptr, jacobi_davidson_c_ptr, &
-                                          prefer_jacobi_davidson_c_ptr, &
-                                          conv_tol_c_ptr, &
-                                          n_random_trial_vectors_c_ptr, &
-                                          start_trust_radius_c_ptr, n_macro_c_ptr, &
-                                          n_micro_c_ptr, global_red_factor_c_ptr, &
-                                          local_red_factor_c_ptr, seed_c_ptr, &
-                                          verbose_c_ptr
+        type(solver_settings_type_c), intent(in), value :: settings_c
         integer(c_ip) :: error_c
 
-        logical :: stability, line_search, davidson, jacobi_davidson, &
-                   prefer_jacobi_davidson
-        real(rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
-        integer(ip) :: n_param, n_random_trial_vectors, n_macro, n_micro, seed, &
-                       verbose, error
         procedure(update_orbs_c_wrapper), pointer :: update_orbs
         procedure(obj_func_c_wrapper), pointer :: obj_func
-        procedure(precond_c_wrapper), pointer :: precond
-        procedure(conv_check_c_wrapper), pointer :: conv_check
-        procedure(logger_c_wrapper), pointer :: logger
-
-        ! set optional arguments to default values
-        stability = set_default_c_ptr(stability_c_ptr, solver_stability_default)
-        line_search = set_default_c_ptr(line_search_c_ptr, solver_line_search_default)
-        davidson = set_default_c_ptr(davidson_c_ptr, solver_davidson_default)
-        jacobi_davidson = set_default_c_ptr(jacobi_davidson_c_ptr, &
-                                            solver_jacobi_davidson_default)
-        prefer_jacobi_davidson = set_default_c_ptr(prefer_jacobi_davidson_c_ptr, &
-                                                  solver_prefer_jacobi_davidson_default)
-        conv_tol = set_default_c_ptr(conv_tol_c_ptr, solver_conv_tol_default)
-        n_random_trial_vectors = set_default_c_ptr(n_random_trial_vectors_c_ptr, &
-                                                  solver_n_random_trial_vectors_default)
-        start_trust_radius = set_default_c_ptr(start_trust_radius_c_ptr, &
-                                               solver_start_trust_radius_default)
-        n_macro = set_default_c_ptr(n_macro_c_ptr, solver_n_macro_default)
-        n_micro = set_default_c_ptr(n_micro_c_ptr, solver_n_micro_default)
-        global_red_factor = set_default_c_ptr(global_red_factor_c_ptr, &
-                                              solver_global_red_factor_default)
-        local_red_factor = set_default_c_ptr(local_red_factor_c_ptr, &
-                                             solver_local_red_factor_default)
-        seed = set_default_c_ptr(seed_c_ptr, solver_seed_default)
-        verbose = set_default_c_ptr(verbose_c_ptr, solver_verbose_default)
+        integer(ip) :: n_param, error
+        type(solver_settings_type) :: settings
 
         ! associate the input C pointer to update_orbs subroutine to a Fortran
         ! procedure pointer
@@ -259,31 +203,11 @@ contains
         ! convert dummy argument to Fortran kind
         n_param = int(n_param_c, kind=ip)
 
-        ! call solver with or without optional procedures
-        if (c_associated(precond_c_funptr)) then
-            call c_f_procpointer(cptr=precond_c_funptr, fptr=precond_before_wrapping)
-            precond => precond_c_wrapper
-        else
-            precond => null()
-        end if
-        if (c_associated(conv_check_c_funptr)) then
-            call c_f_procpointer(cptr=conv_check_c_funptr, &
-                                 fptr=conv_check_before_wrapping)
-            conv_check => conv_check_c_wrapper
-        else
-            conv_check => null()
-        end if
-        if (c_associated(logger_c_funptr)) then
-            call c_f_procpointer(cptr=logger_c_funptr, fptr=logger_before_wrapping)
-            logger => logger_c_wrapper
-        else
-            logger => null()
-        end if
-        call solver(update_orbs, obj_func, n_param, error, precond, conv_check, &
-                    stability, line_search, davidson, jacobi_davidson, &
-                    prefer_jacobi_davidson, conv_tol, n_random_trial_vectors, &
-                    start_trust_radius, n_macro, n_micro, global_red_factor, &
-                    local_red_factor, seed, verbose, logger)
+        ! convert settings
+        settings = settings_c
+
+        ! call solver
+        call solver(update_orbs, obj_func, n_param, error, settings)
 
         ! convert return arguments to C kind
         error_c = int(error, kind=c_ip)
@@ -291,48 +215,27 @@ contains
     end function solver_c_wrapper
 
     function stability_check_c_wrapper(h_diag_c_ptr, hess_x_c_funptr, n_param_c, &
-                                       stable_c, kappa_c_ptr, precond_c_funptr, &
-                                       jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                       n_random_trial_vectors_c_ptr, n_iter_c_ptr, &
-                                       verbose_c_ptr, logger_c_funptr) result(error_c) &
-        bind(C, name="stability_check")
+                                       stable_c, settings_c, kappa_c_ptr) &                    
+        result(error_c) bind(C, name="stability_check")
         !
         ! this subroutine wraps the stability check subroutine to convert C variables
         ! to Fortran variables
         !
-        use opentrustregion, only: stability_jacobi_davidson_default, &
-                                   stability_conv_tol_default, &
-                                   stability_n_random_trial_vectors_default, &
-                                   stability_n_iter_default, &
-                                   stability_verbose_default
+        use opentrustregion, only: stability_settings_type
 
-        type(c_ptr), intent(in), value :: h_diag_c_ptr, kappa_c_ptr, &
-                                          jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                          n_random_trial_vectors_c_ptr, n_iter_c_ptr, &
-                                          verbose_c_ptr
+        type(c_ptr), intent(in), value :: h_diag_c_ptr, kappa_c_ptr
         integer(c_ip), intent(in), value :: n_param_c
-        type(c_funptr), intent(in), value :: hess_x_c_funptr, precond_c_funptr, &
-                                             logger_c_funptr
+        type(c_funptr), intent(in), value :: hess_x_c_funptr
         logical(c_bool), intent(out) :: stable_c
+        type(stability_settings_type_c), intent(in), value :: settings_c
         integer(c_ip) :: error_c
 
-        real(rp) :: conv_tol
         real(rp), pointer :: h_diag_ptr(:), kappa_ptr(:)
         real(c_rp), pointer :: h_diag_ptr_c(:), kappa_ptr_c(:)
-        logical :: stable, jacobi_davidson
-        integer(ip) :: n_random_trial_vectors, n_iter, verbose, error
+        logical :: stable
+        integer(ip) :: error
         procedure(hess_x_c_wrapper), pointer :: hess_x
-        procedure(precond_c_wrapper), pointer :: precond
-        procedure(logger_c_wrapper), pointer :: logger
-
-        ! set optional arguments to default values
-        jacobi_davidson = set_default_c_ptr(jacobi_davidson_c_ptr, &
-                                            stability_jacobi_davidson_default)
-        conv_tol = set_default_c_ptr(conv_tol_c_ptr, stability_conv_tol_default)
-        n_random_trial_vectors = set_default_c_ptr(n_random_trial_vectors_c_ptr, &
-                                               stability_n_random_trial_vectors_default)
-        n_iter = set_default_c_ptr(n_iter_c_ptr, stability_n_iter_default)
-        verbose = set_default_c_ptr(verbose_c_ptr, stability_verbose_default)
+        type(stability_settings_type) :: settings
 
         ! associate the input C pointer to update_orbs subroutine to a Fortran
         ! procedure pointer
@@ -357,34 +260,21 @@ contains
                 allocate(kappa_ptr(n_param_c))
             end if
         end if
-        if (c_associated(precond_c_funptr)) then
-            call c_f_procpointer(cptr=precond_c_funptr, fptr=precond_before_wrapping)
-            precond => precond_c_wrapper
-        else
-            precond => null()
-        end if
-        if (c_associated(logger_c_funptr)) then
-            call c_f_procpointer(cptr=logger_c_funptr, fptr=logger_before_wrapping)
-            logger => logger_c_wrapper
-        else
-            logger => null()
-        end if
+
+        ! convert settings
+        settings = settings_c
 
         ! call stability check
         if (c_associated(kappa_c_ptr)) then
-            call stability_check(h_diag_ptr, hess_x, stable, error, kappa_ptr, &
-                                 precond, jacobi_davidson, conv_tol, &
-                                 n_random_trial_vectors, n_iter, verbose, logger)
+            call stability_check(h_diag_ptr, hess_x, stable, error, settings, &
+                                 kappa=kappa_ptr)
             if (rp /= c_rp) then
                 call c_f_pointer(cptr=kappa_c_ptr, fptr=kappa_ptr_c, shape=[n_param_c])
                 kappa_ptr_c = kappa_ptr
                 deallocate(kappa_ptr)
             end if
         else
-            call stability_check(h_diag_ptr, hess_x, stable, error, precond=precond, &
-                                 jacobi_davidson=jacobi_davidson, conv_tol=conv_tol, &
-                                 n_random_trial_vectors=n_random_trial_vectors, &
-                                 n_iter=n_iter, verbose=verbose, logger=logger)
+            call stability_check(h_diag_ptr, hess_x, stable, error, settings)
         end if
         if (rp /= c_rp) deallocate(h_diag_ptr)
 
@@ -600,64 +490,255 @@ contains
 
     end subroutine logger_c_wrapper
 
-    function set_default_c_ptr_integer(optional_value, default_value) result(variable)
+    subroutine init_solver_settings_c(settings) bind(C, name="init_solver_settings")
         !
-        ! this function sets a default value for reals
+        ! this subroutine initializes the C solver settings
         !
-        integer(ip), intent(in)  :: default_value
-        type(c_ptr), intent(in) :: optional_value
+        type(solver_settings_type_c), intent(inout) :: settings
 
-        integer(ip) :: variable
+        settings = default_solver_settings
 
-        integer(c_ip), pointer :: variable_ptr
+    end subroutine init_solver_settings_c
 
-        if (c_associated(optional_value)) then
-            call c_f_pointer(cptr=optional_value, fptr=variable_ptr)
-            variable = int(variable_ptr, kind=ip)
-        else
-            variable = default_value
+    subroutine init_stability_settings_c(settings) &
+        bind(C, name="init_stability_settings")
+        !
+        ! this subroutine initializes the C stability settings
+        !
+        type(stability_settings_type_c), intent(inout) :: settings
+
+        settings = default_stability_settings
+
+    end subroutine init_stability_settings_c
+
+    subroutine assign_solver_f_c(settings, settings_c)
+        !
+        ! this subroutine converts solver settings from C to Fortran
+        !
+        use opentrustregion, only: solver_settings_type
+
+        type(solver_settings_type), intent(out) :: settings
+        type(solver_settings_type_c), intent(in) :: settings_c
+
+        if (settings_c%initialized) then
+            ! convert callback functions
+            if (c_associated(settings_c%precond)) then
+                call c_f_procpointer(cptr=settings_c%precond, &
+                                     fptr=precond_before_wrapping)
+                settings%precond => precond_c_wrapper
+            else
+                settings%precond => null()
+            end if
+            if (c_associated(settings_c%conv_check)) then
+                call c_f_procpointer(cptr=settings_c%conv_check, &
+                                     fptr=conv_check_before_wrapping)
+                settings%conv_check => conv_check_c_wrapper
+            else
+                settings%conv_check => null()
+            end if
+            if (c_associated(settings_c%logger)) then
+                call c_f_procpointer(cptr=settings_c%logger, &
+                                     fptr=logger_before_wrapping)
+                settings%logger => logger_c_wrapper
+            else
+                settings%logger => null()
+            end if
+
+            ! convert logicals
+            settings%stability = logical(settings_c%stability)
+            settings%line_search = logical(settings_c%line_search)
+
+            ! convert reals
+            settings%conv_tol = real(settings_c%conv_tol, kind=rp)
+            settings%start_trust_radius = real(settings_c%start_trust_radius, kind=rp)
+            settings%global_red_factor = real(settings_c%global_red_factor, kind=rp)
+            settings%local_red_factor = real(settings_c%local_red_factor, kind=rp)
+
+            ! convert integers
+            settings%n_random_trial_vectors = int(settings_c%n_random_trial_vectors, &
+                                                  kind=ip)
+            settings%n_macro = int(settings_c%n_macro, kind=ip)
+            settings%n_micro = int(settings_c%n_micro, kind=ip)
+            settings%jacobi_davidson_start = int(settings_c%jacobi_davidson_start, &
+                                                 kind=ip)
+            settings%seed = int(settings_c%seed, kind=ip)
+            settings%verbose = int(settings_c%verbose, kind=ip)
+
+            ! convert characters
+            settings%subsystem_solver = character_from_c(settings_c%subsystem_solver)
+
+            ! set settings to initialized
+            settings%initialized = .true.
         end if
 
-    end function set_default_c_ptr_integer
+    end subroutine assign_solver_f_c
 
-    function set_default_c_ptr_real(optional_value, default_value) result(variable)
+    subroutine assign_stability_f_c(settings, settings_c)
         !
-        ! this function sets a default value for reals
+        ! this subroutine converts stability check settings from C to Fortran
         !
-        real(rp), intent(in)  :: default_value
-        type(c_ptr), intent(in) :: optional_value
+        use opentrustregion, only: stability_settings_type
 
-        real(rp) :: variable
+        type(stability_settings_type), intent(out) :: settings
+        type(stability_settings_type_c), intent(in) :: settings_c
 
-        real(c_rp), pointer :: variable_ptr
+        if (settings_c%initialized) then
+            ! convert callback functions
+            if (c_associated(settings_c%precond)) then
+                call c_f_procpointer(cptr=settings_c%precond, &
+                                     fptr=precond_before_wrapping)
+                settings%precond => precond_c_wrapper
+            else
+                settings%precond => null()
+            end if
+            if (c_associated(settings_c%logger)) then
+                call c_f_procpointer(cptr=settings_c%logger, &
+                                     fptr=logger_before_wrapping)
+                settings%logger => logger_c_wrapper
+            else
+                settings%logger => null()
+            end if
 
-        if (c_associated(optional_value)) then
-            call c_f_pointer(cptr=optional_value, fptr=variable_ptr)
-            variable = real(variable_ptr, kind=rp)
-        else
-            variable = default_value
+            ! convert reals
+            settings%conv_tol = real(settings_c%conv_tol, kind=rp)
+
+            ! convert integers
+            settings%n_random_trial_vectors = int(settings_c%n_random_trial_vectors, &
+                                                  kind=ip)
+            settings%n_iter = int(settings_c%n_iter, kind=ip)
+            settings%jacobi_davidson_start = int(settings_c%jacobi_davidson_start, &
+                                                 kind=ip)
+            settings%seed = int(settings_c%seed, kind=ip)
+            settings%verbose = int(settings_c%verbose, kind=ip)
+
+            ! convert characters
+            settings%diag_solver = character_from_c(settings_c%diag_solver)
+
+            ! set settings to initialized
+            settings%initialized = .true.
         end if
 
-    end function set_default_c_ptr_real
+    end subroutine assign_stability_f_c
 
-    function set_default_c_ptr_logical(optional_value, default_value) result(variable)
+    subroutine assign_solver_c_f(settings_c, settings)
         !
-        ! this function sets a default value for logicals
+        ! this subroutine converts solver settings from Fortran to C
         !
-        logical, intent(in)  :: default_value
-        type(c_ptr), intent(in) :: optional_value
+        use opentrustregion, only: solver_settings_type
 
-        logical :: variable
+        type(solver_settings_type_c), intent(out) :: settings_c
+        type(solver_settings_type), intent(in) :: settings
 
-        logical(c_bool), pointer :: variable_ptr
+        if (settings%initialized) then
+            ! callback functions cannot be converted
+            settings_c%precond = c_null_funptr
+            settings_c%conv_check = c_null_funptr
+            settings_c%logger = c_null_funptr
 
-        if (c_associated(optional_value)) then
-            call c_f_pointer(cptr=optional_value, fptr=variable_ptr)
-            variable = logical(variable_ptr)
-        else
-            variable = default_value
+            ! convert logicals
+            settings_c%stability = logical(settings%stability, kind=c_bool)
+            settings_c%line_search = logical(settings%line_search, kind=c_bool)
+
+            ! convert reals
+            settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
+            settings_c%start_trust_radius = real(settings%start_trust_radius, kind=c_rp)
+            settings_c%global_red_factor = real(settings%global_red_factor, kind=c_rp)
+            settings_c%local_red_factor = real(settings%local_red_factor, kind=c_rp)
+
+            ! convert integers
+            settings_c%n_random_trial_vectors = int(settings%n_random_trial_vectors, &
+                                                    kind=c_ip)
+            settings_c%n_macro = int(settings%n_macro, kind=c_ip)
+            settings_c%n_micro = int(settings%n_micro, kind=c_ip)
+            settings_c%jacobi_davidson_start = int(settings%jacobi_davidson_start, &
+                                                   kind=c_ip)
+            settings_c%seed = int(settings%seed, kind=c_ip)
+            settings_c%verbose = int(settings%verbose, kind=c_ip)
+
+            ! convert characters
+            settings_c%subsystem_solver = character_to_c(settings%subsystem_solver)
+
+            ! set settings to initialized
+            settings_c%initialized = .true._c_bool
         end if
 
-    end function set_default_c_ptr_logical
+    end subroutine assign_solver_c_f
+
+    subroutine assign_stability_c_f(settings_c, settings)
+        !
+        ! this subroutine converts stability settings from Fortran to C
+        !
+        use opentrustregion, only: stability_settings_type
+
+        type(stability_settings_type_c), intent(out) :: settings_c
+        type(stability_settings_type), intent(in) :: settings
+
+        if (settings%initialized) then
+            ! callback functions cannot be converted
+            settings_c%precond = c_null_funptr
+            settings_c%logger = c_null_funptr
+
+            ! convert reals
+            settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
+
+            ! convert integers
+            settings_c%n_random_trial_vectors = int(settings%n_random_trial_vectors, &
+                                                    kind=c_ip)
+            settings_c%n_iter = int(settings%n_iter, kind=c_ip)
+            settings_c%jacobi_davidson_start = int(settings%jacobi_davidson_start, &
+                                                   kind=c_ip)
+            settings_c%seed = int(settings%seed, kind=c_ip)
+            settings_c%verbose = int(settings%verbose, kind=c_ip)
+
+            ! convert characters
+            settings_c%diag_solver = character_to_c(settings%diag_solver)
+
+            ! set settings to initialized
+            settings_c%initialized = .true._c_bool
+        end if
+
+    end subroutine assign_stability_c_f
+
+    function character_from_c(char_c) result(char_f)
+        !
+        ! this function converts a C null-terminated character array to a Fortran 
+        ! character
+        !
+        character(c_char), intent(in) :: char_c(*)
+        character(:), allocatable :: char_f
+
+        integer(ip) :: n
+
+        ! allocate Fortran character
+        n = 1
+        do while (char_c(n) /= c_null_char)
+            n = n + 1
+        end do
+        allocate(character(n - 1) :: char_f)
+
+        ! copy and convert each character
+        char_f = transfer(char_c(1:n - 1), char_f)
+
+    end function character_from_c
+
+    function character_to_c(char_f) result(char_c)
+        !
+        ! this function converts a Fortran character string to a C null-terminated 
+        ! character array
+        !
+        character(*), intent(in) :: char_f
+        character(c_char), allocatable :: char_c(:)
+
+        integer(ip) :: n
+
+        ! allocate C null-terminated character array
+        n = len_trim(char_f)
+        allocate(char_c(n + 1))
+
+        ! copy and convert each character
+        char_c(1:n) = transfer(char_f(1:n), char_c(1:n))
+        char_c(n + 1) = c_null_char
+
+    end function character_to_c
 
 end module c_interface

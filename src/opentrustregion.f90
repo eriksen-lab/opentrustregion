@@ -17,29 +17,10 @@ module opentrustregion
 #else
     integer, parameter :: ip = int32  ! 32-bit integers
 #endif
+    integer, parameter :: kw_len = 64
 
     ! mathematical constants
     real(rp), parameter :: pi = 4.0_rp * atan(1.0_rp)
-
-    ! define default optional arguments
-    logical, parameter :: solver_stability_default = .false., &
-                          solver_line_search_default = .false., &
-                          solver_davidson_default = .true., &
-                          solver_jacobi_davidson_default = .false., &
-                          solver_prefer_jacobi_davidson_default = .false., &
-                          stability_jacobi_davidson_default = .true.
-    real(rp), parameter :: solver_conv_tol_default = 1e-5_rp, &
-                           solver_start_trust_radius_default = 0.4_rp, &
-                           solver_global_red_factor_default = 1e-3_rp, &
-                           solver_local_red_factor_default = 1e-4_rp, &
-                           stability_conv_tol_default = 1e-8_rp
-    integer(ip), parameter :: solver_n_random_trial_vectors_default = 1, &
-                              solver_n_macro_default = 150, &
-                              solver_n_micro_default = 50, &
-                              solver_seed_default = 42, solver_verbose_default = 0, &
-                              stability_n_random_trial_vectors_default = 20, &
-                              stability_n_iter_default = 100, &
-                              stability_verbose_default = 0
 
     ! define trust region parameters
     real(rp), parameter :: trust_radius_shrink_ratio = 0.25_rp, &
@@ -56,39 +37,6 @@ module opentrustregion
     ! define useful parameters
     real(rp), parameter :: numerical_zero = 1e-14_rp, precond_floor = 1e-10_rp, &
                            hess_symm_thres = 1e-12_rp
-    integer(ip), parameter :: jacobi_davidson_start = 30
-
-    ! derived type for solver settings
-    type :: settings_type
-        logical :: jacobi_davidson
-        real(rp) :: conv_tol
-        integer(ip) :: n_random_trial_vectors, verbose
-        procedure(logger_type), pointer, nopass :: logger => null()
-    contains
-        procedure :: log
-    end type
-
-    type, extends(settings_type) :: solver_settings_type
-        logical :: stability, line_search, davidson, prefer_jacobi_davidson
-        real(rp) :: start_trust_radius, global_red_factor, local_red_factor
-        integer(ip) :: n_macro, n_micro, seed
-    contains
-        procedure :: init_solver_settings, print_results
-    end type
-
-    type, extends(settings_type) :: stability_settings_type
-        integer(ip) :: n_iter
-    contains
-        procedure :: init_stability_settings
-    end type
-
-    ! interface for setting default values
-    interface set_default
-        module procedure set_default_real, set_default_integer, set_default_logical
-    end interface
-
-    ! define global variables
-    integer(ip) :: tot_orb_update = 0, tot_hess_x = 0
 
     ! interfaces for callback functions
     abstract interface
@@ -149,53 +97,86 @@ module opentrustregion
         end subroutine logger_type
     end interface
 
+    ! derived type for solver settings
+    type, abstract :: settings_type
+        logical :: initialized = .false.
+        real(rp) :: conv_tol
+        integer(ip) :: n_random_trial_vectors, jacobi_davidson_start, seed, verbose
+        procedure(precond_type), pointer, nopass :: precond
+        procedure(logger_type), pointer, nopass :: logger
+    contains
+        procedure :: log
+        procedure(init_type), deferred :: init
+    end type
+
+    abstract interface
+        subroutine init_type(self, error)
+            import :: settings_type, ip
+
+            class(settings_type), intent(out) :: self
+            integer(ip), intent(out) :: error
+        end subroutine init_type
+    end interface
+
+    type, extends(settings_type) :: solver_settings_type
+        logical :: stability, line_search
+        real(rp) :: start_trust_radius, global_red_factor, local_red_factor
+        integer(ip) :: n_macro, n_micro
+        character(kw_len) :: subsystem_solver
+        procedure(conv_check_type), pointer, nopass :: conv_check
+    contains
+        procedure :: init => init_solver_settings, print_results
+    end type
+
+    type, extends(settings_type) :: stability_settings_type
+        integer(ip) :: n_iter
+        character(kw_len) :: diag_solver
+    contains
+        procedure :: init => init_stability_settings
+    end type
+
+    ! default settings
+    type(solver_settings_type), parameter :: default_solver_settings = &
+        solver_settings_type(precond = null(), conv_check = null(), logger = null(), &
+                             stability = .false., line_search = .false., &
+                             initialized = .true., conv_tol = 1e-5_rp, &
+                             start_trust_radius = 0.4_rp, global_red_factor = 1e-3_rp, &
+                             local_red_factor = 1e-4_rp, n_random_trial_vectors = 1, &
+                             n_macro = 150, n_micro = 50, jacobi_davidson_start = 30, &
+                             seed = 42, verbose = 0, subsystem_solver = "davidson")
+    type(stability_settings_type), parameter :: default_stability_settings = &
+        stability_settings_type(precond = null(), logger = null(), &
+                                initialized = .true., conv_tol = 1e-8_rp, &
+                                n_random_trial_vectors = 20, n_iter = 100, &
+                                jacobi_davidson_start = 50, seed = 42, verbose = 0, &
+                                diag_solver = "davidson")
+
     ! interfaces for solver and stability_check subroutines
     interface
-        subroutine solver_type(update_orbs, obj_func, n_param, error, precond, &
-                               conv_check, stability, line_search, davidson, &
-                               jacobi_davidson, prefer_jacobi_davidson, conv_tol, &
-                               n_random_trial_vectors, start_trust_radius, &
-                               n_macro, n_micro, global_red_factor, local_red_factor, &
-                               seed, verbose, logger)
+        subroutine solver_type(update_orbs, obj_func, n_param, error, settings)
 
-            import :: rp, ip, update_orbs_type, obj_func_type, precond_type, &
-                      conv_check_type, logger_type
+            import :: ip, update_orbs_type, obj_func_type, solver_settings_type
 
             procedure(update_orbs_type), intent(in), pointer :: update_orbs
             procedure(obj_func_type), intent(in), pointer :: obj_func
             integer(ip), intent(in) :: n_param
             integer(ip), intent(out) :: error
-            procedure(precond_type), intent(in), pointer, optional :: precond
-            procedure(conv_check_type), intent(in), pointer, optional :: conv_check
-            logical, intent(in), optional :: stability, line_search, davidson, &
-                                             jacobi_davidson, prefer_jacobi_davidson
-            real(rp), intent(in), optional :: conv_tol, start_trust_radius, &
-                                              global_red_factor, local_red_factor
-            integer(ip), intent(in), optional :: n_random_trial_vectors, n_macro, &
-                                                 n_micro, seed, verbose
-            procedure(logger_type), intent(in), pointer, optional :: logger       
+            type(solver_settings_type), intent(inout) :: settings
 
         end subroutine solver_type
     end interface
 
     interface
-        subroutine stability_check_type(h_diag, hess_x, stable, error, kappa, precond, &
-                                        jacobi_davidson, conv_tol, &
-                                        n_random_trial_vectors, n_iter, verbose, logger)
+        subroutine stability_check_type(h_diag, hess_x, stable, error, settings, kappa)
 
-            import:: rp, ip, hess_x_type, precond_type, conv_check_type, logger_type
+            import:: rp, ip, hess_x_type, stability_settings_type
 
             real(rp), intent(in) :: h_diag(:)
             procedure(hess_x_type), intent(in), pointer :: hess_x
             logical, intent(out) :: stable
             integer(ip), intent(out) :: error
+            type(stability_settings_type), intent(inout) :: settings
             real(rp), intent(out), optional :: kappa(:)
-            procedure(precond_type), intent(in), pointer, optional :: precond
-            logical, intent(in), optional :: jacobi_davidson
-            real(rp), intent(in), optional :: conv_tol
-            integer(ip), intent(in), optional :: n_random_trial_vectors, n_iter, &
-                                                 verbose
-            procedure(logger_type), intent(in), pointer, optional :: logger   
 
         end subroutine stability_check_type
     end interface
@@ -204,37 +185,28 @@ module opentrustregion
     procedure(solver_type), pointer :: solver_ptr => solver
     procedure(stability_check_type), pointer :: stability_check_ptr => stability_check
 
+    ! define global variables
+    integer(ip) :: tot_orb_update = 0, tot_hess_x = 0
+
 contains
 
-    subroutine solver(update_orbs, obj_func, n_param, error, precond, conv_check, &
-                      stability, line_search, davidson, jacobi_davidson, &
-                      prefer_jacobi_davidson, conv_tol, n_random_trial_vectors, &
-                      start_trust_radius, n_macro, n_micro, global_red_factor, &
-                      local_red_factor, seed, verbose, logger)
+    subroutine solver(update_orbs, obj_func, n_param, error, settings)
         !
         ! this subroutine is the main solver for orbital optimization
         !
         procedure(update_orbs_type), intent(in), pointer :: update_orbs
         procedure(obj_func_type), intent(in), pointer :: obj_func
         integer(ip), intent(in) :: n_param
-        procedure(precond_type), intent(in), pointer, optional :: precond
-        procedure(conv_check_type), intent(in), pointer, optional :: conv_check
         integer(ip), intent(out) :: error
-        logical, intent(in), optional :: stability, line_search, davidson, &
-                                         jacobi_davidson, prefer_jacobi_davidson
-        real(rp), intent(in), optional :: conv_tol, start_trust_radius, &
-                                          global_red_factor, local_red_factor
-        integer(ip), intent(in), optional :: n_random_trial_vectors, n_macro, n_micro, &
-                                             seed, verbose
-        procedure(logger_type), intent(in), pointer, optional :: logger
+        type(solver_settings_type), intent(inout) :: settings
 
-        type(solver_settings_type) :: settings
+        type(stability_settings_type) :: stability_settings
         real(rp) :: trust_radius, func, grad_norm, grad_rms, mu, new_func, n_kappa, &
                     kappa_norm
         real(rp), allocatable :: kappa(:), grad(:), h_diag(:), solution(:), &
                                  precond_kappa(:)
         logical :: max_precision_reached, macro_converged, stable, &
-                   jacobi_davidson_started, use_precond, conv_check_passed
+                   jacobi_davidson_started, conv_check_passed
         integer(ip) :: imacro, imicro, imicro_jacobi_davidson, i
         character(300) :: msg
         integer(ip), parameter :: stability_n_points = 21
@@ -243,6 +215,15 @@ contains
 
         ! initialize error flag
         error = 0
+
+        ! initialize settings
+        if (.not. settings%initialized) then
+            call settings%init(error)
+            call add_error_origin(error, error_solver, settings)
+            if (error /= 0) return
+            call settings%log("Settings were not initialized. All settings are set "// &
+                              "to default values", 2)
+        end if
 
         ! initialize maximum precision convergence
         max_precision_reached = .false.
@@ -253,26 +234,11 @@ contains
         ! initialize stabilty boolean
         stable = .true.
 
-        ! initialize settings
-        call settings%init_solver_settings(stability, line_search, davidson, &
-                                           jacobi_davidson, prefer_jacobi_davidson, &
-                                           conv_tol, n_random_trial_vectors, &
-                                           start_trust_radius, n_macro, n_micro, &
-                                           global_red_factor, local_red_factor, seed, &
-                                           verbose, logger)
-
         ! initialize random number generator
         call init_rng(settings%seed)
 
         ! initialize starting trust radius
         trust_radius = settings%start_trust_radius
-
-        ! check if preconditioner is passed
-        if (present(precond)) then
-            use_precond = associated(precond)
-        else
-            use_precond = .false.
-        end if
 
         ! print header
         call settings%log(repeat("-", 109), 3)
@@ -298,7 +264,7 @@ contains
 
                 ! perform sanity check
                 if (imacro == 1) then
-                    call sanity_check(settings, n_param, grad, error)
+                    call solver_sanity_check(settings, n_param, grad, error)
                     call add_error_origin(error, error_solver, settings)
                     if (error /= 0) return
                 end if
@@ -313,11 +279,12 @@ contains
                 if (imacro == 1) then
                     call settings%print_results(imacro - 1, func, grad_rms)
                 else
-                    if (settings%davidson) then
+                    if (settings%subsystem_solver == "davidson" .or. &
+                        settings%subsystem_solver == "jacobi-davidson") then
                         kappa_norm = dnrm2(n_param, kappa, 1)
                     else
-                        if (use_precond) then
-                            call precond(kappa, 0.0_rp, precond_kappa, error)
+                        if (associated(settings%precond)) then
+                            call settings%precond(kappa, 0.0_rp, precond_kappa, error)
                             call add_error_origin(error, error_precond, settings)
                             if (error /= 0) return
                         else
@@ -348,14 +315,10 @@ contains
             end if
 
             ! check for convergence and stability
-            if (present(conv_check)) then
-                if (associated(conv_check)) then
-                    conv_check_passed = conv_check(error)
-                    call add_error_origin(error, error_conv_check, settings)
-                    if (error /= 0) return
-                else
-                    conv_check_passed = .false.
-                end if
+            if (associated(settings%conv_check)) then
+                conv_check_passed = settings%conv_check(error)
+                call add_error_origin(error, error_conv_check, settings)
+                if (error /= 0) return
             else
                 conv_check_passed = .false.
             end if
@@ -363,9 +326,14 @@ contains
                 conv_check_passed) then
                 ! always perform stability check if starting at stationary point
                 if (settings%stability .or. imacro == 1) then
+                    call stability_settings%init(error)
+                    call add_error_origin(error, error_solver, settings)
+                    if (error /= 0) return
+                    stability_settings%precond => settings%precond
+                    stability_settings%verbose = settings%verbose
+                    stability_settings%logger => settings%logger
                     call stability_check(h_diag, hess_x_funptr, stable, error, &
-                                         kappa=kappa, precond=precond, &
-                                         verbose=settings%verbose, logger=logger)
+                                         stability_settings, kappa=kappa)
                     call add_error_origin(error, error_stability_check, settings)
                     if (error /= 0) return
                     if (.not. stable) then
@@ -415,25 +383,23 @@ contains
                 end if
             end if
 
-            if (settings%davidson) then
+            if (settings%subsystem_solver == "davidson" .or. &
+                settings%subsystem_solver == "jacobi-davidson") then
                 ! solve trust region subproblem with (Jacobi-)Davidson
                 call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                             obj_func, hess_x_funptr, settings, &
-                                            use_precond, precond, trust_radius, &
-                                            solution, mu, imicro, &
+                                            trust_radius, solution, mu, imicro, &
                                             imicro_jacobi_davidson, &
                                             jacobi_davidson_started, &
-                                            max_precision_reached, &
-                                            error)
+                                            max_precision_reached, error)
                 call add_error_origin(error, error_solver, settings)
                 if (error /= 0) return
             else
                 ! solve trust region subproblem with truncated conjugate gradient
                 call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
                                                   obj_func, hess_x_funptr, &
-                                                  use_precond, precond, settings, &
-                                                  trust_radius, solution, imicro, &
-                                                  max_precision_reached, error)
+                                                  settings, trust_radius, solution, &
+                                                  imicro, max_precision_reached, error)
                 call add_error_origin(error, error_solver, settings)
                 if (error /= 0) return
             end if
@@ -489,9 +455,7 @@ contains
 
     end subroutine solver
 
-    subroutine stability_check(h_diag, hess_x_funptr, stable, error, kappa, precond, &
-                               jacobi_davidson, conv_tol, n_random_trial_vectors, &
-                               n_iter, verbose, logger)
+    subroutine stability_check(h_diag, hess_x_funptr, stable, error, settings, kappa)
         !
         ! this subroutine performs a stability check
         !
@@ -499,21 +463,15 @@ contains
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         logical, intent(out) :: stable
         integer(ip), intent(out) :: error
+        type(stability_settings_type), intent(inout) :: settings
         real(rp), intent(out), optional :: kappa(:)
-        procedure(precond_type), intent(in), pointer, optional :: precond
-        logical, intent(in), optional :: jacobi_davidson
-        real(rp), intent(in), optional :: conv_tol
-        integer(ip), intent(in), optional :: n_random_trial_vectors, n_iter, verbose
-        procedure(logger_type), intent(in), pointer, optional :: logger
 
-        type(stability_settings_type) :: settings
         integer(ip) :: n_param, n_trial, i, iter
         real(rp), allocatable :: solution(:), h_solution(:), residual(:), &
                                  basis_vec(:), h_basis_vec(:), red_space_basis(:, :), &
                                  h_basis(:, :), red_space_hess(:, :), &
                                  red_space_solution(:), red_space_hess_vec(:)
         real(rp) :: eigval, minres_tol, stability_rms
-        logical :: use_precond
         character(300) :: msg
         real(rp), parameter :: stability_thresh = -1e-2_rp
         real(rp), external :: dnrm2, ddot
@@ -523,28 +481,24 @@ contains
         error = 0
 
         ! initialize settings
-        call settings%init_stability_settings(jacobi_davidson, conv_tol, &
-                                              n_random_trial_vectors, n_iter, verbose, &
-                                              logger)
+        if (.not. settings%initialized) then
+            call settings%init(error)
+            call add_error_origin(error, error_stability_check, settings)
+            if (error /= 0) return
+            call settings%log("Settings were not initialized. All settings are set "// &
+                              "to default values", 2)
+        end if
+
+        ! initialize random number generator
+        call init_rng(settings%seed)
 
         ! get number of parameters
         n_param = size(h_diag)
 
-        ! check that number of random trial vectors is below number of parameters
-        if (settings%n_random_trial_vectors > n_param/2) then
-            settings%n_random_trial_vectors = n_param/2
-            write (msg, '(A, I0, A)') "Number of random trial vectors should be "// &
-                "smaller than half the number of parameters. Setting to ", &
-                settings%n_random_trial_vectors, "."
-            call settings%log(msg, 2)
-        end if
-
-        ! check if preconditioner is passed
-        if (present(precond)) then
-            use_precond = associated(precond)
-        else
-            use_precond = .false.
-        end if
+        ! perform sanity check
+        call stability_sanity_check(settings, n_param, error)
+        call add_error_origin(error, error_solver, settings)
+        if (error /= 0) return
 
         ! generate trial vectors
         allocate(red_space_basis(n_param, 1 + settings%n_random_trial_vectors))
@@ -598,10 +552,11 @@ contains
             stability_rms = dnrm2(n_param, residual, 1) / sqrt(real(n_param, kind=rp))
             if (stability_rms < settings%conv_tol) exit
 
-            if (.not. settings%jacobi_davidson .or. iter <= jacobi_davidson_start) then
+            if (settings%diag_solver == "davidson" .or. iter <= &
+                settings%jacobi_davidson_start) then
                 ! precondition residual
-                if (use_precond) then
-                    call precond(residual, 0.0_rp, basis_vec, error)
+                if (associated(settings%precond)) then
+                    call settings%precond(residual, 0.0_rp, basis_vec, error)
                     call add_error_origin(error, error_precond, settings)
                     if (error /= 0) return
                 else
@@ -623,7 +578,7 @@ contains
 
             else
                 ! solve Jacobi-Davidson correction equations
-                minres_tol = 3.0_rp ** (-(iter - jacobi_davidson_start - 1))
+                minres_tol = 3.0_rp ** (-(iter - settings%jacobi_davidson_start - 1))
                 call minres(-residual, hess_x_funptr, solution, eigval, minres_tol, &
                             basis_vec, h_basis_vec, settings, error)
                 call add_error_origin(error, error_stability_check, settings)
@@ -1391,120 +1346,53 @@ contains
 
     end subroutine gram_schmidt
 
-    subroutine init_solver_settings(self, stability, line_search, davidson, &
-                                    jacobi_davidson, prefer_jacobi_davidson, conv_tol, &
-                                    n_random_trial_vectors, start_trust_radius, &
-                                    n_macro, n_micro, global_red_factor, &
-                                    local_red_factor, seed, verbose, logger)
+    subroutine init_solver_settings(self, error)
         !
         ! this subroutine sets the optional settings to their default values
         !
-        class(solver_settings_type), intent(inout) :: self
-        logical, intent(in), optional :: stability, line_search, davidson, &
-                                         jacobi_davidson, prefer_jacobi_davidson
-        real(rp), intent(in), optional :: conv_tol, start_trust_radius, &
-                                          global_red_factor, local_red_factor
-        integer(ip), intent(in), optional :: n_random_trial_vectors, n_macro, n_micro, &
-                                             seed, verbose
-        procedure(logger_type), intent(in), pointer, optional :: logger
+        class(solver_settings_type), intent(out) :: self
+        integer(ip), intent(out) :: error
 
-        self%stability = set_default(stability, solver_stability_default)
-        self%line_search = set_default(line_search, solver_line_search_default)
-        self%davidson = set_default(davidson, solver_davidson_default)
-        self%jacobi_davidson = set_default(jacobi_davidson, &
-                                           solver_jacobi_davidson_default)
-        self%prefer_jacobi_davidson = set_default(prefer_jacobi_davidson, &
-                                                  solver_prefer_jacobi_davidson_default)
-        self%conv_tol = set_default(conv_tol, solver_conv_tol_default)
-        self%n_random_trial_vectors = set_default(n_random_trial_vectors, &
-                                                  solver_n_random_trial_vectors_default)
-        self%start_trust_radius = set_default(start_trust_radius, &
-                                              solver_start_trust_radius_default)
-        self%n_macro = set_default(n_macro, solver_n_macro_default)
-        self%n_micro = set_default(n_micro, solver_n_micro_default)
-        self%global_red_factor = set_default(global_red_factor, &
-                                             solver_global_red_factor_default)
-        self%local_red_factor = set_default(local_red_factor, &
-                                            solver_local_red_factor_default)
-        self%seed = set_default(seed, solver_seed_default)
-        self%verbose = set_default(verbose, solver_verbose_default)
-        if (present(logger)) self%logger => logger
+        ! initialize error flag
+        error = 0
+
+        ! ensure that class is actually solver_settings_type and not a subclass
+        select type(settings => self)
+        type is (solver_settings_type)
+            settings = default_solver_settings
+        class default
+            call settings%log("Solver settings could not be initialized because "// &
+                              "initialization routine received the wrong type. The "// &
+                              "type solver_settings_type was likely subclassed "// &
+                              "without providing an initialization routine.", 1, .true.)
+            error = 1
+        end select
 
     end subroutine init_solver_settings
 
-    subroutine init_stability_settings(self, jacobi_davidson, conv_tol, &
-                                       n_random_trial_vectors, n_iter, verbose, &
-                                       logger)
+    subroutine init_stability_settings(self, error)
         !
         ! this subroutine sets the optional settings to their default values
         !
-        class(stability_settings_type), intent(inout) :: self
-        logical, intent(in), optional :: jacobi_davidson
-        real(rp), intent(in), optional :: conv_tol
-        integer(ip), intent(in), optional :: n_random_trial_vectors, n_iter, verbose
-        procedure(logger_type), intent(in), pointer, optional :: logger
+        class(stability_settings_type), intent(out) :: self
+        integer(ip), intent(out) :: error
 
-        self%jacobi_davidson = set_default(jacobi_davidson, &
-                                           stability_jacobi_davidson_default)
-        self%conv_tol = set_default(conv_tol, stability_conv_tol_default)
-        self%n_random_trial_vectors = set_default(n_random_trial_vectors, &
-                                               stability_n_random_trial_vectors_default)
-        self%n_iter = set_default(n_iter, stability_n_iter_default)
-        self%verbose = set_default(verbose, stability_verbose_default)
-        if (present(logger)) self%logger => logger
+        ! initialize error flag
+        error = 0
+
+        ! ensure that class is actually stability_settings_type and not a subclass
+        select type(settings => self)
+        type is (stability_settings_type)
+            settings = default_stability_settings
+        class default
+            call settings%log("Stability settings could not be initialized because "// &
+                              "initialization routine received the wrong type. The "// &
+                              "type stability_settings_type was likely subclassed "// &
+                              "without providing an initialization routine.", 1, .true.)
+            error = 1
+        end select
 
     end subroutine init_stability_settings
-
-    function set_default_real(optional_value, default_value) result(variable)
-        !
-        ! this function sets a default value for reals
-        !
-        real(rp), intent(in)  :: default_value
-        real(rp), intent(in), optional :: optional_value
-
-        real(rp) :: variable
-
-        if (present(optional_value)) then
-            variable = optional_value
-        else
-            variable = default_value
-        end if
-
-    end function set_default_real
-
-    function set_default_integer(optional_value, default_value) result(variable)
-        !
-        ! this function sets a default value for integers
-        !
-        integer(ip), intent(in)  :: default_value
-        integer(ip), intent(in), optional :: optional_value
-
-        integer(ip) :: variable
-
-        if (present(optional_value)) then
-            variable = optional_value
-        else
-            variable = default_value
-        end if
-
-    end function set_default_integer
-
-    function set_default_logical(optional_value, default_value) result(variable)
-        !
-        ! this function sets a default value for logicals
-        !
-        logical, intent(in)  :: default_value
-        logical, intent(in), optional :: optional_value
-
-        logical :: variable
-
-        if (present(optional_value)) then
-            variable = optional_value
-        else
-            variable = default_value
-        end if
-
-    end function set_default_logical
 
     subroutine level_shifted_diag_precond(vector, mu, h_diag, precond_vector)
         !
@@ -1562,7 +1450,7 @@ contains
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         real(rp), intent(in) :: vector(:), solution(:), eigval
         real(rp), intent(out) :: corr_vector(:), hess_vector(:)
-        type(settings_type), intent(in) :: settings
+        class(settings_type), intent(in) :: settings
         integer(ip), intent(out) :: error
 
         ! initialize error flag
@@ -1888,7 +1776,7 @@ contains
         ! length
         !
         character(*), intent(in) :: input
-        integer(ip),intent(in) :: max_length
+        integer(ip), intent(in) :: max_length
         character(:), intent(out), allocatable :: substrings(:)
     
         integer(ip) :: i, len_input, start_pos, end_pos, space_pos
@@ -1936,10 +1824,10 @@ contains
     end subroutine split_string_by_space
 
     subroutine level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
-                                      obj_func, hess_x_funptr, settings, use_precond, &
-                                      precond, trust_radius, solution, mu, imicro, &
-                                      imicro_jacobi_davidson, jacobi_davidson_started, &
-                                      max_precision_reached, error)
+                                      obj_func, hess_x_funptr, settings, trust_radius, &
+                                      solution, mu, imicro, imicro_jacobi_davidson, &
+                                      jacobi_davidson_started, max_precision_reached, &
+                                      error)
         !
         ! this subroutine performs level-shifted (Jacobi-)Davidson to solve the trust 
         ! region subproblem
@@ -1948,9 +1836,7 @@ contains
         integer(ip), intent(in) :: n_param
         procedure(obj_func_type), pointer, intent(in) :: obj_func
         procedure(hess_x_type), pointer, intent(in) :: hess_x_funptr
-        class(solver_settings_type), intent(in) :: settings
-        logical, intent(in) :: use_precond
-        procedure(precond_type), intent(in), pointer, optional :: precond
+        type(solver_settings_type), intent(in) :: settings
         real(rp), intent(inout) :: trust_radius
         real(rp), intent(out) :: solution(:), mu
         integer(ip), intent(out) :: imicro, imicro_jacobi_davidson, error
@@ -1961,17 +1847,14 @@ contains
                                  h_basis_vec(:), h_solution(:), residual(:), &
                                  solution_normalized(:), last_solution_normalized(:)
         integer(ip) :: n_trial, i, initial_imicro                          
-        logical :: accept_step, micro_converged, func_evaluated, newton, bracketed
+        logical :: accept_step, micro_converged, newton, bracketed
         real(rp) :: aug_hess_min_eigval, residual_norm, red_factor, &
                     initial_residual_norm, new_func, ratio, minres_tol
         real(rp), parameter :: newton_eigval_thresh = -1e-5_rp, &
                                level_shift_local_thres = 1e-12_rp, &
                                solution_overlap_thresh = 0.5_rp, &
                                residual_norm_floor = 1e-12_rp, &
-                               residual_norm_max_red_factor = 0.8_rp, &
-                               n_micro_davidson_factor = 0.8_rp, &
-                               jacobi_davidson_ratio = 0.75_rp, &
-                               jacobi_davidson_boundary_factor = 0.99_rp
+                               residual_norm_max_red_factor = 0.8_rp
         real(rp), external :: dnrm2, ddot
 
         ! initialize error flag
@@ -2012,7 +1895,6 @@ contains
         accept_step = .false.
         do while (.not. accept_step)
             micro_converged = .false.
-            func_evaluated = .false.
 
             jacobi_davidson_started = .false.
             do imicro = 1, settings%n_micro
@@ -2072,37 +1954,19 @@ contains
                     micro_converged = .true.
                     exit
                 ! check if Jacobi-Davidson is used and has not been started
-                else if (settings%jacobi_davidson .and. .not. jacobi_davidson_started) &
-                    then
+                else if (settings%subsystem_solver == "jacobi-davidson" .and. .not. &
+                         jacobi_davidson_started) then
                     ! check residual has not decreased sufficiently or if maximum of 
                     ! Davidson iterations has been reached
                     if ((imicro - initial_imicro >= 10 .and. residual_norm > &
                          residual_norm_max_red_factor * initial_residual_norm) .or. &
-                        imicro > n_micro_davidson_factor * settings%n_micro) then
-                        ! evaluate function at approximate point
-                        new_func = obj_func(solution, error)
-                        call add_error_origin(error, error_obj_func, settings)
-                        if (error /= 0) return
+                        imicro > settings%jacobi_davidson_start) then
 
-                        ! calculate ratio of evaluated function and predicted function
-                        ratio = (new_func - func) / ddot(n_param, solution, 1, &
-                                                         grad + 0.5_rp * h_solution, 1)
-
-                        ! switch to Jacobi-Davidson only if current solution would lead 
-                        ! to trust radius increase when the solution is already at the 
-                        ! trust region boundary
-                        if (settings%prefer_jacobi_davidson .or. &
-                            (ratio > jacobi_davidson_ratio .and. &
-                             dnrm2(n_param, solution, 1) > &
-                             jacobi_davidson_boundary_factor * trust_radius)) then
-                            jacobi_davidson_started = .true.
-                            imicro_jacobi_davidson = imicro
-                        ! decrease trust radius
-                        else
-                            func_evaluated = .true.
-                            exit
-                        end if
+                        ! switch to Jacobi-Davidson
+                        jacobi_davidson_started = .true.
+                        imicro_jacobi_davidson = imicro
                     end if
+                ! check if residual has not decreased sufficiently
                 else if (imicro - initial_imicro >= 10 .and. residual_norm > &
                          residual_norm_max_red_factor * initial_residual_norm) then
                     exit
@@ -2113,8 +1977,8 @@ contains
 
                 if (.not. jacobi_davidson_started) then
                     ! precondition residual
-                    if (use_precond) then
-                        call precond(residual, mu, basis_vec, error)
+                    if (associated(settings%precond)) then
+                        call settings%precond(residual, mu, basis_vec, error)
                         call add_error_origin(error, error_precond, settings)
                         if (error /= 0) return
                     else
@@ -2182,16 +2046,14 @@ contains
                 allocate(red_space_solution(size(red_space_basis, 2)))
             end do
 
-            if (.not. func_evaluated) then
-                ! evaluate function at predicted point
-                new_func = obj_func(solution, error)
-                call add_error_origin(error, error_obj_func, settings)
-                if (error /= 0) return
+            ! evaluate function at predicted point
+            new_func = obj_func(solution, error)
+            call add_error_origin(error, error_obj_func, settings)
+            if (error /= 0) return
 
-                ! calculate ratio of evaluated function and predicted function
-                ratio = (new_func - func) / ddot(n_param, solution, 1, &
-                                                 grad + 0.5_rp * h_solution, 1)
-            end if
+            ! calculate ratio of evaluated function and predicted function
+            ratio = (new_func - func) / ddot(n_param, solution, 1, &
+                                             grad + 0.5_rp * h_solution, 1)
 
             ! decide whether to accept step and modify trust radius
             accept_step = accept_trust_region_step(solution, ratio, micro_converged, &
@@ -2208,9 +2070,9 @@ contains
     end subroutine level_shifted_davidson
 
     subroutine truncated_conjugate_gradient(func, grad, h_diag, n_param, obj_func, &
-                                            hess_x_funptr, use_precond, precond, &
-                                            settings, trust_radius, solution, imicro, &
-                                            max_precision_reached, error)
+                                            hess_x_funptr, settings, trust_radius, &
+                                            solution, imicro, max_precision_reached, &
+                                            error)
         !
         ! this subroutine performs truncated conjugate gradient to solve the trust 
         ! region subproblem
@@ -2219,9 +2081,7 @@ contains
         integer(ip), intent(in) :: n_param
         procedure(obj_func_type), pointer, intent(in) :: obj_func
         procedure(hess_x_type), pointer, intent(in) :: hess_x_funptr
-        class(solver_settings_type), intent(in) :: settings
-        logical, intent(in) :: use_precond
-        procedure(precond_type), intent(in), pointer, optional :: precond
+        type(solver_settings_type), intent(in) :: settings
         real(rp), intent(inout) :: trust_radius
         real(rp), intent(out) :: solution(:)
         integer(ip), intent(out) :: imicro, error
@@ -2273,8 +2133,8 @@ contains
         initial_residual_norm = dnrm2(n_param, residual, 1)
 
         ! initialize preconditioned residual and direction,
-        if (use_precond) then
-            call precond(residual, 0.0_rp, precond_residual, error)
+        if (associated(settings%precond)) then
+            call settings%precond(residual, 0.0_rp, precond_residual, error)
             call add_error_origin(error, error_precond, settings)
             if (error /= 0) return
         else
@@ -2306,11 +2166,11 @@ contains
             step_size = ddot(n_param, residual, 1, precond_residual, 1) / curvature
 
             ! precondition current solution and direction
-            if (use_precond) then
-                call precond(solution, 0.0_rp, precond_solution, error)
+            if (associated(settings%precond)) then
+                call settings%precond(solution, 0.0_rp, precond_solution, error)
                 call add_error_origin(error, error_precond, settings)
                 if (error /= 0) return
-                call precond(direction, 0.0_rp, precond_direction, error)
+                call settings%precond(direction, 0.0_rp, precond_direction, error)
                 call add_error_origin(error, error_precond, settings)
                 if (error /= 0) return
             else
@@ -2365,8 +2225,8 @@ contains
             
             ! get residual for model
             residual_new = residual + step_size * hess_direction
-            if (use_precond) then
-                call precond(residual_new, 0.0_rp, precond_residual_new, error)
+            if (associated(settings%precond)) then
+                call settings%precond(residual_new, 0.0_rp, precond_residual_new, error)
                 call add_error_origin(error, error_precond, settings)
                 if (error /= 0) return
             else
@@ -2415,8 +2275,8 @@ contains
                 if (accept_step .or. max_precision_reached) exit
 
                 ! check if step exceeds new trust region boundary
-                if (use_precond) then
-                    call precond(solution, 0.0_rp, precond_solution, error)
+                if (associated(settings%precond)) then
+                    call settings%precond(solution, 0.0_rp, precond_solution, error)
                     if (error /= 0) return
                 else
                     call abs_diag_precond(solution, h_diag, precond_solution)
@@ -2425,9 +2285,9 @@ contains
                     trust_radius ** 2) then
                     ! find step that exceeds trust region boundary
                     do i = 1, size(solutions, 2)
-                        if (use_precond) then
-                            call precond(solutions(:, i), 0.0_rp, precond_solution, &
-                                         error)
+                        if (associated(settings%precond)) then
+                            call settings%precond(solutions(:, i), 0.0_rp, &
+                                                  precond_solution, error)
                             if (error /= 0) return
                         else
                             call abs_diag_precond(solutions(:, i), h_diag, &
@@ -2444,12 +2304,13 @@ contains
                             hess_direction = h_solutions(:, i) - h_solutions(:, i - 1)
 
                             ! precondition current solution and direction
-                            if (use_precond) then
-                                call precond(solution, 0.0_rp, precond_solution, error)
+                            if (associated(settings%precond)) then
+                                call settings%precond(solution, 0.0_rp, &
+                                                      precond_solution, error)
                                 call add_error_origin(error, error_precond, settings)
                                 if (error /= 0) return
-                                call precond(direction, 0.0_rp, precond_direction, &
-                                             error)
+                                call settings%precond(direction, 0.0_rp, &
+                                                      precond_direction, error)
                                 call add_error_origin(error, error_precond, settings)
                                 if (error /= 0) return
                             else
@@ -2518,7 +2379,7 @@ contains
         !
         real(rp), intent(in) :: solution(:), ratio
         logical, intent(in) :: micro_converged
-        class(solver_settings_type), intent(in) :: settings
+        type(solver_settings_type), intent(in) :: settings
         real(rp), intent(inout) :: trust_radius
         logical, intent(out) :: max_precision_reached
 
@@ -2554,11 +2415,11 @@ contains
 
     end function accept_trust_region_step
 
-    subroutine sanity_check(settings, n_param, grad, error)
+    subroutine solver_sanity_check(settings, n_param, grad, error)
         !
-        ! this subroutine performs a sanity check for input parameters
+        ! this subroutine performs a sanity check for solver input parameters
         !
-        class(solver_settings_type), intent(inout) :: settings
+        type(solver_settings_type), intent(inout) :: settings
         integer(ip), intent(in) :: n_param
         real(rp), intent(in) :: grad(:)
         integer(ip), intent(out) :: error
@@ -2577,7 +2438,9 @@ contains
         end if
 
         ! check that number of random trial vectors is below number of parameters
-        if (settings%davidson .and. settings%n_random_trial_vectors > n_param/2) then
+        if ((settings%subsystem_solver == "davidson" .or. &
+             settings%subsystem_solver == "jacobi-davidson") .and. &
+            settings%n_random_trial_vectors > n_param/2) then
             settings%n_random_trial_vectors = n_param/2
             write (msg, '(A, I0, A)') "Number of random trial vectors should be "// &
                 "smaller than half the number of parameters. Setting to ", &
@@ -2594,7 +2457,50 @@ contains
             return
         end if
 
-    end subroutine sanity_check
+        ! check for character options
+        if (.not. (settings%subsystem_solver == "davidson" .or. &
+                   settings%subsystem_solver == "jacobi-davidson" .or. &
+                   settings%subsystem_solver == "tcg")) then
+            call settings%log("Subsystem solver option unknown. Possible values "// &
+                              "are davidson, jacobi-davidson, and tcg (truncated "// &
+                              "conjugate gradient)", 1, .true.)
+            error = 1
+            return
+        end if
+
+    end subroutine solver_sanity_check
+
+    subroutine stability_sanity_check(settings, n_param, error)
+        !
+        ! this subroutine performs a sanity check for stability input parameters
+        !
+        type(stability_settings_type), intent(inout) :: settings
+        integer(ip), intent(in) :: n_param
+        integer(ip), intent(out) :: error
+        character(300) :: msg
+
+        ! initialize error flag
+        error = 0
+
+        ! check that number of random trial vectors is below number of parameters
+        if (settings%n_random_trial_vectors > n_param/2) then
+            settings%n_random_trial_vectors = n_param/2
+            write (msg, '(A, I0, A)') "Number of random trial vectors should be "// &
+                "smaller than half the number of parameters. Setting to ", &
+                settings%n_random_trial_vectors, "."
+            call settings%log(msg, 2)
+        end if
+
+        ! check for character options
+        if (.not. (settings%diag_solver == "davidson" .or. &
+                   settings%diag_solver == "jacobi-davidson")) then
+            call settings%log("Diagonalization solver option unknown. Possible "// &
+                              "values are davidson and jacobi-davidson", 1, .true.)
+            error = 1
+            return
+        end if
+
+    end subroutine stability_sanity_check
 
     subroutine add_error_origin(error_code, error_origin, settings)
         !

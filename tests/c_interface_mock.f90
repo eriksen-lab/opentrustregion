@@ -8,18 +8,15 @@ module c_interface_mock
 
     use opentrustregion, only: stderr
     use c_interface, only: c_rp, c_ip, solver_c_wrapper_type, &
-                           stability_check_c_wrapper_type, update_orbs_c_type, &
-                           hess_x_c_type, obj_func_c_type, precond_c_type, &
-                           conv_check_c_type, logger_c_type
+                           stability_check_c_wrapper_type
+    use test_reference, only: ref_settings
     use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_funptr, c_f_pointer, &
                                            c_f_procpointer, c_associated, c_null_char
 
     implicit none
 
-    logical :: solver_default = .true., stability_check_default = .true.
     logical(c_bool) :: test_solver_interface = .true., &
                        test_stability_check_interface = .true.
-    real(c_rp), parameter :: tol = 1e-10_c_rp
 
     ! create function pointers to ensure that routines comply with interface
     procedure(solver_c_wrapper_type), pointer :: solver_c_wrapper_ptr => &
@@ -47,32 +44,19 @@ contains
     end function test_stability_check_result
 
     function mock_solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, &
-                                   n_param_c, precond_c_funptr, conv_check_c_funptr, &
-                                   stability_c_ptr, line_search_c_ptr, davidson_c_ptr, &
-                                   jacobi_davidson_c_ptr, &
-                                   prefer_jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                   n_random_trial_vectors_c_ptr, &
-                                   start_trust_radius_c_ptr, n_macro_c_ptr, &
-                                   n_micro_c_ptr, global_red_factor_c_ptr, &
-                                   local_red_factor_c_ptr, seed_c_ptr, verbose_c_ptr, &
-                                   logger_c_funptr) result(error_c) &
+                                   n_param_c, settings_c) result(error_c) &
         bind(C, name="mock_solver")
         !
         ! this subroutine is a mock routine for the solver C wrapper subroutine
         !
-        type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr, &
-                                             precond_c_funptr, conv_check_c_funptr, &
-                                             logger_c_funptr
+        use c_interface, only: solver_settings_type_c, update_orbs_c_type, &
+                               hess_x_c_type, obj_func_c_type, precond_c_type, &
+                               conv_check_c_type, logger_c_type
+        use test_reference, only: tol_c, operator(/=)
+
+        type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
-        type(c_ptr), intent(in), value :: stability_c_ptr, line_search_c_ptr, &
-                                          davidson_c_ptr, jacobi_davidson_c_ptr, &
-                                          prefer_jacobi_davidson_c_ptr, &
-                                          conv_tol_c_ptr, &
-                                          n_random_trial_vectors_c_ptr, &
-                                          start_trust_radius_c_ptr, n_macro_c_ptr, &
-                                          n_micro_c_ptr, global_red_factor_c_ptr, &
-                                          local_red_factor_c_ptr, seed_c_ptr, &
-                                          verbose_c_ptr
+        type(solver_settings_type_c), intent(in), value :: settings_c
         integer(c_ip) :: error_c
 
         type(c_funptr) :: hess_x_c_funptr
@@ -84,12 +68,6 @@ contains
                                    residual(:), precond_residual(:)
         procedure(precond_c_type), pointer :: precond_funptr
         procedure(conv_check_c_type), pointer :: conv_check_funptr
-        logical, pointer :: stability_ptr, line_search_ptr, davidson_ptr, &
-                            jacobi_davidson_ptr, prefer_jacobi_davidson_ptr
-        real(c_rp), pointer :: conv_tol_ptr, start_trust_radius_ptr, &
-                               global_red_factor_ptr, local_red_factor_ptr
-        integer(c_ip), pointer :: n_random_trial_vectors_ptr, n_macro_ptr, &
-                                  n_micro_ptr, seed_ptr, verbose_ptr
         procedure(logger_c_type), pointer :: logger_funptr
         character(:), allocatable, target :: message
         logical(c_bool) :: converged
@@ -123,22 +101,22 @@ contains
 
         ! get Fortran pointers to generated arrays and check whether these are filled
         ! correctly
-        if (abs(func - 3.0_c_rp) > tol) then
+        if (abs(func - 3.0_c_rp) > tol_c) then
             write (stderr, *) "test_solver_py_interface failed: Returned function "// &
                 "value of passed orbital updating function wrong."
             test_solver_interface = .false.
         end if
-        if (any(abs(grad - 2.0_c_rp) > tol)) then
+        if (any(abs(grad - 2.0_c_rp) > tol_c)) then
             write (stderr, *) "test_solver_py_interface failed: Returned gradient "// &
                 "of passed orbital updating function wrong."
             test_solver_interface = .false.
         end if
-        if (any(abs(h_diag - 3.0_c_rp) > tol)) then
+        if (any(abs(h_diag - 3.0_c_rp) > tol_c)) then
             write (stderr, *) "test_solver_py_interface failed: Returned Hessian "// &
                 "diagonal of passed orbital updating function wrong."
             test_solver_interface = .false.
         end if
-        if (any(abs(hess_x - 4.0_c_rp) > tol)) then
+        if (any(abs(hess_x - 4.0_c_rp) > tol_c)) then
             write (stderr, *) "test_solver_py_interface failed: Returned Hessian "// &
                 "linear transformation from Hessian linear transformation function "// &
                 "of passed orbital updating function wrong."
@@ -158,168 +136,92 @@ contains
         end if
 
         ! check if generated function value is correct
-        if (abs(func - 3.0_c_rp) > tol) then
+        if (abs(func - 3.0_c_rp) > tol_c) then
             write (stderr, *) "test_solver_py_interface failed: Returned function "// &
                 "value of passed objective function wrong."
             test_solver_interface = .false.
         end if
         deallocate(kappa)
 
-        ! check if check if default arguments are correctly unassociated with values
-        if (solver_default) then
-            if (c_associated(precond_c_funptr) .or. c_associated(conv_check_c_funptr) &
-                .or. c_associated(stability_c_ptr) .or. &
-                c_associated(line_search_c_ptr) .or. c_associated(davidson_c_ptr) .or. &
-                c_associated(jacobi_davidson_c_ptr) .or. &
-                c_associated(prefer_jacobi_davidson_c_ptr) .or. &
-                c_associated(conv_tol_c_ptr) .or. &
-                c_associated(n_random_trial_vectors_c_ptr) .or. &
-                c_associated(start_trust_radius_c_ptr) .or. &
-                c_associated(n_macro_c_ptr) .or. c_associated(n_micro_c_ptr) .or. &
-                c_associated(global_red_factor_c_ptr) .or. &
-                c_associated(local_red_factor_c_ptr) .or. c_associated(seed_c_ptr) &
-                .or. c_associated(verbose_c_ptr) .or. c_associated(logger_c_funptr)) &
-                then
-                write (stderr, *) "test_solver_py_interface failed: Passed "// &
-                    "optional arguments associated with values."
-                test_solver_interface = .false.
-            end if
-            ! check if check if optional arguments are associated with correct values
-        else
-            if (.not. (c_associated(precond_c_funptr) .and. &
-                       c_associated(conv_check_c_funptr) .and. &
-                       c_associated(stability_c_ptr) .and. &
-                       c_associated(line_search_c_ptr) .and. &
-                       c_associated(davidson_c_ptr) .and. &
-                       c_associated(jacobi_davidson_c_ptr) .and. &
-                       c_associated(prefer_jacobi_davidson_c_ptr) .and. &
-                       c_associated(conv_tol_c_ptr) .and. &
-                       c_associated(n_random_trial_vectors_c_ptr) .and. &
-                       c_associated(start_trust_radius_c_ptr) .and. &
-                       c_associated(n_macro_c_ptr) .and. &
-                       c_associated(n_micro_c_ptr) .and. &
-                       c_associated(global_red_factor_c_ptr) .and. &
-                       c_associated(local_red_factor_c_ptr) .and. &
-                       c_associated(seed_c_ptr) .and. c_associated(verbose_c_ptr) &
-                       .and. c_associated(logger_c_funptr))) then
-                write (stderr, *) "test_solver_py_interface failed: Passed "// &
-                    "optional arguments not associated with values."
-                test_solver_interface = .false.
-            end if
+        ! get Fortran pointer to passed preconditioner function, call it and check
+        ! result
+        call c_f_procpointer(cptr=settings_c%precond, fptr=precond_funptr)
+        allocate(residual(n_param_c), precond_residual(n_param_c))
+        residual = 1.0_c_rp
+        error = precond_funptr(residual, 5.0_c_rp, precond_residual)
+        if (error /= 0) then
+            write (stderr, *) "test_solver_py_interface failed: Passed "// &
+                "preconditioner function returned error."
+            test_solver_interface = .false.
+        end if
+        if (any(abs(precond_residual - 5.0_c_rp) > tol_c)) then
+            write (stderr, *) "test_solver_py_interface failed: Returned "// &
+                "preconditioned residual from preconditioner function wrong."
+            test_solver_interface = .false.
+        end if
+        deallocate(residual, precond_residual)
 
-            ! get Fortran pointer to passed preconditioner function, call it and check
-            ! result
-            call c_f_procpointer(cptr=precond_c_funptr, fptr=precond_funptr)
-            allocate(residual(n_param_c), precond_residual(n_param_c))
-            residual = 1.0_c_rp
-            error = precond_funptr(residual, 5.0_c_rp, precond_residual)
-            if (error /= 0) then
-                write (stderr, *) "test_solver_py_interface failed: Passed "// &
-                    "preconditioner function returned error."
-                test_solver_interface = .false.
-            end if
-            if (any(abs(precond_residual - 5.0_c_rp) > tol)) then
-                write (stderr, *) "test_solver_py_interface failed: Returned "// &
-                    "preconditioned residual from preconditioner function wrong."
-                test_solver_interface = .false.
-            end if
-            deallocate(residual, precond_residual)
+        ! get Fortran pointer to passed convergence check function, call it and check 
+        ! result
+        call c_f_procpointer(cptr=settings_c%conv_check, fptr=conv_check_funptr)
+        error = conv_check_funptr(converged)
+        if (error /= 0) then
+            write (stderr, *) "test_solver_py_interface failed: Passed convergence "// &
+                "check function returned error."
+            test_solver_interface = .false.
+        end if
+        if (.not. converged) then
+            write (stderr, *) "test_solver_py_interface failed: Returned "// &
+                "convergence logical of convergence check function wrong."
+            test_solver_interface = .false.
+        end if
 
-            ! get Fortran pointer to passed convergence check function, call it and 
-            ! check result
-            call c_f_procpointer(cptr=conv_check_c_funptr, fptr=conv_check_funptr)
-            error = conv_check_funptr(converged)
-            if (error /= 0) then
-                write (stderr, *) "test_solver_py_interface failed: Passed "// &
-                    "convergence check function returned error."
-                test_solver_interface = .false.
-            end if
-            if (.not. converged) then
-                write (stderr, *) "test_solver_py_interface failed: Returned "// &
-                    "convergence logical of convergence check function wrong."
-                test_solver_interface = .false.
-            end if
+        ! get Fortran pointer to passed logging function and call it
+        message = "test" // c_null_char
+        call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
+        call logger_funptr(message)
 
-            ! get Fortran pointers to optional arguments and check against reference 
-            ! values
-            call c_f_pointer(cptr=stability_c_ptr, fptr=stability_ptr)
-            call c_f_pointer(cptr=line_search_c_ptr, fptr=line_search_ptr)
-            call c_f_pointer(cptr=davidson_c_ptr, fptr=davidson_ptr)
-            call c_f_pointer(cptr=jacobi_davidson_c_ptr, fptr=jacobi_davidson_ptr)
-            call c_f_pointer(cptr=prefer_jacobi_davidson_c_ptr, &
-                             fptr=prefer_jacobi_davidson_ptr)
-            call c_f_pointer(cptr=conv_tol_c_ptr, fptr=conv_tol_ptr)
-            call c_f_pointer(cptr=n_random_trial_vectors_c_ptr, &
-                             fptr=n_random_trial_vectors_ptr)
-            call c_f_pointer(cptr=start_trust_radius_c_ptr, fptr=start_trust_radius_ptr)
-            call c_f_pointer(cptr=n_macro_c_ptr, fptr=n_macro_ptr)
-            call c_f_pointer(cptr=n_micro_c_ptr, fptr=n_micro_ptr)
-            call c_f_pointer(cptr=global_red_factor_c_ptr, fptr=global_red_factor_ptr)
-            call c_f_pointer(cptr=local_red_factor_c_ptr, fptr=local_red_factor_ptr)
-            call c_f_pointer(cptr=seed_c_ptr, fptr=seed_ptr)
-            call c_f_pointer(cptr=verbose_c_ptr, fptr=verbose_ptr)
-            if (stability_ptr .or. .not. line_search_ptr .or. davidson_ptr .or. &
-                jacobi_davidson_ptr .or. .not. prefer_jacobi_davidson_ptr .or. &
-                abs(conv_tol_ptr - 1e-3_c_rp) > tol .or. &
-                n_random_trial_vectors_ptr /= 5_c_ip .or. &
-                abs(start_trust_radius_ptr - 0.2_c_rp) > tol .or. &
-                n_macro_ptr /= 300_c_ip .or. n_micro_ptr /= 200_c_ip .or. &
-                abs(global_red_factor_ptr - 1e-2_c_rp) > tol .or. &
-                abs(local_red_factor_ptr - 1e-3_c_rp) > tol .or. &
-                seed_ptr /= 33_c_ip .or. verbose_ptr /= 3_c_ip) then
-                write (stderr, *) "test_solver_py_interface failed: Passed "// &
-                    "optional arguments associated with wrong values."
-                test_solver_interface = .false.
-            end if
-
-            ! get Fortran pointer to passed logging function and call it
-            message = "test" // c_null_char
-            call c_f_procpointer(cptr=logger_c_funptr, fptr=logger_funptr)
-            call logger_funptr(message)
+        ! check optional settings against reference values
+        if (settings_c /= ref_settings) then
+            write (stderr, *) "test_solver_py_interface failed: Passed settings "// &
+                "associated with wrong values."
+            test_solver_interface = .false.
         end if
 
         ! set return arguments
         error_c = 0
 
-        ! move on to optional argument test for next test
-        solver_default = .false.
-
     end function mock_solver_c_wrapper
 
     function mock_stability_check_c_wrapper(h_diag_c_ptr, hess_x_c_funptr, n_param_c, &
-                                            stable_c, kappa_c_ptr, precond_c_funptr, &
-                                            jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                            n_random_trial_vectors_c_ptr, &
-                                            n_iter_c_ptr, verbose_c_ptr, &
-                                            logger_c_funptr) result(error_c) &
-        bind(C, name="mock_stability_check")
+                                            stable_c, settings_c, kappa_c_ptr) &
+        result(error_c) bind(C, name="mock_stability_check")
         !
         ! this subroutine is a mock routine for the stability check C wrapper
         ! subroutine
         !
-        type(c_ptr), intent(in), value :: h_diag_c_ptr, kappa_c_ptr, &
-                                          jacobi_davidson_c_ptr, conv_tol_c_ptr, &
-                                          n_random_trial_vectors_c_ptr, n_iter_c_ptr, &
-                                          verbose_c_ptr
-        type(c_funptr), intent(in), value :: hess_x_c_funptr, precond_c_funptr, &
-                                             logger_c_funptr
+        use c_interface, only: stability_settings_type_c, hess_x_c_type, &
+                               precond_c_type, logger_c_type
+        use test_reference, only: tol_c, operator(/=)
+
+        type(c_ptr), intent(in), value :: h_diag_c_ptr, kappa_c_ptr
+        type(c_funptr), intent(in), value :: hess_x_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
         logical(c_bool), intent(out) :: stable_c
+        type(stability_settings_type_c), intent(in), value :: settings_c
         integer(c_ip) :: error_c
 
-        real(c_rp), pointer :: h_diag_ptr(:), kappa_ptr(:), conv_tol_ptr
+        real(c_rp), pointer :: h_diag_ptr(:), kappa_ptr(:)
         procedure(hess_x_c_type), pointer :: hess_x_funptr
         procedure(precond_c_type), pointer :: precond_funptr
         real(c_rp), allocatable :: x(:), hess_x(:), residual(:), precond_residual(:)
-        logical, pointer :: jacobi_davidson_ptr
-        integer(c_ip), pointer :: n_random_trial_vectors_ptr, n_iter_ptr, verbose_ptr
         procedure(logger_c_type), pointer :: logger_funptr
         character(:), allocatable, target :: message
         integer(c_ip) :: error
 
         ! check if Hessian diagonal is passed correctly
         call c_f_pointer(h_diag_c_ptr, h_diag_ptr, [n_param_c])
-        if (any(abs(h_diag_ptr - 3.0_c_rp) > tol)) then
+        if (any(abs(h_diag_ptr - 3.0_c_rp) > tol_c)) then
             write (stderr, *) "test_stability_check_py_interface failed: Passed "// &
                 "Hessian diagonal wrong."
             test_stability_check_interface = .false.
@@ -336,7 +238,7 @@ contains
                 "Hessian linear transformation function returned error."
             test_stability_check_interface = .false.
         end if
-        if (any(abs(hess_x - 4.0_c_rp) > tol)) then
+        if (any(abs(hess_x - 4.0_c_rp) > tol_c)) then
             write (stderr, *) "test_stability_check_py_interface failed: Returned "// &
                 "Hessian linear transformation from passed Hessian linear "// &
                 "transformation function wrong."
@@ -344,69 +246,33 @@ contains
         end if
         deallocate(x, hess_x)
 
-        ! check if check if default arguments are correctly unassociated with values
-        if (stability_check_default) then
-            if (c_associated(precond_c_funptr) .or. &
-                c_associated(jacobi_davidson_c_ptr) .or. c_associated(conv_tol_c_ptr) &
-                .or. c_associated(n_random_trial_vectors_c_ptr) .or. &
-                c_associated(n_iter_c_ptr) .or. c_associated(verbose_c_ptr) .or. &
-                c_associated(logger_c_funptr)) then
-                write (stderr, *) "test_stability_check_py_interface failed: "// &
-                    "Passed optional arguments associated with values."
-                test_stability_check_interface = .false.
-            end if
-            ! check if check if optional arguments are associated with correct values
-        else
-            if (.not. (c_associated(precond_c_funptr) .and. &
-                       c_associated(jacobi_davidson_c_ptr) .and. &
-                       c_associated(conv_tol_c_ptr) .and. &
-                       c_associated(n_random_trial_vectors_c_ptr) .and. &
-                       c_associated(n_iter_c_ptr) .and. &
-                       c_associated(verbose_c_ptr) .and. &
-                       c_associated(logger_c_funptr))) then
-                write (stderr, *) "test_stability_check_py_interface failed: "// &
-                    "Passed optional arguments not associated with values."
-                test_stability_check_interface = .false.
-            end if
+        ! get Fortran pointer to passed precond function, call it and check result
+        call c_f_procpointer(cptr=settings_c%precond, fptr=precond_funptr)
+        allocate(residual(n_param_c), precond_residual(n_param_c))
+        residual = 1.0_c_rp
+        error = precond_funptr(residual, 5.0_c_rp, precond_residual)
+        if (error /= 0) then
+            write (stderr, *) "test_stability_check_py_interface failed: Passed "// &
+                "preconditioner function returned error."
+            test_stability_check_interface = .false.
+        end if
+        if (any(abs(precond_residual - 5.0_c_rp) > tol_c)) then
+            write (stderr, *) "test_stability_check_py_interface failed: Returned "// &
+                "preconditioned residual from preconditioner function wrong."
+            test_stability_check_interface = .false.
+        end if
+        deallocate(residual, precond_residual)
 
-            ! get Fortran pointer to passed precond function, call it and check result
-            call c_f_procpointer(cptr=precond_c_funptr, fptr=precond_funptr)
-            allocate(residual(n_param_c), precond_residual(n_param_c))
-            residual = 1.0_c_rp
-            error = precond_funptr(residual, 5.0_c_rp, precond_residual)
-            if (error /= 0) then
-                write (stderr, *) "test_stability_check_py_interface failed: "// &
-                    "Passed preconditioner function returned error."
-                test_stability_check_interface = .false.
-            end if
-            if (any(abs(precond_residual - 5.0_c_rp) > tol)) then
-                write (stderr, *) "test_stability_check_py_interface failed: "// &
-                    "Returned preconditioned residual from preconditioner function "// &
-                    "wrong."
-                test_stability_check_interface = .false.
-            end if
-            deallocate(residual, precond_residual)
+        ! get Fortran pointer to passed logging function and call it
+        message = "test" // c_null_char
+        call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
+        call logger_funptr(message)
 
-            ! get Fortran pointers to optional arguments and check against reference 
-            ! values
-            call c_f_pointer(cptr=conv_tol_c_ptr, fptr=conv_tol_ptr)
-            call c_f_pointer(cptr=jacobi_davidson_c_ptr, fptr=jacobi_davidson_ptr)
-            call c_f_pointer(cptr=n_random_trial_vectors_c_ptr, &
-                             fptr=n_random_trial_vectors_ptr)
-            call c_f_pointer(cptr=n_iter_c_ptr, fptr=n_iter_ptr)
-            call c_f_pointer(cptr=verbose_c_ptr, fptr=verbose_ptr)
-            if (jacobi_davidson_ptr .or. abs(conv_tol_ptr - 1e-3_c_rp) > tol .or. &
-                n_random_trial_vectors_ptr /= 3_c_ip .or. n_iter_ptr /= 50_c_ip .or. &
-                verbose_ptr /= 3_c_ip) then
-                write (stderr, *) "test_stability_check_py_interface failed: "// &
-                    "Passed optional arguments associated with wrong values."
-                test_stability_check_interface = .false.
-            end if
-
-            ! get Fortran pointer to passed logging function and call it
-            message = "test" // c_null_char
-            call c_f_procpointer(cptr=logger_c_funptr, fptr=logger_funptr)
-            call logger_funptr(message)
+        ! check optional settings against reference values
+        if (settings_c /= ref_settings) then
+            write (stderr, *) "test_stability_check_py_interface failed: Passed "// &
+                "settings associated with wrong values."
+            test_stability_check_interface = .false.
         end if
 
         ! set return arguments
@@ -417,9 +283,38 @@ contains
         end if
         error_c = 0
 
-        ! move on to optional argument test for next test
-        stability_check_default = .false.
-
     end function mock_stability_check_c_wrapper
+
+    subroutine mock_init_solver_settings_c(settings) &
+        bind(C, name="mock_init_solver_settings")
+        !
+        ! this subroutine is a mock routine for the C solver setting initialization 
+        ! subroutine
+        !
+        use c_interface, only: solver_settings_type_c
+        use test_reference, only: assignment(=)
+
+        type(solver_settings_type_c), intent(inout) :: settings
+
+        ! set reference values
+        settings = ref_settings
+
+    end subroutine mock_init_solver_settings_c
+
+    subroutine mock_init_stability_settings_c(settings) &
+        bind(C, name="mock_init_stability_settings")
+        !
+        ! this subroutine is a mock routine for the C stability check setting 
+        ! initialization subroutine
+        !
+        use c_interface, only: stability_settings_type_c
+        use test_reference, only: assignment(=)
+
+        type(stability_settings_type_c), intent(inout) :: settings
+
+        ! set reference values
+        settings = ref_settings
+
+    end subroutine mock_init_stability_settings_c
 
 end module c_interface_mock

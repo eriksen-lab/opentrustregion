@@ -52,6 +52,7 @@ target_link_libraries(opentrustregion PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARI
 # create test executable
 add_library(
     testsuite SHARED
+    tests/test_reference.f90
     tests/opentrustregion_unit_tests.f90
     tests/c_interface_unit_tests.f90
     tests/opentrustregion_mock.f90
