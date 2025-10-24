@@ -31,7 +31,12 @@ if TYPE_CHECKING:
 # load the opentrustregion library, fallback to testsuite in case opentrustregion was
 # statically compiled
 ext = "dylib" if sys.platform == "darwin" else "so"
-lib_candidates = [f"libopentrustregion.{ext}", f"libtestsuite.{ext}"]
+lib_candidates = [
+    f"libopentrustregion.{ext}",
+    f"libopentrustregion32.{ext}",
+    f"libopentrustregion64.{ext}",
+    f"libtestsuite.{ext}",
+]
 for lib_name in lib_candidates:
     try:
         with resources.path("pyopentrustregion", lib_name) as lib_path:

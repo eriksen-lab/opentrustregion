@@ -16,28 +16,51 @@ elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
     set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -xHost")
 endif()
 
-# try finding 32-bit BLAS/LAPACK first
-set(BLA_SIZEOF_INTEGER 4 CACHE STRING "Size of BLAS/LAPACK integer type (4 for LP64, 8 for ILP64)")
-find_package(BLAS)
-find_package(LAPACK)
+# user-supplied integer size
+set(INTEGER_SIZE "" CACHE STRING "Size of integers for library (4=32-bit, 8=64-bit)")
 
-# check if 32-bit BLAS/LAPACK found
-if (NOT BLAS_FOUND OR NOT LAPACK_FOUND)
-    message(STATUS "BLAS/LAPACK with 32-bit integers not found, trying version with 64-bit integers...")
+# user-supplied BLAS and LAPACK libraries
+set(BLAS_LIBRARIES "" CACHE STRING "User-specified BLAS library path(s)")
+set(LAPACK_LIBRARIES "" CACHE STRING "User-specified LAPACK library path(s)")
 
-    # now try finding 64-bit BLAS/LAPACK
-    set(BLA_SIZEOF_INTEGER 8 CACHE STRING "Size of BLAS/LAPACK integer type (4 for LP64, 8 for ILP64)" FORCE)
-    find_package(BLAS REQUIRED)
-    find_package(LAPACK REQUIRED)
-
-    if (BLAS_FOUND AND LAPACK_FOUND)
-        message(STATUS "Using BLAS/LAPACK with 64-bit integers (ILP64) ")
-        add_definitions(-DUSE_ILP64)
+# check if integer size is provided
+if(INTEGER_SIZE)
+    set(BLA_SIZEOF_INTEGER ${INTEGER_SIZE} CACHE INTERNAL "BLAS/LAPACK integer size")
+    if(BLAS_LIBARIES)
+        message(STATUS "Using user-specified BLAS")
     else()
-        message(FATAL_ERROR "Could not find a suitable BLAS/LAPACK library (neither with 32-bit or 64-bit integers).")
+        find_package(BLAS REQUIRED)
+    endif()
+    if(LAPACK_LIBARIES)
+        message(STATUS "Using user-specified LAPACK")
+    else()
+        find_package(LAPACK REQUIRED)
     endif()
 else()
-    message(STATUS "Using BLAS/LAPACK with 32-bit integers (LP64)")
+    if(BLAS_LIBRARIES OR LAPACK_LIBRARIES)
+        message(FATAL_ERROR
+            "You provided explicit BLAS or LAPACK libraries but did not specify INTEGER_SIZE. "
+            "Please set INTEGER_SIZE to 4 (LP64) or 8 (ILP64) to ensure compatibility."
+        )
+    else()
+        # autodetect BLAS and LAPACK, try 32-bit first, then 64-bit
+        set(BLA_SIZEOF_INTEGER 4 CACHE INTERNAL "BLAS/LAPACK integer size")
+        find_package(BLAS)
+        find_package(LAPACK)
+        if(NOT BLAS_FOUND OR NOT LAPACK_FOUND)
+            set(BLA_SIZEOF_INTEGER 8 CACHE INTERNAL "BLAS/LAPACK integer size")
+            find_package(BLAS REQUIRED)
+            find_package(LAPACK REQUIRED)
+        endif()
+    endif()
+endif()
+
+message(STATUS "Using integer size ${BLA_SIZEOF_INTEGER}")
+if(BLA_SIZEOF_INTEGER EQUAL 8)
+    add_definitions(-DUSE_ILP64)
+    set(LIB_SUFFIX "64")
+else()
+    set(LIB_SUFFIX "32")
 endif()
 
 # default to static libraries
@@ -54,10 +77,13 @@ set(OPENTRUSTREGION_SOURCES src/opentrustregion.f90 src/c_interface.f90)
 # add library
 add_library(opentrustregion ${OPENTRUSTREGION_SOURCES})
 
+# set library version
+set_target_properties(opentrustregion PROPERTIES VERSION 2.0.0 SOVERSION 2)
+
 # compile position-independent code - this is not automatically enabled for static 
 # libraries, but is required when linking a static library into a shared library
 set_target_properties(opentrustregion PROPERTIES
-    OUTPUT_NAME opentrustregion
+    OUTPUT_NAME "opentrustregion${LIB_SUFFIX}"
     POSITION_INDEPENDENT_CODE ON
 )
 
