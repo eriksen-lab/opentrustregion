@@ -124,8 +124,7 @@ update_orbs_type update_orbs_funptr = (void*)update_orbs;
 obj_func_type obj_func_funptr = (void*)obj_func;
 
 // initialize settings
-struct solver_settings_type settings
-struct solver_settings_type settings = solver_settings_init();
+solver_settings_type settings = solver_settings_init();
 
 // override default settings
 settings.conv_tol = 1e-6;
@@ -251,7 +250,7 @@ c_bool stable;
 hess_x_type hess_x_funptr = hess_x;
 
 // initialize settings
-struct stability_settings_type settings = stability_settings_init();
+stability_settings_type settings = stability_settings_init();
 
 // override default settings
 settings.conv_tol = 1e-6;

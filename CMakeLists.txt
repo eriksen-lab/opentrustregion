@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
-project(OpenTrustRegion LANGUAGES Fortran C)
+project(OpenTrustRegion VERSION 2.0.0 LANGUAGES Fortran C)
+
+# get commands
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 # default build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -55,6 +58,7 @@ else()
     endif()
 endif()
 
+# set integer size and define library suffix
 message(STATUS "Using integer size ${BLA_SIZEOF_INTEGER}")
 if(BLA_SIZEOF_INTEGER EQUAL 8)
     add_definitions(-DUSE_ILP64)
@@ -77,26 +81,34 @@ set(OPENTRUSTREGION_SOURCES src/opentrustregion.f90 src/c_interface.f90)
 # add library
 add_library(opentrustregion ${OPENTRUSTREGION_SOURCES})
 
-# set library version
-set_target_properties(opentrustregion PROPERTIES VERSION 2.0.0 SOVERSION 2)
-
-# compile position-independent code - this is not automatically enabled for static 
-# libraries, but is required when linking a static library into a shared library
-set_target_properties(opentrustregion PROPERTIES
-    OUTPUT_NAME "opentrustregion${LIB_SUFFIX}"
-    POSITION_INDEPENDENT_CODE ON
+# set properties
+set_target_properties(
+    opentrustregion PROPERTIES 
+    # output name
+    OUTPUT_NAME "opentrustregion${LIB_SUFFIX}" 
+    # library version
+    VERSION ${PROJECT_VERSION} 
+    # interface version
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    # position-independent code - not automatically enabled for static libraries, but 
+    # required when linking a static library into a shared library
+    POSITION_INDEPENDENT_CODE ON 
 )
 
 # enable preprocessing
-set_source_files_properties(${OPENTRUSTREGION_SOURCES} PROPERTIES Fortran_PREPROCESS ON)
+set_source_files_properties(${OPENTRUSTREGION_SOURCES} 
+                            PROPERTIES Fortran_PREPROCESS ON
+)
 
 # link against BLAS and LAPACK
-target_link_libraries(opentrustregion PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+target_link_libraries(opentrustregion 
+                      PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
+)
 
 # set include directories
 target_include_directories(opentrustregion PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+                           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+                           $<INSTALL_INTERFACE:include>
 )
 
 # option to build testsuite
@@ -104,58 +116,65 @@ option(BUILD_TESTS "Build the testsuite" ON)
 
 if (BUILD_TESTS)
     # create shared test library which is then called from Python for testing
-    add_library(
-        testsuite SHARED
-        tests/test_reference.f90
-        tests/opentrustregion_unit_tests.f90
-        tests/c_interface_unit_tests.f90
-        tests/opentrustregion_mock.f90
-        tests/c_interface_mock.f90
-        tests/opentrustregion_system_tests.f90
+    add_library(testsuite SHARED
+                tests/test_reference.f90
+                tests/opentrustregion_unit_tests.f90
+                tests/c_interface_unit_tests.f90
+                tests/opentrustregion_mock.f90
+                tests/c_interface_mock.f90
+                tests/opentrustregion_system_tests.f90
     )
 
     # link against BLAS and LAPACK and against OpenTrustRegion
-    target_link_libraries(
-        testsuite
-        PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} opentrustregion
+    target_link_libraries(testsuite
+                          PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} opentrustregion
     )
-
-    # enable preprocessing
-    set_source_files_properties(tests/opentrustregion_system_tests.f90 PROPERTIES Fortran_PREPROCESS ON)
 endif()
 
-# set paths to find module files, header files and library in build directory
-set(OpenTrustRegion_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/ ${CMAKE_BINARY_DIR})
-set(OpenTrustRegion_LIBRARY $<TARGET_FILE:opentrustregion>)
-
-# create the OpenTrustRegionConfig.cmake from the template
-configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/OpenTrustRegionConfig.cmake.in
-  ${CMAKE_BINARY_DIR}/cmake/OpenTrustRegionConfig.cmake
-  @ONLY
+# create targets file in the build tree for build-tree usage
+export(TARGETS opentrustregion
+       FILE "${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionTargets.cmake"
+       NAMESPACE OpenTrustRegion::
 )
 
-# export the target to make OpenTrustRegion::OpenTrustRegion usable
-install(TARGETS opentrustregion
-        EXPORT OpenTrustRegionTargets
-        LIBRARY DESTINATION lib # shared libraries (.so, .dylib)
-        ARCHIVE DESTINATION lib # static libraries (.a)
-        INCLUDES DESTINATION include)
-install(FILES include/opentrustregion.h DESTINATION ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR}/)
-
-# export the target with namespace OpenTrustRegion::
-install(EXPORT OpenTrustRegionTargets
-        NAMESPACE OpenTrustRegion::
-        DESTINATION lib/cmake/OpenTrustRegion)
-
-# generate and install the config file
-include(CMakePackageConfigHelpers)
-
+# generate OpenTrustRegionConfig.cmake
 configure_package_config_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/OpenTrustRegionConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/OpenTrustRegionConfig.cmake
-    INSTALL_DESTINATION lib/cmake/OpenTrustRegion
+    ${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenTrustRegion
+    NO_CHECK_REQUIRED_COMPONENTS_MACRO
 )
 
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/OpenTrustRegionConfig.cmake
-        DESTINATION lib/cmake/OpenTrustRegion)
+# generate version file
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY AnyNewerVersion
+)
+
+# install library
+install(TARGETS opentrustregion
+        EXPORT OpenTrustRegionTargets
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} # shared libraries (.so, .dylib)
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} # static libraries (.a)
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+# install headers
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/ 
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+# install targets
+install(EXPORT OpenTrustRegionTargets
+        FILE OpenTrustRegionTargets.cmake
+        NAMESPACE OpenTrustRegion::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenTrustRegion
+)
+
+# install config files
+install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenTrustRegion
+)

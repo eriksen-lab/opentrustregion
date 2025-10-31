@@ -1,19 +1,13 @@
 # OpenTrustRegionConfig.cmake.in
 @PACKAGE_INIT@
 
-# Set the paths to the include and library directories
-set(OpenTrustRegion_INCLUDE_DIR "@OpenTrustRegion_INCLUDE_DIR@")
-set(OpenTrustRegion_LIBRARY "@OpenTrustRegion_LIBRARY@")
+# include the exported targets file
+include("${CMAKE_CURRENT_LIST_DIR}/OpenTrustRegionTargets.cmake")
 
-# Provide the target OpenTrustRegion::OpenTrustRegion
-include(CMakeFindDependencyMacro)
-
-# Create the target only if it doesn't already exist
-if(NOT TARGET OpenTrustRegion::OpenTrustRegion)
-    add_library(OpenTrustRegion::OpenTrustRegion SHARED IMPORTED)
-
-    set_target_properties(OpenTrustRegion::OpenTrustRegion PROPERTIES
-        IMPORTED_LOCATION "${OpenTrustRegion_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${OpenTrustRegion_INCLUDE_DIR}"
+# add alias (conditionally in case the package has already been included and the alias 
+# has been created)
+if(TARGET OpenTrustRegion::opentrustregion AND NOT TARGET OpenTrustRegion::OpenTrustRegion)
+    add_library(OpenTrustRegion::OpenTrustRegion 
+                ALIAS OpenTrustRegion::opentrustregion
     )
 endif()
