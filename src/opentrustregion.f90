@@ -1169,7 +1169,7 @@ contains
         min_idx = minloc(h_diag, dim=1)
 
         ! add direction if minimum Hessian diagonal element is negative
-        if (h_diag(min_idx) < 0.0_rp) then
+        if (h_diag(min_idx) < 0.0_rp .and. size(grad) > 2) then
             n_vectors = 2
             allocate(red_space_basis(size(grad), n_vectors + &
                      settings%n_random_trial_vectors))
