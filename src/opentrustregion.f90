@@ -105,7 +105,7 @@ module opentrustregion
         procedure(precond_type), pointer, nopass :: precond
         procedure(logger_type), pointer, nopass :: logger
     contains
-        procedure :: log
+        procedure :: log => print_message
         procedure(init_type), deferred :: init
     end type
 
@@ -1700,7 +1700,7 @@ contains
 
     end subroutine print_results
 
-    subroutine log(self, message, level, error)
+    subroutine print_message(self, message, level, error)
         !
         ! this function performs logging
         !
@@ -1734,7 +1734,7 @@ contains
             deallocate(substrings)
         end if
 
-    end subroutine log
+    end subroutine print_message
 
     subroutine split_string_by_space(input, max_length, substrings)
         !

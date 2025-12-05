@@ -115,7 +115,7 @@ fortran_tests = {
         "jacobi_davidson_correction",
         "level_shifted_davidson",
         "level_shifted_diag_precond",
-        "log",
+        "print_message",
         "min_eigval",
         "minres",
         "newton_step",
