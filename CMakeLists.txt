@@ -5,6 +5,29 @@ project(OpenTrustRegion VERSION 2.0.0 LANGUAGES Fortran C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+set(otr OpenTrustRegion)  # Namespace
+
+# ====  Options  ================================================================
+
+# there are paths that work for both windows and unix but they repeat ${otr} :-(
+if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Windows")
+    set(${otr}_INSTALL_CMAKEDIR "${otr}/CMake"
+        CACHE STRING "Directory to which CMake files are installed")
+else()
+    set(${otr}_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/${otr}"
+        CACHE STRING "Directory to which CMake files are installed")
+endif()
+message(STATUS "Showing option ${otr}_INSTALL_CMAKEDIR: ${${otr}_INSTALL_CMAKEDIR}")
+
+option(${otr}_BUILD_TESTING "Build test-suite (was BUILD_TESTS)" ${PROJECT_IS_TOP_LEVEL})
+message(STATUS "Showing option ${otr}_BUILD_TESTING: ${${otr}_BUILD_TESTING}")
+
+option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
+message(STATUS "Showing option BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
+
+# ====  Build  ==================================================================
+
+
 # default build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -68,7 +91,6 @@ else()
 endif()
 
 # default to static libraries
-option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 if(BUILD_SHARED_LIBS)
     message(STATUS "Building OpenTrustRegion as a SHARED library")
 else()
@@ -80,41 +102,50 @@ set(OPENTRUSTREGION_SOURCES src/opentrustregion.f90 src/c_interface.f90)
 
 # add library
 add_library(opentrustregion ${OPENTRUSTREGION_SOURCES})
+add_library(${otr}::opentrustregion ALIAS opentrustregion)
 
 # set properties
 set_target_properties(
-    opentrustregion PROPERTIES 
+    opentrustregion PROPERTIES
     # output name
-    OUTPUT_NAME "opentrustregion${LIB_SUFFIX}" 
+    OUTPUT_NAME "opentrustregion${LIB_SUFFIX}"
     # library version
-    VERSION ${PROJECT_VERSION} 
+    VERSION ${PROJECT_VERSION}
     # interface version
     SOVERSION ${PROJECT_VERSION_MAJOR}
-    # position-independent code - not automatically enabled for static libraries, but 
+    # position-independent code - not automatically enabled for static libraries, but
     # required when linking a static library into a shared library
-    POSITION_INDEPENDENT_CODE ON 
+    POSITION_INDEPENDENT_CODE ON
 )
 
+if(${BUILD_SHARED_LIBS} AND APPLE)
+    set_target_properties(opentrustregion PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
+endif()
+
+set(export_properties
+  "${otr}_VERSION"
+  )
+set_target_properties(opentrustregion PROPERTIES ${otr}_VERSION ${${otr}_VERSION})
+set_property(TARGET opentrustregion APPEND PROPERTY EXPORT_PROPERTIES "${export_properties}")
+
 # enable preprocessing
-set_source_files_properties(${OPENTRUSTREGION_SOURCES} 
+set_source_files_properties(${OPENTRUSTREGION_SOURCES}
                             PROPERTIES Fortran_PREPROCESS ON
 )
 
 # link against BLAS and LAPACK
-target_link_libraries(opentrustregion 
+target_link_libraries(opentrustregion
                       PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
 )
 
 # set include directories
 target_include_directories(opentrustregion PUBLIC
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-                           $<INSTALL_INTERFACE:include>
+                           $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 # option to build testsuite
-option(BUILD_TESTS "Build the testsuite" ON)
-
-if (BUILD_TESTS)
+if (${otr}_BUILD_TESTING)
     # define test files
     set(OPENTRUSTREGION_TESTS
         tests/test_reference.f90
@@ -135,31 +166,32 @@ endif()
 
 # create targets file in the build tree for build-tree usage
 export(TARGETS opentrustregion
-       FILE "${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionTargets.cmake"
-       NAMESPACE OpenTrustRegion::
+       FILE "${CMAKE_CURRENT_BINARY_DIR}/${otr}Targets.cmake"
+       NAMESPACE "${otr}::"
 )
 
 # generate OpenTrustRegionConfig.cmake
 configure_package_config_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/OpenTrustRegionConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionConfig.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenTrustRegion
-    NO_CHECK_REQUIRED_COMPONENTS_MACRO
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/${otr}Config.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/${otr}Config.cmake
+    INSTALL_DESTINATION ${${otr}_INSTALL_CMAKEDIR}
 )
 
 # generate version file
 write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionConfigVersion.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/${otr}ConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
-    COMPATIBILITY AnyNewerVersion
+    COMPATIBILITY SameMajorVersion
 )
 
 # install library
 install(TARGETS opentrustregion
-        EXPORT OpenTrustRegionTargets
+        EXPORT library_interface
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} # Windows (.dll)
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} # shared libraries (.so, .dylib)
         ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} # static libraries (.a)
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
 # install headers
@@ -168,15 +200,15 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 )
 
 # install targets
-install(EXPORT OpenTrustRegionTargets
-        FILE OpenTrustRegionTargets.cmake
-        NAMESPACE OpenTrustRegion::
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenTrustRegion
+install(EXPORT library_interface
+        FILE ${otr}Targets.cmake
+        NAMESPACE "${otr}::"
+        DESTINATION ${${otr}_INSTALL_CMAKEDIR}
 )
 
 # install config files
 install(FILES
-        ${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionConfig.cmake
-        ${CMAKE_CURRENT_BINARY_DIR}/cmake/OpenTrustRegionConfigVersion.cmake
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/OpenTrustRegion
+        ${CMAKE_CURRENT_BINARY_DIR}/${otr}Config.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/${otr}ConfigVersion.cmake
+        DESTINATION ${${otr}_INSTALL_CMAKEDIR}
 )
