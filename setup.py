@@ -54,7 +54,7 @@ class CMakeBuild(build_py):
 package_data_files = [libtestsuite_file, "test_data/*.bin"]
 if libopentrustregion_file is not None:
     package_data_files.append(libopentrustregion_file)
-print(f"{libopentrustregion_file=} {package_data_files=} {libopentrustrefion_path=}")
+print(f"{libopentrustregion_file=} {package_data_files=}") # {libopentrustregion_path=}")
 
 setup(
     packages=find_packages(),
