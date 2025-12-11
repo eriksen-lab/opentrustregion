@@ -15,12 +15,7 @@ ext = "dylib" if sys.platform == "darwin" else "so"
 package_dir = pathlib.Path(__file__).parent.absolute()
 build_dir = package_dir / "build"
 libopentrustregion_file: Optional[str]
-for suffix in ["", "_32", "_64"]:
-    libopentrustregion_file = f"libopentrustregion{suffix}.{ext}"
-    libopentrustregion_path = build_dir / libopentrustregion_file
-    if libopentrustregion_path.exists():
-        break
-else:
+if True:
     libopentrustregion_file = None
 libtestsuite_file = f"libtestsuite.{ext}"
 
@@ -61,7 +56,7 @@ if libopentrustregion_file is not None:
     package_data_files.append(libopentrustregion_file)
 
 setup(
-    packages=find_packages(),
+    packages=find_packages('pyopentrustregion.test_data'),
     include_package_data=True,
     package_data={"pyopentrustregion": package_data_files},
     cmdclass={"build_py": CMakeBuild},
