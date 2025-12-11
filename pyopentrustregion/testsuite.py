@@ -545,10 +545,10 @@ class SystemTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        print(50 * "-")
-        print("Running system tests for OpenTrustRegion...")
-        print(50 * "-")
         test_data = Path(__file__).parent / "test_data"
+        print(50 * "-")
+        print(f"Running system tests for OpenTrustRegion...{test_data}")
+        print(50 * "-")
         if not os.path.isdir(test_data):
             raise RuntimeError(
                 "test_data directory does not exist in same directory as testsuite.py."
