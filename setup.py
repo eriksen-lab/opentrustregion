@@ -51,12 +51,13 @@ class CMakeBuild(build_py):
 
 
 # update package_data dynamically
-package_data_files = [libtestsuite_file]
+package_data_files = [libtestsuite_file, "test_data/*.bin"]
 if libopentrustregion_file is not None:
     package_data_files.append(libopentrustregion_file)
+print(f"{libopentrustregion_file=} {package_data_files=} {libopentrustrefion_path=}")
 
 setup(
-    packages=find_packages('pyopentrustregion.test_data'),
+    packages=find_packages(),
     include_package_data=True,
     package_data={"pyopentrustregion": package_data_files},
     cmdclass={"build_py": CMakeBuild},
