@@ -79,6 +79,7 @@ if lib is None:
     )
 
 # determine integer size used in library
+print(f"{lib=}")
 ilp64 = c_bool.in_dll(lib, "ilp64")
 if ilp64.value:
     c_int = c_int64
