@@ -547,7 +547,9 @@ class SystemTests(unittest.TestCase):
     def setUpClass(cls):
         test_data = Path(__file__).parent / "test_data"
         print(f"FIL0 {test_data=}")
-        test_data = Path(os.path.expandvars(str(test_data)))
+        if "$PREFIX" in str(__file__):
+            test_data = str(test_data).replace("$PREFIX", "/opt/anaconda1anaconda2anaconda3")
+        #test_data = Path(os.path.expandvars(str(test_data)))
         print(f"FIL1 {test_data=}")
         print(50 * "-")
         print(f"Running system tests for OpenTrustRegion...{test_data}")
