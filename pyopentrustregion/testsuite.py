@@ -555,6 +555,7 @@ class SystemTests(unittest.TestCase):
         if "$PREFIX" in str(test_data):
             test_data = str(test_data).replace("$PREFIX", "/opt/anaconda1anaconda2anaconda3")
         #test_data = Path(os.path.expandvars(str(test_data)))
+        test_data = Path('/opt/anaconda1anaconda2anaconda3/lib/python3.10/site-packages/pyopentrustregion/test_data')
         print(f"FIL1 {test_data=}")
         print(50 * "-")
         print(f"Running system tests for OpenTrustRegion...{test_data}")
