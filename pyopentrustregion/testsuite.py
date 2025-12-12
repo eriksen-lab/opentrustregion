@@ -546,6 +546,9 @@ class SystemTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         test_data = Path(__file__).parent / "test_data"
+        print(f"FIL0 {test_data=}")
+        test_data = Path(os.path.expandvars(str(test_data)))
+        print(f"FIL1 {test_data=}")
         print(50 * "-")
         print(f"Running system tests for OpenTrustRegion...{test_data}")
         print(50 * "-")
