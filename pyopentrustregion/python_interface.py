@@ -86,7 +86,7 @@ c_int = c_int32
 c_real = c_double
 
 # fixed size strings for keywords
-kw_len = 64
+kw_len = c_int.in_dll(lib, "kw_len_c").value
 
 # callback function ctypes specifications, ctypes can only deal with simple return
 # types so we interface to Fortran subroutines by creating pointers to the relevant

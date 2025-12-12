@@ -52,7 +52,12 @@ except ImportError:
         c_real,
     )
 
-ext = "dylib" if sys.platform == "darwin" else "so"
+if sys.platform == "darwin":
+    ext = "dylib"
+elif sys.platform == "win32":
+    ext = "dll"
+else:
+    ext = "so"
 lib = None
 
 # try to load from installed package (site-packages)
@@ -81,7 +86,6 @@ if lib is None:
     )
 
 # load the testsuite library
-ext = "dylib" if sys.platform == "darwin" else "so"
 try:
     with resources.path("pyopentrustregion", f"libtestsuite.{ext}") as lib_path:
         libtestsuite = CDLL(str(lib_path))
@@ -148,7 +152,7 @@ fortran_tests = {
         "stability_check_c_wrapper",
         "update_orbs_f_wrapper",
     ],
-    "system_tests": [],
+    "system_tests": ["h2o_atomic_fb", "h2o_saddle_fb"],
 }
 
 # define return type of Fortran functions
