@@ -36,7 +36,12 @@ if TYPE_CHECKING:
 
 # load the opentrustregion library, fallback to testsuite in case opentrustregion was
 # statically compiled
-ext = "dylib" if sys.platform == "darwin" else "so"
+if sys.platform == "darwin":
+    ext = "dylib"
+elif sys.platform == "win32":
+    ext = "dll"
+else:
+    ext = "so"
 lib_candidates = [
     f"libopentrustregion.{ext}",
     f"libopentrustregion_32.{ext}",

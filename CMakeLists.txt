@@ -153,7 +153,7 @@ if (${otr}_BUILD_TESTING)
         tests/c_interface_unit_tests.f90
         tests/opentrustregion_mock.f90
         tests/c_interface_mock.f90
-)
+        tests/opentrustregion_system_tests.f90)
 
     # create shared test library which is then called from Python for testing
     add_library(testsuite SHARED ${OPENTRUSTREGION_TESTS})
