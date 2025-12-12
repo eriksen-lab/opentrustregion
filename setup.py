@@ -11,11 +11,21 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Optional
 
-ext = "dylib" if sys.platform == "darwin" else "so"
+if sys.platform == "darwin":
+    ext = "dylib"
+elif sys.platform == "win32":
+    ext = "dll"
+else:
+    ext = "so"
 package_dir = pathlib.Path(__file__).parent.absolute()
 build_dir = package_dir / "build"
 libopentrustregion_file: Optional[str]
-if True:
+for suffix in ["", "_32", "_64"]:
+    libopentrustregion_file = f"libopentrustregion{suffix}.{ext}"
+    libopentrustregion_path = build_dir / libopentrustregion_file
+    if libopentrustregion_path.exists():
+        break
+else:
     libopentrustregion_file = None
 libtestsuite_file = f"libtestsuite.{ext}"
 
