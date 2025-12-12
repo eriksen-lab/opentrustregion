@@ -559,6 +559,9 @@ class SystemTests(unittest.TestCase):
         print(f"FIL1 {test_data=}")
         test_data = Path(os.getcwd()).parent / "test_data"
         print(f"FIL2 {test_data=}")
+        print(f"ENVV {os.getenv('CONDA_PREFIX')=} {os.getenv('PREFIX')=}")
+        test_data = os.getenv('CONDA_PREFIX') + "lib/python3.10/site-packages/pyopentrustregion/test_data"
+        print(f"FIL3 {test_data=}")
         print(50 * "-")
         print(f"Running system tests for OpenTrustRegion...{test_data}")
         print(50 * "-")
