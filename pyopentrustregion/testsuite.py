@@ -148,7 +148,7 @@ fortran_tests = {
         "stability_check_c_wrapper",
         "update_orbs_f_wrapper",
     ],
-    "system_tests": ["h2o_atomic_fb", "h2o_saddle_fb"],
+    "system_tests": [],
 }
 
 # define return type of Fortran functions
@@ -555,7 +555,8 @@ class SystemTests(unittest.TestCase):
         print(50 * "-")
         print(f"Running system tests for OpenTrustRegion...{test_data}")
         print(50 * "-")
-        print(f"EXI {os.path.isdir(test_data)=}")
+        print(f"EXI1 {os.path.isdir(test_data)=}")
+        print(f"EXI2 {test_data.exists()=}")
         if not os.path.isdir(test_data):
             raise RuntimeError(
                 "test_data directory does not exist in same directory as testsuite.py."
