@@ -79,7 +79,11 @@ if lib is None:
     )
 
 # determine integer size used in library
+print("Loaded:", lib._name)
 print(f"{lib=}")
+func_by_ord = lib[0x53]   # or lib[83]
+print(func_by_ord)
+
 c_int = c_int32
 
 # define real type
