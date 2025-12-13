@@ -549,25 +549,10 @@ class SystemTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        #test_data = Path(__file__).parent / "test_data"
-        print(f"FILZ {__file__=}")
-        #print(f"FIL0 {test_data=}")
-        #if "$PREFIX" in str(test_data):
-        #    test_data = str(test_data).replace("$PREFIX", "/opt/anaconda1anaconda2anaconda3")
-        #test_data = Path(os.path.expandvars(str(test_data)))
-        test_data = '/opt/anaconda1anaconda2anaconda3/lib/python3.10/site-packages/pyopentrustregion/test_data'
-        print(f"FIL1 {test_data=}")
-        test_data = Path(os.getcwd()).parent / "test_data"
-        print(f"FIL2 {test_data=}")
-        print(f"ENVV {os.getenv('CONDA_PREFIX')=} {os.getenv('PREFIX')=}")
-        test_data = os.getenv('CONDA_PREFIX') + "/lib/python3.10/site-packages/pyopentrustregion/test_data"
-        test_data = Path(test_data)
-        print(f"FIL3 {test_data=}")
+        test_data = Path(__file__).parent / "test_data"
         print(50 * "-")
         print(f"Running system tests for OpenTrustRegion...{test_data}")
         print(50 * "-")
-        print(f"EXI1 {os.path.isdir(test_data)=}")
-        print(f"EXI2 {test_data.exists()=}")
         if not os.path.isdir(test_data):
             raise RuntimeError(
                 "test_data directory does not exist in same directory as testsuite.py."

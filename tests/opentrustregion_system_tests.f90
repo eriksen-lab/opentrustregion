@@ -28,7 +28,7 @@ contains
         character(c_char), pointer :: c_path(:)
         integer(ip) :: len, i
 
-        call c_f_pointer(path, c_path, [2048])
+        call c_f_pointer(path, c_path, [1024])
         len = 0
         do i = 1, size(c_path)
             if (c_path(i) == c_null_char) exit
