@@ -53,22 +53,16 @@ if sys.platform != "win32":
     lib_candidates.append(f"libtestsuite.{ext}")
 lib = None
 
-conda_path = Path(f"libopentrustregion_32.{ext}")
-conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
-conda_path1 = conda_prefix / "lib" / conda_path
-conda_path2 = conda_prefix / "Library" / "bin" / conda_path
-conda_rel_path1 = Path(".") / ".." / ".." / ".." / conda_path
-conda_rel_path2 = Path(".") / ".." / ".." / ".." / "Library" / "bin" / conda_path
-print(f"{conda_path=}")
-print(f"{conda_path1=} {conda_path1.exists()=}")
-print(f"{conda_path2=} {conda_path2.exists()=}")
-print(f"{conda_rel_path1=} {conda_rel_path1.exists()=}")
-print(f"{conda_rel_path2=} {conda_rel_path2.exists()=}")
-
-if conda_path1.exists():
-    lib = CDLL(str(conda_path1))
-elif conda_path2.exists():
-    lib = CDLL(str(conda_path2))
+# try to load from installed package (compiled conda pkg, not site-packages)
+if lib is None:
+    conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
+    for lib_name in lib_candidates:
+        conda_path_unix = conda_prefix / "lib" / lib_name
+        conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
+        if conda_path_unix.exists():
+            lib = CDLL(str(conda_path_unix))
+        elif conda_path_wind.exists():
+            lib = CDLL(str(conda_path_wind))
 
 # try to load from installed package (site-packages)
 if lib is None:

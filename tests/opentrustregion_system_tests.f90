@@ -28,6 +28,7 @@ contains
         character(c_char), pointer :: c_path(:)
         integer(ip) :: len, i
 
+        ! conda paths need ample space
         call c_f_pointer(path, c_path, [1024])
         len = 0
         do i = 1, size(c_path)
