@@ -63,15 +63,10 @@ print(f"{conda_path2=} {conda_path2.exists()=}")
 print(f"{conda_rel_path1=} {conda_rel_path1.exists()=}")
 print(f"{conda_rel_path2=} {conda_rel_path2.exists()=}")
 
-#lib_path = Path("/opt/anaconda1anaconda2anaconda3/lib/libopentrustregion_32.dll")
 if conda_path1.exists():
-    lib = CDLL(conda_path1)
+    lib = CDLL(str(conda_path1))
 elif conda_path2.exists():
-    lib = CDLL(conda_path2)
-elif conda_rel_path1.exists():
-    lib = CDLL(conda_rel_path1)
-elif conda_rel_path2.exists():
-    lib = CDLL(conda_rel_path2)
+    lib = CDLL(str(conda_path2))
 
 # try to load from installed package (site-packages)
 if lib is None:
