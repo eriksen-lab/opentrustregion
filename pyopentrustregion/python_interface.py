@@ -46,6 +46,7 @@ lib_candidates = [
     f"libopentrustregion.{ext}",
     f"libopentrustregion_32.{ext}",
     f"libopentrustregion_64.{ext}",
+    f"libtestsuite.{ext}",
 ]
 lib = None
 
