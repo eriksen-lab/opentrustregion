@@ -55,20 +55,26 @@ conda_path = Path(f"libopentrustregion_32.{ext}")
 conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
 conda_path1 = conda_prefix / "lib" / conda_path
 conda_path2 = conda_prefix / "Library" / "lib" / conda_path
-print(conda_path)
-print(conda_path1)
-print(conda_path2)
+conda_rel_path1 = Path(".") / ".." / ".." / ".." / conda_path
+conda_rel_path2 = Path(".") / ".." / ".." / ".." / "Library" / "lib" / conda_path
+print(f"{conda_path=}")
+print(f"{conda_path1=} {conda_path1.exists()=}")
+print(f"{conda_path2=} {conda_path2.exists()=}")
+print(f"{conda_rel_path1=} {conda_rel_path1.exists()=}")
+print(f"{conda_rel_path2=} {conda_rel_path2.exists()=}")
+
 #lib_path = Path("/opt/anaconda1anaconda2anaconda3/lib/libopentrustregion_32.dll")
-if conda_path1.exists():
-    lib = CDLL(conda_path1)
-elif conda_path2.exists():
-    lib = CDLL(conda_path2)
+if conda_rel_path1.exists():
+    lib = CDLL(conda_rel_path1)
+elif conda_rel_path2.exists():
+    lib = CDLL(conda_rel_path2)
 
 # try to load from installed package (site-packages)
-for lib_name in lib_candidates:
-    lib_path = resources.files("pyopentrustregion") / lib_name
-    if lib_path.is_file():
-        lib = CDLL(str(lib_path))
+if lib is None:
+    for lib_name in lib_candidates:
+        lib_path = resources.files("pyopentrustregion") / lib_name
+        if lib_path.is_file():
+            lib = CDLL(str(lib_path))
 
 # fallback: try to load from same directory (editable install)
 if lib is None:
