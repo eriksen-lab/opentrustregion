@@ -46,7 +46,6 @@ lib_candidates = [
     f"libopentrustregion.{ext}",
     f"libopentrustregion_32.{ext}",
     f"libopentrustregion_64.{ext}",
-    f"libtestsuite.{ext}",
 ]
 lib = None
 
@@ -79,10 +78,8 @@ if lib is None:
     )
 
 # determine integer size used in library
-print("Loaded:", lib._name)
-print(f"{lib=}")
-func_by_ord = lib[0x53]   # or lib[83]
-print(func_by_ord)
+print("python_interface Loaded:", lib._name)
+print(f"python_interface {lib=}")
 
 c_int = c_int32
 

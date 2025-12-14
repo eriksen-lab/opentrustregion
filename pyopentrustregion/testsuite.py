@@ -85,6 +85,8 @@ if lib is None:
         f"Cannot find any of the expected libraries: libtestsuite.{ext}"
     )
 
+print("testsuite Loaded:", lib._name)
+print(f"testsuite {lib=}")
 # load the testsuite library
 try:
     with resources.path("pyopentrustregion", f"libtestsuite.{ext}") as lib_path:
