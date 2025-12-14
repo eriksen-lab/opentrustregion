@@ -50,12 +50,17 @@ lib_candidates = [
 ]
 lib = None
 
-lib_path = "/opt/anaconda1anaconda2anaconda3/lib/libopentrustregion_32.dll"
-if lib_path.is_file():
-    lib = CDLL(lib_path)
-lib_path = "/opt/anaconda1anaconda2anaconda3/Library/lib/libopentrustregion_32.dll"
-if lib_path.is_file():
-    lib = CDLL(lib_path)
+conda_path = Path(f"libopentrustregion_32.{ext}")
+conda_path1 = "/opt/anaconda1anaconda2anaconda3" / "lib" / conda_path
+conda_path2 = "/opt/anaconda1anaconda2anaconda3" / "Library" / "lib" / conda_path
+print(conda_path)
+print(conda_path1)
+print(conda_path2)
+#lib_path = Path("/opt/anaconda1anaconda2anaconda3/lib/libopentrustregion_32.dll")
+if conda_path1.exists():
+    lib = CDLL(conda_path1)
+elif conda_path2.exists():
+    lib = CDLL(conda_path2)
 
 # try to load from installed package (site-packages)
 for lib_name in lib_candidates:
