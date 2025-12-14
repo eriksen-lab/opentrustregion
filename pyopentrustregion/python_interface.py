@@ -47,8 +47,10 @@ lib_candidates = [
     f"libopentrustregion.{ext}",
     f"libopentrustregion_32.{ext}",
     f"libopentrustregion_64.{ext}",
-    f"libtestsuite.{ext}",
 ]
+if sys.platform != "win32":
+    # libopentrustregion symbols not exported through libtestsuite on windows
+    lib_candidates.append(f"libtestsuite.{ext}")
 lib = None
 
 conda_path = Path(f"libopentrustregion_32.{ext}")
@@ -101,13 +103,17 @@ if lib is None:
 print("python_interface Loaded:", lib._name)
 print(f"python_interface {lib=}")
 
-c_int = c_int32
+ilp64 = c_bool.in_dll(lib, "ilp64")
+if ilp64.value:
+    c_int = c_int64
+else:
+    c_int = c_int32
 
 # define real type
 c_real = c_double
 
 # fixed size strings for keywords
-kw_len = 64
+kw_len = c_int.in_dll(lib, "kw_len_c").value
 
 # callback function ctypes specifications, ctypes can only deal with simple return
 # types so we interface to Fortran subroutines by creating pointers to the relevant
