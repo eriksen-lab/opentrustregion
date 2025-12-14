@@ -50,6 +50,13 @@ lib_candidates = [
 ]
 lib = None
 
+lib_path = "/opt/anaconda1anaconda2anaconda3/lib/libopentrustregion_32.dll"
+if lib_path.is_file():
+    lib = CDLL(lib_path)
+lib_path = "/opt/anaconda1anaconda2anaconda3/Library/lib/libopentrustregion_32.dll"
+if lib_path.is_file():
+    lib = CDLL(lib_path)
+
 # try to load from installed package (site-packages)
 for lib_name in lib_candidates:
     lib_path = resources.files("pyopentrustregion") / lib_name

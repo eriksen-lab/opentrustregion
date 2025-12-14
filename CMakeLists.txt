@@ -155,15 +155,6 @@ if (${otr}_BUILD_TESTING)
         tests/c_interface_mock.f90
         tests/opentrustregion_system_tests.f90)
 
-    if (WIN32)
-        # create shared test library which is then called from Python for testing
-        add_library(testsuite SHARED ${OPENTRUSTREGION_SOURCES} ${OPENTRUSTREGION_TESTS})
-
-        # link against BLAS and LAPACK and against OpenTrustRegion
-        target_link_libraries(testsuite
-                              PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
-        )
-    else ()
         # create shared test library which is then called from Python for testing
         add_library(testsuite SHARED ${OPENTRUSTREGION_TESTS})
 
@@ -171,7 +162,6 @@ if (${otr}_BUILD_TESTING)
         target_link_libraries(testsuite
                               PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} opentrustregion
         )
-    endif()
 endif()
 
 # create targets file in the build tree for build-tree usage
