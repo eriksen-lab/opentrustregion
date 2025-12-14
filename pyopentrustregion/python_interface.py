@@ -52,8 +52,9 @@ lib_candidates = [
 lib = None
 
 conda_path = Path(f"libopentrustregion_32.{ext}")
-conda_path1 = "/opt/anaconda1anaconda2anaconda3" / "lib" / conda_path
-conda_path2 = "/opt/anaconda1anaconda2anaconda3" / "Library" / "lib" / conda_path
+conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
+conda_path1 = conda_prefix / "lib" / conda_path
+conda_path2 = conda_prefix / "Library" / "lib" / conda_path
 print(conda_path)
 print(conda_path1)
 print(conda_path2)
