@@ -41,16 +41,16 @@ class CMakeBuild(build_py):
         if extra_flags:
             cmake_cmd += shlex.split(extra_flags)
 
-        # run CMake configure & build
-        subprocess.check_call(cmake_cmd, cwd=build_dir)
-        subprocess.check_call(["cmake", "--build", "."], cwd=build_dir)
-
-        # destination directory inside the build tree
-        target_dir = pathlib.Path(self.build_lib) / "pyopentrustregion"
-        os.makedirs(target_dir, exist_ok=True)
-
         if os.getenv("CONDA_BUILD", "0") != "1":
             # for conda, keep compiled libs in their own package to consolidate deps
+
+            # run CMake configure & build
+            subprocess.check_call(cmake_cmd, cwd=build_dir)
+            subprocess.check_call(["cmake", "--build", "."], cwd=build_dir)
+
+            # destination directory inside the build tree
+            target_dir = pathlib.Path(self.build_lib) / "pyopentrustregion"
+            os.makedirs(target_dir, exist_ok=True)
 
             # copy libopentrustregion only if it exists (i.e., shared build)
             if libopentrustregion_file is not None:
@@ -64,9 +64,11 @@ class CMakeBuild(build_py):
 
 
 # update package_data dynamically
-package_data_files = [libtestsuite_file, "test_data/*.bin"]
-if libopentrustregion_file is not None:
-    package_data_files.append(libopentrustregion_file)
+package_data_files = ["test_data/*.bin"]
+if os.getenv("CONDA_BUILD", "0") != "1":
+    package_data_files.append(libtestsuite_file)
+    if libopentrustregion_file is not None:
+        package_data_files.append(libopentrustregion_file)
 
 setup(
     packages=find_packages(),
