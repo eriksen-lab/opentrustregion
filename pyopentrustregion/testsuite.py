@@ -97,7 +97,7 @@ if lib is None:
     raise FileNotFoundError(
         f"Cannot find any of the expected libraries: libotrtestsuite.{ext}"
     )
-print("testsuite Loaded:", lib._name)
+# print("testsuite Loaded:", lib._name)
 
 # load the testsuite library
 try:
@@ -121,6 +121,7 @@ except OSError:
                 libtestsuite = CDLL(str(conda_path_wind))
         except OSError:
             raise FileNotFoundError("Cannot find testsuite library.")
+# print("testsuite Loaded:", libtestsuite._name)
 
 
 # define all tests in alphabetical order

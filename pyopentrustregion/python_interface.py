@@ -92,7 +92,7 @@ if lib is None:
     raise FileNotFoundError(
         f"Cannot find either opentrustregion or testsuite library ({lib_candidates})"
     )
-print("python_interface Loaded:", lib._name)
+# print("python_interface Loaded:", lib._name)
 
 # determine integer size used in library
 ilp64 = c_bool.in_dll(lib, "ilp64")
