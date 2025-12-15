@@ -61,8 +61,8 @@ else:
 lib = None
 
 # try to load from installed package (compiled conda pkg, not site-packages)
+conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
 if lib is None:
-    conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
     lib_name = f"libotrtestsuite.{ext}"
     conda_path_unix = conda_prefix / "lib" / lib_name
     conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
@@ -111,7 +111,16 @@ except OSError:
         )
         libtestsuite = CDLL(fallback_path)
     except OSError:
-        raise FileNotFoundError("Cannot find testsuite library.")
+        try:
+            lib_name = f"libotrtestsuite.{ext}"
+            conda_path_unix = conda_prefix / "lib" / lib_name
+            conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
+            if conda_path_unix.exists():
+                libtestsuite = CDLL(str(conda_path_unix))
+            elif conda_path_wind.exists():
+                libtestsuite = CDLL(str(conda_path_wind))
+        except OSError:
+            raise FileNotFoundError("Cannot find testsuite library.")
 
 
 # define all tests in alphabetical order
