@@ -42,7 +42,7 @@ class CMakeBuild(build_py):
             cmake_cmd += shlex.split(extra_flags)
 
         if os.getenv("CONDA_BUILD", "0") != "1":
-            # for conda, keep compiled libs in their own package to consolidate deps
+            # for conda, skip cmake so avoid compiler deps and keep compiled libs in their own package to consolidate deps
 
             # run CMake configure & build
             subprocess.check_call(cmake_cmd, cwd=build_dir)
