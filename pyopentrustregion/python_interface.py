@@ -49,8 +49,8 @@ lib_candidates = [
     f"libopentrustregion_64.{ext}",
 ]
 if sys.platform != "win32":
-    # libopentrustregion symbols not exported through libtestsuite on windows
-    lib_candidates.append(f"libtestsuite.{ext}")
+    # libopentrustregion symbols not exported through libotrtestsuite on windows
+    lib_candidates.append(f"libotrtestsuite.{ext}")
 lib = None
 
 # try to load from installed package (compiled conda pkg, not site-packages)
@@ -92,11 +92,9 @@ if lib is None:
     raise FileNotFoundError(
         f"Cannot find either opentrustregion or testsuite library ({lib_candidates})"
     )
+print("python_interface Loaded:", lib._name)
 
 # determine integer size used in library
-print("python_interface Loaded:", lib._name)
-print(f"python_interface {lib=}")
-
 ilp64 = c_bool.in_dll(lib, "ilp64")
 if ilp64.value:
     c_int = c_int64

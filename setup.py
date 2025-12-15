@@ -20,15 +20,14 @@ else:
 package_dir = pathlib.Path(__file__).parent.absolute()
 build_dir = package_dir / "build"
 libopentrustregion_file: Optional[str]
-#for suffix in ["", "_32", "_64"]:
-#    libopentrustregion_file = f"libopentrustregion{suffix}.{ext}"
-#    libopentrustregion_path = build_dir / libopentrustregion_file
-#    if libopentrustregion_path.exists():
-#        break
-#else:
-if True:
+for suffix in ["", "_32", "_64"]:
+    libopentrustregion_file = f"libopentrustregion{suffix}.{ext}"
+    libopentrustregion_path = build_dir / libopentrustregion_file
+    if libopentrustregion_path.exists():
+        break
+else:
     libopentrustregion_file = None
-libtestsuite_file = f"libtestsuite.{ext}"
+libtestsuite_file = f"libotrtestsuite.{ext}"
 
 
 class CMakeBuild(build_py):
@@ -50,12 +49,14 @@ class CMakeBuild(build_py):
         target_dir = pathlib.Path(self.build_lib) / "pyopentrustregion"
         os.makedirs(target_dir, exist_ok=True)
 
-        # copy libopentrustregion only if it exists (i.e., shared build)
-        if libopentrustregion_file is not None:
-            shutil.copy(libopentrustregion_path, target_dir / libopentrustregion_file)
+        print(f'{os.getenv("CONDA_BUILD")=}')
+        if os.getenv("CONDA_BUILD", "0") == "1"
+            # copy libopentrustregion only if it exists (i.e., shared build)
+            if libopentrustregion_file is not None:
+                shutil.copy(libopentrustregion_path, target_dir / libopentrustregion_file)
 
-        # always copy testsuite
-        shutil.copy(build_dir / libtestsuite_file, target_dir / libtestsuite_file)
+            # always copy testsuite
+            shutil.copy(build_dir / libtestsuite_file, target_dir / libtestsuite_file)
 
         # run steps in parent class
         super().run()

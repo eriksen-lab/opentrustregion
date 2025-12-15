@@ -156,11 +156,16 @@ if (${otr}_BUILD_TESTING)
         tests/opentrustregion_system_tests.f90)
 
     # create shared test library which is then called from Python for testing
-    add_library(testsuite SHARED ${OPENTRUSTREGION_TESTS})
+    add_library(otrtestsuite SHARED ${OPENTRUSTREGION_TESTS})
 
     # link against BLAS and LAPACK and against OpenTrustRegion
-    target_link_libraries(testsuite
+    target_link_libraries(otrtestsuite
                           PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} opentrustregion
+    )
+    install(TARGETS otrtestsuite
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT testing_interface  # Windows (.dll)
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface  # shared libraries (.so, .dylib)
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface
     )
 endif()
 

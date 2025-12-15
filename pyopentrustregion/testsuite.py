@@ -61,20 +61,20 @@ else:
 lib = None
 
 # try to load from installed package (site-packages)
-lib_path = resources.files("pyopentrustregion") / f"libtestsuite.{ext}"
+lib_path = resources.files("pyopentrustregion") / f"libotrtestsuite.{ext}"
 if lib_path.is_file():
     lib = CDLL(str(lib_path))
 
 # fallback: try to load from same directory (editable install)
 if lib is None:
-    local_path = os.path.join(os.path.dirname(__file__), f"libtestsuite.{ext}")
+    local_path = os.path.join(os.path.dirname(__file__), f"libotrtestsuite.{ext}")
     if os.path.exists(local_path):
         lib = CDLL(local_path)
 
 # fallback: try to load from ../build (development build)
 if lib is None:
     build_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../build", f"libtestsuite.{ext}")
+        os.path.join(os.path.dirname(__file__), "../build", f"libotrtestsuite.{ext}")
     )
     if os.path.exists(build_path):
         lib = CDLL(build_path)
@@ -82,20 +82,19 @@ if lib is None:
 # if all failed
 if lib is None:
     raise FileNotFoundError(
-        f"Cannot find any of the expected libraries: libtestsuite.{ext}"
+        f"Cannot find any of the expected libraries: libotrtestsuite.{ext}"
     )
-
 print("testsuite Loaded:", lib._name)
-print(f"testsuite {lib=}")
+
 # load the testsuite library
 try:
-    with resources.path("pyopentrustregion", f"libtestsuite.{ext}") as lib_path:
+    with resources.path("pyopentrustregion", f"libotrtestsuite.{ext}") as lib_path:
         libtestsuite = CDLL(str(lib_path))
 # fallback for non-installed or dev build
 except OSError:
     try:
         fallback_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../build", f"libtestsuite.{ext}")
+            os.path.join(os.path.dirname(__file__), "../build", f"libotrtestsuite.{ext}")
         )
         libtestsuite = CDLL(fallback_path)
     except OSError:
