@@ -65,7 +65,7 @@ if lib is None:
     conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
     lib_name = f"libotrtestsuite.{ext}"
     conda_path_unix = conda_prefix / "lib" / lib_name
-    conda_path_wind = conda_prefix / "Library" / "bin" / lib_name = f"libotrtestsuite.{ext}"
+    conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
     if conda_path_unix.exists():
         lib = CDLL(str(conda_path_unix))
     elif conda_path_wind.exists():
