@@ -60,10 +60,23 @@ else:
     ext = "so"
 lib = None
 
+# try to load from installed package (compiled conda pkg, not site-packages)
+if lib is None:
+    conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
+    lib_name = f"libotrtestsuite.{ext}"
+    conda_path_unix = conda_prefix / "lib" / lib_name
+    conda_path_wind = conda_prefix / "Library" / "bin" / lib_name = f"libotrtestsuite.{ext}"
+    if conda_path_unix.exists():
+        lib = CDLL(str(conda_path_unix))
+    elif conda_path_wind.exists():
+        lib = CDLL(str(conda_path_wind))
+
+
 # try to load from installed package (site-packages)
-lib_path = resources.files("pyopentrustregion") / f"libotrtestsuite.{ext}"
-if lib_path.is_file():
-    lib = CDLL(str(lib_path))
+if lib is None:
+    lib_path = resources.files("pyopentrustregion") / f"libotrtestsuite.{ext}"
+    if lib_path.is_file():
+        lib = CDLL(str(lib_path))
 
 # fallback: try to load from same directory (editable install)
 if lib is None:
