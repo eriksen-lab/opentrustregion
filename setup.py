@@ -50,7 +50,7 @@ class CMakeBuild(build_py):
         os.makedirs(target_dir, exist_ok=True)
 
         print(f'{os.getenv("CONDA_BUILD")=}')
-        if os.getenv("CONDA_BUILD", "0") == "1":
+        if os.getenv("CONDA_BUILD", "0") != "1":
             # copy libopentrustregion only if it exists (i.e., shared build)
             if libopentrustregion_file is not None:
                 shutil.copy(libopentrustregion_path, target_dir / libopentrustregion_file)
