@@ -41,9 +41,9 @@ class CMakeBuild(build_py):
         if extra_flags:
             cmake_cmd += shlex.split(extra_flags)
 
+        # for conda, skip cmake to avoid compiler deps and keep compiled libs in their
+        # own package to consolidate deps
         if os.getenv("CONDA_BUILD", "0") != "1":
-            # for conda, skip cmake so avoid compiler deps and keep compiled libs in their own package to consolidate deps
-
             # run CMake configure & build
             subprocess.check_call(cmake_cmd, cwd=build_dir)
             subprocess.check_call(["cmake", "--build", "."], cwd=build_dir)
@@ -54,7 +54,9 @@ class CMakeBuild(build_py):
 
             # copy libopentrustregion only if it exists (i.e., shared build)
             if libopentrustregion_file is not None:
-                shutil.copy(libopentrustregion_path, target_dir / libopentrustregion_file)
+                shutil.copy(
+                    libopentrustregion_path, target_dir / libopentrustregion_file
+                )
 
             # always copy testsuite
             shutil.copy(build_dir / libtestsuite_file, target_dir / libtestsuite_file)

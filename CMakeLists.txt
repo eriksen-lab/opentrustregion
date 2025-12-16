@@ -5,11 +5,13 @@ project(OpenTrustRegion VERSION 2.0.0 LANGUAGES Fortran C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-set(otr OpenTrustRegion)  # Namespace
+# set namespace
+set(otr OpenTrustRegion)
 
 # ====  Options  ================================================================
 
-# there are paths that work for both windows and unix but they repeat ${otr} :-(
+# set installation directories, this needs to be separate for windows and unix to avoid 
+# repeating ${otr} twice in the path
 if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Windows")
     set(${otr}_INSTALL_CMAKEDIR "${otr}/CMake"
         CACHE STRING "Directory to which CMake files are installed")
@@ -19,14 +21,15 @@ else()
 endif()
 message(STATUS "Showing option ${otr}_INSTALL_CMAKEDIR: ${${otr}_INSTALL_CMAKEDIR}")
 
-option(${otr}_BUILD_TESTING "Build test-suite (was BUILD_TESTS)" ${PROJECT_IS_TOP_LEVEL})
+# default to not building tests
+option(${otr}_BUILD_TESTING "Build testsuite" ${PROJECT_IS_TOP_LEVEL})
 message(STATUS "Showing option ${otr}_BUILD_TESTING: ${${otr}_BUILD_TESTING}")
 
+# default to static libraries
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 message(STATUS "Showing option BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 
 # ====  Build  ==================================================================
-
 
 # default build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -90,13 +93,6 @@ else()
     set(LIB_SUFFIX "_32")
 endif()
 
-# default to static libraries
-if(BUILD_SHARED_LIBS)
-    message(STATUS "Building OpenTrustRegion as a SHARED library")
-else()
-    message(STATUS "Building OpenTrustRegion as a STATIC library (default)")
-endif()
-
 # define source files
 set(OPENTRUSTREGION_SOURCES src/opentrustregion.f90 src/c_interface.f90)
 
@@ -118,13 +114,15 @@ set_target_properties(
     POSITION_INDEPENDENT_CODE ON
 )
 
+# allow undefined symbols at link time on macOS for shared libraries
 if(${BUILD_SHARED_LIBS} AND APPLE)
     set_target_properties(opentrustregion PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
 endif()
 
+# create target-specific version property
 set(export_properties
-  "${otr}_VERSION"
-  )
+    "${otr}_VERSION"
+)
 set_target_properties(opentrustregion PROPERTIES ${otr}_VERSION ${${otr}_VERSION})
 set_property(TARGET opentrustregion APPEND PROPERTY EXPORT_PROPERTIES "${export_properties}")
 
@@ -162,10 +160,12 @@ if (${otr}_BUILD_TESTING)
     target_link_libraries(otrtestsuite
                           PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} opentrustregion
     )
+
+    # install testsuite
     install(TARGETS otrtestsuite
-            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT testing_interface  # Windows (.dll)
-            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface  # shared libraries (.so, .dylib)
-            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT testing_interface # Windows (.dll)
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface # shared libraries (.so, .dylib)
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface # static libraries (.a)
     )
 endif()
 

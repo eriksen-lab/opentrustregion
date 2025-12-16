@@ -61,7 +61,7 @@ else:
 lib = None
 
 # try to load from installed package (compiled conda pkg, not site-packages)
-conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
+conda_prefix = Path("/opt/anaconda1anaconda2anaconda3")
 if lib is None:
     lib_name = f"libotrtestsuite.{ext}"
     conda_path_unix = conda_prefix / "lib" / lib_name
@@ -71,8 +71,7 @@ if lib is None:
     elif conda_path_wind.exists():
         lib = CDLL(str(conda_path_wind))
 
-
-# try to load from installed package (site-packages)
+# fallback: try to load from installed package (site-packages)
 if lib is None:
     lib_path = resources.files("pyopentrustregion") / f"libotrtestsuite.{ext}"
     if lib_path.is_file():
@@ -97,31 +96,6 @@ if lib is None:
     raise FileNotFoundError(
         f"Cannot find any of the expected libraries: libotrtestsuite.{ext}"
     )
-# print("testsuite Loaded:", lib._name)
-
-# load the testsuite library
-try:
-    with resources.path("pyopentrustregion", f"libotrtestsuite.{ext}") as lib_path:
-        libtestsuite = CDLL(str(lib_path))
-# fallback for non-installed or dev build
-except OSError:
-    try:
-        fallback_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../build", f"libotrtestsuite.{ext}")
-        )
-        libtestsuite = CDLL(fallback_path)
-    except OSError:
-        try:
-            lib_name = f"libotrtestsuite.{ext}"
-            conda_path_unix = conda_prefix / "lib" / lib_name
-            conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
-            if conda_path_unix.exists():
-                libtestsuite = CDLL(str(conda_path_unix))
-            elif conda_path_wind.exists():
-                libtestsuite = CDLL(str(conda_path_wind))
-        except OSError:
-            raise FileNotFoundError("Cannot find testsuite library.")
-# print("testsuite Loaded:", libtestsuite._name)
 
 
 # define all tests in alphabetical order
@@ -182,7 +156,7 @@ fortran_tests = {
 # define return type of Fortran functions
 for tests in fortran_tests.values():
     for test in tests:
-        getattr(libtestsuite, f"test_{test}").restype = c_bool
+        getattr(lib, f"test_{test}").restype = c_bool
 
 
 # define function to add tests to test classes
@@ -190,7 +164,7 @@ def add_tests(cls):
 
     def create_test(func_name):
         def test(self):
-            result = getattr(libtestsuite, func_name)()
+            result = getattr(lib, func_name)()
             if result:
                 print(f" {func_name} PASSED")
             self.assertTrue(result, f"{func_name} failed")
@@ -281,9 +255,9 @@ class PyInterfaceTests(unittest.TestCase):
         ref_settings = RefSettingsC()
 
         # call Fortran to fill values
-        libtestsuite.get_reference_values.argtypes = [POINTER(RefSettingsC)]
-        libtestsuite.get_reference_values.restype = None
-        libtestsuite.get_reference_values(byref(ref_settings))
+        lib.get_reference_values.argtypes = [POINTER(RefSettingsC)]
+        lib.get_reference_values.restype = None
+        lib.get_reference_values(byref(ref_settings))
 
         # extract Python values
         for name, _ in fields:
@@ -295,7 +269,7 @@ class PyInterfaceTests(unittest.TestCase):
         return super().setUpClass()
 
     # replace original library with mock library
-    @patch("pyopentrustregion.python_interface.lib.solver", libtestsuite.mock_solver)
+    @patch("pyopentrustregion.python_interface.lib.solver", lib.mock_solver)
     def test_solver_py_interface(self):
         """
         this function tests the solver python interface
@@ -372,7 +346,7 @@ class PyInterfaceTests(unittest.TestCase):
     # replace original library with mock library
     @patch(
         "pyopentrustregion.python_interface.lib.stability_check",
-        libtestsuite.mock_stability_check,
+        lib.mock_stability_check,
     )
     def test_stability_check_py_interface(self):
         """
@@ -448,9 +422,7 @@ class PyInterfaceTests(unittest.TestCase):
         )
         print(" test_stability_check_py_interface PASSED")
 
-    @patch.object(
-        SolverSettings, "init_c_struct", libtestsuite.mock_init_solver_settings
-    )
+    @patch.object(SolverSettings, "init_c_struct", lib.mock_init_solver_settings)
     def test_solver_settings(self):
         """
         this function ensure the SolverSettings object is properly initialized and
@@ -516,9 +488,7 @@ class PyInterfaceTests(unittest.TestCase):
         self.assertTrue(test_passed, "test_solver_settings failed")
         print(" test_solver_settings PASSED")
 
-    @patch.object(
-        StabilitySettings, "init_c_struct", libtestsuite.mock_init_stability_settings
-    )
+    @patch.object(StabilitySettings, "init_c_struct", lib.mock_init_stability_settings)
     def test_stability_settings(self):
         """
         this function ensure the StabilitySettings object is properly initialized and
@@ -573,15 +543,15 @@ class SystemTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        print(50 * "-")
+        print("Running system tests for OpenTrustRegion...")
+        print(50 * "-")
         test_data = Path(__file__).parent / "test_data"
-        print(50 * "-")
-        print(f"Running system tests for OpenTrustRegion...{test_data}")
-        print(50 * "-")
         if not os.path.isdir(test_data):
             raise RuntimeError(
                 "test_data directory does not exist in same directory as testsuite.py."
             )
-        libtestsuite.set_test_data_path(str(test_data).encode("utf-8"))
+        lib.set_test_data_path(str(test_data).encode("utf-8"))
         return super().setUpClass()
 
 

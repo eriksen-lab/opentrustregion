@@ -55,7 +55,7 @@ lib = None
 
 # try to load from installed package (compiled conda pkg, not site-packages)
 if lib is None:
-    conda_prefix =  Path("/opt/anaconda1anaconda2anaconda3")
+    conda_prefix = Path("/opt/anaconda1anaconda2anaconda3")
     for lib_name in lib_candidates:
         conda_path_unix = conda_prefix / "lib" / lib_name
         conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
@@ -64,7 +64,7 @@ if lib is None:
         elif conda_path_wind.exists():
             lib = CDLL(str(conda_path_wind))
 
-# try to load from installed package (site-packages)
+# fallback: try to load from installed package (site-packages)
 if lib is None:
     for lib_name in lib_candidates:
         lib_path = resources.files("pyopentrustregion") / lib_name
@@ -92,7 +92,6 @@ if lib is None:
     raise FileNotFoundError(
         f"Cannot find either opentrustregion or testsuite library ({lib_candidates})"
     )
-# print("python_interface Loaded:", lib._name)
 
 # determine integer size used in library
 ilp64 = c_bool.in_dll(lib, "ilp64")
