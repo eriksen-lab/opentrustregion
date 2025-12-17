@@ -16,6 +16,8 @@
 #
 #   shared - search for only shared library
 #   static - search for only static library
+#   int32 - search for only lp64-linked library
+#   int64 - search for only ilp64-linked library
 #
 #
 # Exported targets:
@@ -23,11 +25,14 @@
 # ::
 #
 # If OpenTrustRegion is found, this module defines the following :prop_tgt:`IMPORTED`
-# targets. Target is shared _or_ static, so, for both, use separate, not overlapping, 
-# installations. If no language components are requested, this module defines at least 
+# targets. Target is shared _or_ static, so, for both, use separate, not overlapping,
+# installations. If no language components are requested, this module defines at least
 # the opentrustregion target. ::
 #
-#   OpenTrustRegion::OpenTrustRegion - the main OpenTrustRegion Fortran library with header & defs attached.
+#   OpenTrustRegion::opentrustregion32 - the main OpenTrustRegion Fortran 32-bit integer library with header & defs attached.
+#   OpenTrustRegion::opentrustregion64 - the main OpenTrustRegion Fortran 64-bit integer library with header & defs attached.
+#   OpenTrustRegion::opentrustregion - alias to whichever of above is requested or present (32 preferred if both available).
+#   OpenTrustRegion::OpenTrustRegion - alias to above
 #
 #
 # Suggested usage:
@@ -35,7 +40,7 @@
 # ::
 #
 #   find_package(OpenTrustRegion)
-#   find_package(OpenTrustRegion 2.0.0 EXACT CONFIG REQUIRED COMPONENTS shared)
+#   find_package(OpenTrustRegion 2.0.0 EXACT CONFIG REQUIRED COMPONENTS shared int32)
 #
 #
 # The following variables can be set to guide the search for this package:
@@ -46,7 +51,7 @@
 #   CMAKE_PREFIX_PATH - CMake variable, set to root directory of this package
 #   PATH - environment variable, set to bin directory of this package
 #   CMAKE_DISABLE_FIND_PACKAGE_OpenTrustRegion - CMake variable, disables
-#   find_package(OpenTrustRegion) when not REQUIRED, perhaps to force internal build
+#       find_package(OpenTrustRegion) when not REQUIRED, perhaps to force internal build
 
 @PACKAGE_INIT@
 
@@ -54,6 +59,8 @@ set(otr OpenTrustRegion)
 set (_valid_components
      static
      shared
+     int32
+     int64
 )
 
 # check library style component
@@ -65,13 +72,40 @@ endif()
 list(FIND ${otr}_FIND_COMPONENTS "shared" _seek_shared)
 list(FIND ${otr}_FIND_COMPONENTS "static" _seek_static)
 
+# check int size blas library component
+# * using EXISTS Targets-32 instead of @LIB_SUFFIX@  # LIB_SUFFIX
+#   so separate 32/64 packages don't clobber this file
+if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-32.cmake")
+    set(${otr}_int32_FOUND 1)
+endif()
+list(FIND ${otr}_FIND_COMPONENTS "int32" _seek_int32)
+if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-64.cmake")
+    set(${otr}_int64_FOUND 1)
+endif()
+list(FIND ${otr}_FIND_COMPONENTS "int64" _seek_int64)
+
 check_required_components(${otr})
 
-# don't include targets if this file is being picked up by another project which has 
+# don't include targets if this file is being picked up by another project which has
 # already built this as a subproject
 if(NOT TARGET ${otr}::opentrustregion)
 
-    include("${CMAKE_CURRENT_LIST_DIR}/${otr}Targets.cmake")
+    if(_seek_int32 GREATER -1)
+        set(_target "opentrustregion32")
+        include("${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-32.cmake")
+    elseif(_seek_int64 GREATER -1)
+        set(_target "opentrustregion64")
+        include("${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-64.cmake")
+    elseif(EXISTS "${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-32.cmake")
+        set(_target "opentrustregion32")
+        include("${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-32.cmake")
+    else()
+        set(_target "opentrustregion64")
+        include("${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-64.cmake")
+    endif()
+
+    add_library(${otr}::opentrustregion ALIAS ${otr}::${_target})
+    add_library(${otr}::${otr} ALIAS ${otr}::${_target})
 
     if (CMAKE_VERSION VERSION_GREATER 3.15)
         set(_target "opentrustregion")
@@ -89,10 +123,3 @@ if(NOT TARGET ${otr}::opentrustregion)
     endif()
 endif()
 
-# add canonical alias (conditionally in case the package has already been included and 
-# the alias has been created)
-if(NOT TARGET ${otr}::${otr})
-    add_library(${otr}::${otr}
-                ALIAS ${otr}::opentrustregion
-    )
-endif()

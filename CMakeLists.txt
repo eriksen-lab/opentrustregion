@@ -88,9 +88,9 @@ endif()
 message(STATUS "Using integer size ${BLA_SIZEOF_INTEGER}")
 if(BLA_SIZEOF_INTEGER EQUAL 8)
     add_definitions(-DUSE_ILP64)
-    set(LIB_SUFFIX "_64")
+    set(LIB_SUFFIX "64")
 else()
-    set(LIB_SUFFIX "_32")
+    set(LIB_SUFFIX "32")
 endif()
 
 # define source files
@@ -104,7 +104,8 @@ add_library(${otr}::opentrustregion ALIAS opentrustregion)
 set_target_properties(
     opentrustregion PROPERTIES
     # output name
-    OUTPUT_NAME "opentrustregion${LIB_SUFFIX}"
+    OUTPUT_NAME "opentrustregion_${LIB_SUFFIX}"
+    EXPORT_NAME "opentrustregion${LIB_SUFFIX}"
     # library version
     VERSION ${PROJECT_VERSION}
     # interface version
@@ -206,7 +207,7 @@ install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
 
 # install targets
 install(EXPORT library_interface
-        FILE ${otr}Targets.cmake
+        FILE ${otr}Targets-${LIB_SUFFIX}.cmake
         NAMESPACE "${otr}::"
         DESTINATION ${${otr}_INSTALL_CMAKEDIR}
 )

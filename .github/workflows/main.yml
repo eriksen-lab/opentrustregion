@@ -163,6 +163,31 @@ jobs:
       if: ${{ matrix.build-type == 'test' }}
       run: python -m pyopentrustregion.testsuite
 
+    - name: Testing find_package Consumption
+      run: |
+        mkdir consume_fp && cd consume_fp
+        cat > CMakeLists.txt <<EOF
+        cmake_minimum_required(VERSION 3.22)
+        project(atomtest LANGUAGES C)
+        find_package(OpenTrustRegion CONFIG REQUIRED COMPONENTS int64)
+        include(CMakePrintHelpers)
+        cmake_print_properties(
+          TARGETS
+            OpenTrustRegion::opentrustregion32
+            OpenTrustRegion::opentrustregion64
+            OpenTrustRegion::opentrustregion
+            OpenTrustRegion::OpenTrustRegion
+          PROPERTIES
+            IMPORTED_LINK_DEPENDENT_LIBRARIES
+            IMPORTED_LOCATION
+            INTERFACE_LOCATION
+            INTERFACE_LINK_LIBRARIES
+            INTERFACE_INCLUDE_DIRECTORIES
+            INTERFACE_COMPILE_DEFINITIONS
+            INTERFACE_COMPILE_OPTIONS
+            INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+          )
+
     - name: Install Coverage Tools
       if: ${{ matrix.build-type == 'coverage' }}
       run: pip install gcovr coverage
