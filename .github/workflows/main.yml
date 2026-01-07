@@ -13,6 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # test for pip installation
           - os: linux
             compiler: gnu
             runs-on: ubuntu-latest
@@ -21,6 +22,8 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
             cmargs: ""
+
+          # test for editable pip installation
           - os: linux
             compiler: gnu
             runs-on: ubuntu-latest
@@ -29,6 +32,8 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
             cmargs: ""
+
+          # test for cmake installation
           - os: linux
             compiler: gnu
             runs-on: ubuntu-latest
@@ -37,6 +42,8 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
             cmargs: ""
+
+          # testsuite running with gnu compilers on linux with 32-bit integers
           - os: linux
             compiler: gnu
             runs-on: ubuntu-latest
@@ -44,6 +51,8 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
             cmargs: ""
+
+          # testsuite running with intel compilers on linux with 32-bit integers
           - os: linux
             compiler: intel
             runs-on: ubuntu-latest
@@ -51,6 +60,8 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
             cmargs: ""
+
+          # testsuite running with gnu compilers on linux with 64-bit integers
           - os: linux
             compiler: gnu
             runs-on: ubuntu-latest
@@ -58,6 +69,8 @@ jobs:
             python-version: "3.10"
             integer-size: "64"
             cmargs: ""
+
+          # testsuite running with intel compilers on linux with 64-bit integers
           - os: linux
             compiler: intel
             runs-on: ubuntu-latest
@@ -65,6 +78,8 @@ jobs:
             python-version: "3.10"
             integer-size: "64"
             cmargs: ""
+
+          # testsuite running with clang compilers on macos with arm processors
           - os: macos-silicon
             compiler: clang
             runs-on: macos-latest
@@ -72,6 +87,8 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
             cmargs: ""
+
+          # testsuite running with clang compilers on macos with intel processors
           - os: macos-intel
             compiler: clang
             runs-on: macos-15-intel
@@ -79,6 +96,8 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
             cmargs: ""
+
+          # test coverage
           - os: linux
             compiler: gnu
             runs-on: ubuntu-latest
@@ -167,11 +186,11 @@ jobs:
       run: CMAKE_FLAGS="-DINTEGER_SIZE=8" pip install ${{github.workspace}}
 
     - name: Build & Install OpenTrustRegion
-      if: ${{matrix.build-type == 'install' && matrix.scenario == 'editable' }}
+      if: ${{ matrix.build-type == 'install' && matrix.scenario == 'editable' }}
       run: pip install -e ${{github.workspace}}
 
     - name: Build & Install OpenTrustRegion
-      if: ${{matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
+      if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: | 
         sudo apt install -y cmake
         pip install numpy
@@ -179,6 +198,8 @@ jobs:
         cd build
         cmake ..
         cmake --build .
+        cmake --install .
+        cd $GITHUB_WORKSPACE
 
     - name: Testing pip installation
       if: ${{ matrix.build-type == 'install' && (matrix.scenario == 'installed' || matrix.scenario == 'editable') }}
@@ -195,18 +216,18 @@ jobs:
       run: python -m pyopentrustregion.testsuite
 
     - name: Testing find_package Consumption
-      if: ${{ matrix.build-type == 'install' }}
+      if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: |
+        set -e
         mkdir consume_fp && cd consume_fp
         cat > CMakeLists.txt <<EOF
         cmake_minimum_required(VERSION 3.22)
         project(atomtest LANGUAGES C)
-        find_package(OpenTrustRegion CONFIG REQUIRED COMPONENTS int64)
+        find_package(OpenTrustRegion CONFIG REQUIRED COMPONENTS int${{ matrix.integer-size }})
         include(CMakePrintHelpers)
         cmake_print_properties(
           TARGETS
-            OpenTrustRegion::opentrustregion32
-            OpenTrustRegion::opentrustregion64
+            OpenTrustRegion::opentrustregion${{ matrix.integer-size }}
             OpenTrustRegion::opentrustregion
             OpenTrustRegion::OpenTrustRegion
           PROPERTIES
@@ -221,7 +242,7 @@ jobs:
           )
         EOF
         cmake .
-        cd .. && rm -rf consume_fp
+        cd $GITHUB_WORKSPACE && rm -rf consume_fp
 
     - name: Install Coverage Tools
       if: ${{ matrix.build-type == 'coverage' }}
