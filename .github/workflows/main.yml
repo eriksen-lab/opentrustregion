@@ -219,6 +219,7 @@ jobs:
             INTERFACE_COMPILE_OPTIONS
             INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
           )
+        EOF
 
     - name: Install Coverage Tools
       if: ${{ matrix.build-type == 'coverage' }}
