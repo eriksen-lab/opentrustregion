@@ -191,12 +191,13 @@ jobs:
 
     - name: Build & Install OpenTrustRegion
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
-      run: | 
+      run: |
+        set -e
         sudo apt install -y cmake
         pip install numpy
         mkdir build
         cd build
-        cmake ..
+        cmake -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install ..
         cmake --build .
         cmake --install .
         cd $GITHUB_WORKSPACE
