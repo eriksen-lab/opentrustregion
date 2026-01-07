@@ -4,6 +4,7 @@ project(OpenTrustRegion VERSION 2.0.0 LANGUAGES Fortran C)
 # get commands
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include(CheckFortranFunctionExists)
 
 # set namespace
 set(otr OpenTrustRegion)
@@ -89,6 +90,22 @@ message(STATUS "Using integer size ${BLA_SIZEOF_INTEGER}")
 if(BLA_SIZEOF_INTEGER EQUAL 8)
     add_definitions(-DUSE_ILP64)
     set(LIB_SUFFIX "64")
+
+    # check whether 64-bit BLAS and LAPACK routines are called differently
+    set(CMAKE_REQUIRED_LIBRARIES ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+    check_fortran_function_exists("sgemm_64" BLAS_64)
+    check_fortran_function_exists("sgesv_64" LAPACK_64)
+    if(BLAS_64)
+        add_compile_definitions("ddot=ddot_64")
+        add_compile_definitions("dnrm2=dnrm2_64")
+        add_compile_definitions("dgemv=dgemv_64")
+        add_compile_definitions("dgemm=dgemm_64")
+    endif()
+    if(LAPACK_64)
+        add_compile_definitions("dsyev=dsyev_64")
+        add_compile_definitions("dsysv=dsysv_64")
+        add_compile_definitions("zheev=zheev_64")
+    endif()
 else()
     set(LIB_SUFFIX "32")
 endif()
@@ -156,6 +173,11 @@ if (${otr}_BUILD_TESTING)
 
     # create shared test library which is then called from Python for testing
     add_library(otrtestsuite SHARED ${OPENTRUSTREGION_TESTS})
+
+    # enable preprocessing
+    set_source_files_properties(${OPENTRUSTREGION_TESTS}
+                                PROPERTIES Fortran_PREPROCESS ON
+    )
 
     # link against BLAS and LAPACK and against OpenTrustRegion
     target_link_libraries(otrtestsuite

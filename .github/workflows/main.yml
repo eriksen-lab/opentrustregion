@@ -19,6 +19,7 @@ jobs:
             build-type: install
             scenario: installed
             python-version: "3.10"
+            integer-size: "32"
             cmargs: ""
           - os: linux
             compiler: gnu
@@ -26,6 +27,7 @@ jobs:
             build-type: install
             scenario: editable
             python-version: "3.10"
+            integer-size: "32"
             cmargs: ""
           - os: linux
             compiler: gnu
@@ -33,39 +35,59 @@ jobs:
             build-type: install
             scenario: dev-build
             python-version: "3.10"
+            integer-size: "32"
             cmargs: ""
           - os: linux
             compiler: gnu
             runs-on: ubuntu-latest
             build-type: test
             python-version: "3.10"
+            integer-size: "32"
             cmargs: ""
           - os: linux
             compiler: intel
             runs-on: ubuntu-latest
             build-type: test
             python-version: "3.10"
+            integer-size: "32"
+            cmargs: ""
+          - os: linux
+            compiler: gnu
+            runs-on: ubuntu-latest
+            build-type: test
+            python-version: "3.10"
+            integer-size: "64"
+            cmargs: ""
+          - os: linux
+            compiler: intel
+            runs-on: ubuntu-latest
+            build-type: test
+            python-version: "3.10"
+            integer-size: "64"
             cmargs: ""
           - os: macos-silicon
             compiler: clang
             runs-on: macos-latest
             build-type: test
             python-version: "3.10"
+            integer-size: "32"
             cmargs: ""
           - os: macos-intel
             compiler: clang
             runs-on: macos-15-intel
             build-type: test
             python-version: "3.10"
+            integer-size: "32"
             cmargs: ""
           - os: linux
             compiler: gnu
             runs-on: ubuntu-latest
             build-type: coverage
             python-version: "3.10"
+            integer-size: "32"
             cmargs: ""
 
-    name: "Repo • 🐍 ${{ matrix.python-version }} • OS ${{ matrix.os }} • Compiler ${{ matrix.compiler }} • Build Type ${{ matrix.build-type }}"
+    name: "Repo • 🐍 ${{ matrix.python-version }} • OS ${{ matrix.os }} • Compiler ${{ matrix.compiler }} • Build Type ${{ matrix.build-type }} • ${{ matrix.integer-size }}-bit integers"
     runs-on: ${{ matrix.runs-on }}
     defaults:
       run:
@@ -120,10 +142,15 @@ jobs:
         echo "LDFLAGS=-L/opt/homebrew/opt/openblas/lib" >> $GITHUB_ENV
         echo "CPPFLAGS=-I/opt/homebrew/opt/openblas/include" >> $GITHUB_ENV
 
-    - name: Install OpenBLAS on Linux
-      if: ${{ matrix.compiler == 'gnu' && matrix.os == 'linux' }}
+    - name: Install OpenBLAS (32-bit integers) on Linux
+      if: ${{ matrix.compiler == 'gnu' && matrix.os == 'linux' && matrix.integer-size == '32' }}
       run: |
         sudo apt install -y libopenblas-dev
+
+    - name: Install OpenBLAS (64-bit integers) on Linux
+      if: ${{ matrix.compiler == 'gnu' && matrix.os == 'linux' && matrix.integer-size == '64' }}
+      run: |
+        sudo apt install -y libopenblas64-dev
 
     - name: Create and Activate Python Virtual Environment
       run: |
@@ -131,9 +158,13 @@ jobs:
         source venv/bin/activate
         python -m pip install --upgrade pip
 
-    - name: Build & Install OpenTrustRegion
-      if: ${{ matrix.build-type == 'test' || (matrix.build-type == 'install' && matrix.scenario == 'installed') }}
-      run: pip install ${{github.workspace}}
+    - name: Build & Install OpenTrustRegion (32-bit integers)
+      if: ${{ matrix.integer-size == '32' && (matrix.build-type == 'test' || (matrix.build-type == 'install' && matrix.scenario == 'installed'))}}
+      run: CMAKE_FLAGS="-DINTEGER_SIZE=4" pip install ${{github.workspace}}
+
+    - name: Build & Install OpenTrustRegion (64-bit integers)
+      if: ${{ matrix.integer-size == '64' && (matrix.build-type == 'test' || (matrix.build-type == 'install' && matrix.scenario == 'installed'))}}
+      run: CMAKE_FLAGS="-DINTEGER_SIZE=8" pip install ${{github.workspace}}
 
     - name: Build & Install OpenTrustRegion
       if: ${{matrix.build-type == 'install' && matrix.scenario == 'editable' }}

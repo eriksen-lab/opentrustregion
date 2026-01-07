@@ -38,6 +38,11 @@ module opentrustregion
     real(rp), parameter :: numerical_zero = 1e-14_rp, precond_floor = 1e-10_rp, &
                            hess_symm_thres = 1e-12_rp
 
+    ! define verbosity levels
+    integer(ip), parameter :: verbosity_silent = 0, verbosity_error = 1, &
+                              verbosity_warning = 2, verbosity_info = 3, &
+                              verbosity_debug = 4
+
     ! interfaces for callback functions
     abstract interface
         subroutine hess_x_type(x, hess_x, error)
@@ -188,7 +193,7 @@ contains
             call add_error_origin(error, error_solver, settings)
             if (error /= 0) return
             call settings%log("Settings were not initialized. All settings are set "// &
-                              "to default values", 2)
+                              "to default values", verbosity_warning)
         end if
 
         ! initialize maximum precision convergence
@@ -207,12 +212,14 @@ contains
         trust_radius = settings%start_trust_radius
 
         ! print header
-        call settings%log(repeat("-", 109), 3)
+        call settings%log(repeat("-", 109), verbosity_info)
         call settings%log(" Iteration |     Objective function     | Gradient RMS |"// &
-                          " Level shift |   Micro    | Trust radius | Step size ", 3)
+                          " Level shift |   Micro    | Trust radius | Step size ", &
+                          verbosity_info)
         call settings%log("           |                            |              |"// &
-                          "             | iterations |              |           ", 3)
-        call settings%log(repeat("-", 109), 3)
+                          "             | iterations |              |           ", &
+                          verbosity_info)
+        call settings%log(repeat("-", 109), verbosity_info)
 
         ! allocate arrays
         allocate(kappa(n_param), grad(n_param), h_diag(n_param), solution(n_param), &
@@ -236,7 +243,7 @@ contains
                 end if
 
                 ! calculate gradient norm
-                grad_norm = dnrm2(n_param, grad, 1)
+                grad_norm = dnrm2(n_param, grad, 1_ip)
 
                 ! calculate RMS gradient
                 grad_rms = grad_norm / sqrt(real(n_param, kind=rp))
@@ -247,7 +254,7 @@ contains
                 else
                     if (settings%subsystem_solver == "davidson" .or. &
                         settings%subsystem_solver == "jacobi-davidson") then
-                        kappa_norm = dnrm2(n_param, kappa, 1)
+                        kappa_norm = dnrm2(n_param, kappa, 1_ip)
                     else
                         if (associated(settings%precond)) then
                             call settings%precond(kappa, 0.0_rp, precond_kappa, error)
@@ -256,7 +263,8 @@ contains
                         else
                             call abs_diag_precond(kappa, h_diag, precond_kappa)
                         end if
-                        kappa_norm = sqrt(ddot(n_param, kappa, 1, precond_kappa, 1))
+                        kappa_norm = sqrt(ddot(n_param, kappa, 1_ip, precond_kappa, &
+                                               1_ip))
                         mu = 0.0_rp
                         jacobi_davidson_started = .false.
                     end if
@@ -319,7 +327,7 @@ contains
                         if (new_func >= func) then
                             call settings%log("Line search was unable to find "// &
                                               "lower objective function along "// &
-                                              "unstable mode.", 1, .true.)
+                                              "unstable mode.", verbosity_error, .true.)
                             error = error_solver + 1
                             return
                         else if (imacro == 1) then
@@ -327,7 +335,7 @@ contains
                                               "algorithm will continue by moving "// &
                                               "along eigenvector direction "// &
                                               "corresponding to negative eigenvalue.", &
-                                              1, .true.)
+                                              verbosity_error, .true.)
                         else
                             call settings%log("Reached saddle point. This is "// &
                                               "likely due to symmetry and can be "// &
@@ -335,7 +343,8 @@ contains
                                               "random trial vectors. The algorithm "// &
                                               "will continue by moving along "// &
                                               "eigenvector direction corresponding "// &
-                                              "to negative eigenvalue.", 1, .true.)
+                                              "to negative eigenvalue.", &
+                                              verbosity_error, .true.)
                         end if
                         max_precision_reached = .false.
                         cycle
@@ -398,18 +407,19 @@ contains
 
         ! stop if no convergence
         if (.not. macro_converged) then
-            call settings%log("Orbital optimization has not converged!", 1)
+            call settings%log("Orbital optimization has not converged!", &
+                              verbosity_error, .true.)
             error = error_solver + 1
             return
         end if
 
         ! finish logging
-        call settings%log(repeat("-", 109), 3)
+        call settings%log(repeat("-", 109), verbosity_info)
         write (msg, '(A, I0)') "Total number of Hessian linear transformations: ", &
             tot_hess_x
-        call settings%log(msg, 3)
+        call settings%log(msg, verbosity_info)
         write (msg, '(A, I0)') "Total number of orbital updates: ", tot_orb_update
-        call settings%log(msg, 3)
+        call settings%log(msg, verbosity_info)
 
         ! reset global counter variables
         tot_orb_update = 0
@@ -452,7 +462,7 @@ contains
             call add_error_origin(error, error_stability_check, settings)
             if (error /= 0) return
             call settings%log("Settings were not initialized. All settings are set "// &
-                              "to default values", 2)
+                              "to default values", verbosity_warning)
         end if
 
         ! initialize random number generator
@@ -485,6 +495,9 @@ contains
             if (error /= 0) return
         end do
 
+        ! increment number of Hessian linear transformations
+        tot_hess_x = tot_hess_x + n_trial
+
         ! construct augmented Hessian in reduced space
         allocate(red_space_hess(n_trial, n_trial))
         call dgemm("T", "N", n_trial, n_trial, n_param, 1.0_rp, red_space_basis, &
@@ -503,19 +516,19 @@ contains
             if (error /= 0) return
 
             ! get full space solution
-            call dgemv("N", size(red_space_basis, 1), size(red_space_basis, 2), &
-                       1.0_rp, red_space_basis, size(red_space_basis, 1), &
-                       red_space_solution, 1, 0.0_rp, solution, 1)
+            call dgemv("N", n_param, n_trial, 1.0_rp, red_space_basis, n_param, &
+                       red_space_solution, 1_ip, 0.0_rp, solution, 1_ip)
 
             ! calculate Hessian linear transformation of solution
-            call dgemv("N", n_param, size(h_basis, 2), 1.0_rp, h_basis, n_param, &
-                       red_space_solution, 1, 0.0_rp, h_solution, 1)
+            call dgemv("N", n_param, n_trial, 1.0_rp, h_basis, n_param, &
+                       red_space_solution, 1_ip, 0.0_rp, h_solution, 1_ip)
 
             ! calculate residual
             residual = h_solution - eigval*solution
 
             ! check convergence
-            stability_rms = dnrm2(n_param, residual, 1) / sqrt(real(n_param, kind=rp))
+            stability_rms = dnrm2(n_param, residual, 1_ip) / &
+                sqrt(real(n_param, kind=rp))
             if (stability_rms < settings%conv_tol) exit
 
             if (settings%diag_solver == "davidson" .or. iter <= &
@@ -559,10 +572,9 @@ contains
 
                 ! check if resulting linear transformation still respects Hessian 
                 ! symmetry which can happen due to numerical noise accumulation
-                if (abs(ddot(n_param, red_space_basis(:, size(red_space_basis, 2)), 1, &
-                             h_basis_vec, 1) - &
-                        ddot(n_param, basis_vec, 1, &
-                             h_basis(:, size(red_space_basis, 2)), 1)) > &
+                if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, h_basis_vec, &
+                             1_ip) &
+                        - ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), 1_ip)) > &
                     hess_symm_thres) then
                     call hess_x_funptr(basis_vec, h_basis_vec, error)
                     call add_error_origin(error, error_hess_x, settings)
@@ -571,6 +583,9 @@ contains
                 
             end if
 
+            ! increment trial vector count
+            n_trial = n_trial + 1
+
             ! add new trial vector to orbital space
             call add_column(red_space_basis, basis_vec)
 
@@ -578,27 +593,22 @@ contains
             call add_column(h_basis, h_basis_vec)
 
             ! construct new reduced space Hessian
-            allocate(red_space_hess_vec(size(red_space_basis, 2)))
-            call dgemv("T", n_param, size(red_space_basis, 2), 1.0_rp, &
-                       red_space_basis, n_param, &
-                       h_basis(:, size(red_space_basis, 2)), 1, 0.0_rp, &
-                       red_space_hess_vec, 1)
+            allocate(red_space_hess_vec(n_trial))
+            call dgemv("T", n_param, n_trial, 1.0_rp, red_space_basis, n_param, &
+                       h_basis(:, n_trial), 1_ip, 0.0_rp, red_space_hess_vec, 1_ip)
             call extend_symm_matrix(red_space_hess, red_space_hess_vec)
             deallocate(red_space_hess_vec)
 
             ! reallocate reduced space solution
             deallocate(red_space_solution)
-            allocate(red_space_solution(size(red_space_basis, 2)))
+            allocate(red_space_solution(n_trial))
 
         end do
 
         ! check if stability check has converged
         if (stability_rms >= settings%conv_tol) &
             call settings%log("Stability check has not converged in the given "// &
-                              "number of iterations.", 1, .true.)
-
-        ! increment total number of Hessian linear transformations
-        tot_hess_x = tot_hess_x + size(red_space_basis, 2)
+                              "number of iterations.", verbosity_error, .true.)
 
         ! determine if saddle point
         stable = eigval > stability_thresh
@@ -608,7 +618,7 @@ contains
         else
             if (present(kappa)) kappa = solution
             write (msg, '(A, F0.4)') "Solution not stable. Lowest eigenvalue: ", eigval
-            call settings%log(msg, 1, .true.)
+            call settings%log(msg, verbosity_error, .true.)
         end if
 
         ! deallocate quantities from Davidson iterations
@@ -658,14 +668,14 @@ contains
         ! query optimal workspace size
         lwork = -1
         allocate(ipiv(n_red), work(1))
-        call dsysv("U", n_red, 1, red_hess, n_red, ipiv, red_space_solution, n_red, &
+        call dsysv("U", n_red, 1_ip, red_hess, n_red, ipiv, red_space_solution, n_red, &
                    work, lwork, info)
         lwork = int(work(1), kind=ip)
         deallocate(work)
         allocate(work(lwork))
 
         ! solve linear system
-        call dsysv("U", n_red, 1, red_hess, n_red, ipiv, red_space_solution, n_red, &
+        call dsysv("U", n_red, 1_ip, red_hess, n_red, ipiv, red_space_solution, n_red, &
                    work, lwork, info)
 
         ! deallocate arrays
@@ -674,14 +684,14 @@ contains
         ! check for errors
         if (info /= 0) then
             write (msg, '(A, I0)') "Linear solver failed: Error in DSYSV, info = ", info
-            call settings%log(msg, 1, .true.)
+            call settings%log(msg, verbosity_error, .true.)
             error = 1
             return
         end if
 
         ! get solution in full space
         call dgemv("N", n_param, n_red, 1.0_rp, red_space_basis, n_param, &
-                   red_space_solution, 1, 0.0_rp, solution, 1)
+                   red_space_solution, 1_ip, 0.0_rp, solution, 1_ip)
 
     end subroutine newton_step
 
@@ -725,10 +735,10 @@ contains
         ! solve reduced space problem with scaled gradient
         call get_ah_lowest_eigenvec(lower_alpha)
         if (error /= 0) return
-        lower_trust_dist = dnrm2(n_param, solution, 1) - trust_radius
+        lower_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
         call get_ah_lowest_eigenvec(upper_alpha)
         if (error /= 0) return
-        upper_trust_dist = dnrm2(n_param, solution, 1) - trust_radius
+        upper_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
 
         ! check if trust region is within bracketing range
         if ((lower_trust_dist*upper_trust_dist) > 0.0_rp) then
@@ -742,7 +752,7 @@ contains
         middle_alpha = sqrt(upper_alpha*lower_alpha)
         call get_ah_lowest_eigenvec(middle_alpha)
         if (error /= 0) return
-        middle_trust_dist = dnrm2(n_param, solution, 1) - trust_radius
+        middle_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
 
         ! perform bisection to find root, converge to relative threshold to avoid 
         ! precision issues
@@ -761,12 +771,12 @@ contains
             middle_alpha = sqrt(upper_alpha*lower_alpha)
             call get_ah_lowest_eigenvec(middle_alpha)
             if (error /= 0) return
-            middle_trust_dist = dnrm2(n_param, solution, 1) - trust_radius
+            middle_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
             ! check if maximum number of iterations is reached
             iter = iter + 1
             if (iter > 100) then
                 call settings%log("Maximum number of bisection iterations reached.", &
-                                  1, .true.)
+                                  verbosity_error, .true.)
                 error = 1
                 return
             end if
@@ -800,7 +810,7 @@ contains
             ! check if eigenvector has level-shift component
             if (abs(eigvec(1)) <= numerical_zero) then
                 call settings%log("Trial subspace too small. Increase "// &
-                    "n_random_trial_vectors.", 1, .true.)
+                                  "n_random_trial_vectors.", verbosity_error, .true.)
                 error = 1
                 return
             end if
@@ -812,7 +822,7 @@ contains
 
             ! get solution in full space
             call dgemv("N", n_param, n_red, 1.0_rp, red_space_basis, n_param, &
-                       red_space_solution, 1, 0.0_rp, solution, 1)
+                       red_space_solution, 1_ip, 0.0_rp, solution, 1_ip)
 
         end subroutine get_ah_lowest_eigenvec
 
@@ -946,7 +956,7 @@ contains
             iter = iter + 1
             if (iter > 100) then
                 call settings%log("Maximum number of bracketing iterations reached.", &
-                                  1, .true.)
+                                  verbosity_error, .true.)
                 error = 1
                 return
             end if
@@ -956,7 +966,8 @@ contains
         if (.not. (((f_b < f_c .and. f_b <= f_a) .or. (f_b < f_a .and. f_b <= f_c)) &
                    .and. ((n_a < n_b .and. n_b < n_c) .or. &
                           (n_c < n_b .and. n_b < n_a)))) then
-            call settings%log("Line search did not find minimum", 1)
+            call settings%log("Line search did not find minimum", verbosity_error, &
+                              .true.)
             error = 1
             return
         end if
@@ -1064,7 +1075,7 @@ contains
         if (info /= 0) then
             write (msg, '(A, I0)') "Eigendecomposition failed: Error in DSYEV, "// &
                 "info = ", info
-            call settings%log(msg, 1, .true.)
+            call settings%log(msg, verbosity_error, .true.)
             error = 1
             return
         end if
@@ -1118,7 +1129,7 @@ contains
         if (info /= 0) then
             write (msg, '(A, I0)') "Eigendecomposition failed: Error in DSYEV, "// &
                 "info = ", info
-            call settings%log(msg, 1, .true.)
+            call settings%log(msg, verbosity_error, .true.)
             error = 1
             return
         end if
@@ -1200,12 +1211,15 @@ contains
         class(settings_type), intent(in) :: settings
         integer(ip), intent(out) :: error
 
-        integer(ip) :: n_trial, i
+        integer(ip) :: n_param, n_trial, i
         real(rp), parameter :: rnd_vector_min_norm = 1e-3_rp
         real(rp), external :: dnrm2
 
         ! initialize error flag
         error = 0
+
+        ! number of parameters
+        n_param = size(red_space_basis, 1)
 
         ! number of trial vectors
         n_trial = size(red_space_basis, 2)
@@ -1213,8 +1227,7 @@ contains
         do i = n_trial - settings%n_random_trial_vectors + 1, n_trial
             call random_number(red_space_basis(:, i))
             red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
-            do while (dnrm2(size(red_space_basis(:, i)), red_space_basis(:, i), 1) &
-                      < rnd_vector_min_norm)
+            do while (dnrm2(n_param, red_space_basis(:, i), 1_ip) < rnd_vector_min_norm)
                 call random_number(red_space_basis(:, i))
                 red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
             end do
@@ -1242,21 +1255,28 @@ contains
 
         real(rp), allocatable :: orth(:)
         real(rp) :: dot, norm
-        integer(ip) :: iter, i
+        integer(ip) :: n_param, n_vectors, iter, i
         real(rp), parameter :: zero_thres = 1e-16_rp, orth_thres = 1e-14_rp
         real(rp), external :: ddot, dnrm2
+        external :: dgemv
 
         ! initialize error flag
         error = 0
 
-        if (dnrm2(size(vector), vector, 1) < zero_thres) then
+        ! vector size
+        n_param = size(vector)
+
+        ! number of vectors
+        n_vectors = size(space, 2)
+
+        if (dnrm2(n_param, vector, 1_ip) < zero_thres) then
             call settings%log("Vector passed to Gram-Schmidt procedure is "// &
-                "numerically zero.", 1, .true.)
+                "numerically zero.", verbosity_error, .true.)
             error = 1
             return
-        else if (size(space, 2) > size(space, 1) - 1) then
+        else if (n_vectors > n_param - 1) then
             call settings%log("Number of vectors in Gram-Schmidt procedure larger "// &
-                "than dimension of vector space.", 1, .true.)
+                "than dimension of vector space.", verbosity_error, .true.)
             error = 1
             return
         end if
@@ -1267,40 +1287,40 @@ contains
         iter = 0
         if (.not. (present(lin_trans_vector) .and. present(lin_trans_space))) then
             do while (.true.)
-                do i = 1, size(space, 2)
+                do i = 1, n_vectors
                     vector = orthogonal_projection(vector, space(:, i))
                 end do
-                vector = vector / dnrm2(size(vector), vector, 1)
+                vector = vector / dnrm2(n_param, vector, 1_ip)
 
-                call dgemv("T", size(vector), size(space, 2), 1.0_rp, space, &
-                           size(vector), vector, 1, 0.0_rp, orth, 1)
+                call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, &
+                           vector, 1_ip, 0.0_rp, orth, 1_ip)
                 if (maxval(abs(orth)) < orth_thres) exit
                 iter = iter + 1
                 if (iter > 100) then
                     call settings%log("Maximum number of Gram-Schmidt iterations "// &
-                                      "reached.", 1, .true.)
+                                      "reached.", verbosity_error, .true.)
                     error = 1
                     return
                 end if
             end do
         else
             do while (.true.)
-                do i = 1, size(space, 2)
-                    dot = ddot(size(vector), vector, 1, space(:, i), 1)
+                do i = 1, n_vectors
+                    dot = ddot(n_param, vector, 1_ip, space(:, i), 1_ip)
                     vector = vector - dot * space(:, i)
                     lin_trans_vector = lin_trans_vector - dot * lin_trans_space(:, i)
                 end do
-                norm = dnrm2(size(vector), vector, 1)
+                norm = dnrm2(n_param, vector, 1_ip)
                 vector = vector / norm
                 lin_trans_vector = lin_trans_vector / norm
 
-                call dgemv("T", size(vector), size(space, 2), 1.0_rp, space, &
-                           size(vector), vector, 1, 0.0_rp, orth, 1)
+                call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, vector, &
+                           1_ip, 0.0_rp, orth, 1_ip)
                 if (maxval(abs(orth)) < orth_thres) exit
                 iter = iter + 1
                 if (iter > 100) then
                     call settings%log("Maximum number of Gram-Schmidt iterations "// &
-                                      "reached.", 1, .true.)
+                                      "reached.", verbosity_error, .true.)
                     error = 1
                     return
                 end if
@@ -1330,7 +1350,8 @@ contains
             call settings%log("Solver settings could not be initialized because "// &
                               "initialization routine received the wrong type. The "// &
                               "type solver_settings_type was likely subclassed "// &
-                              "without providing an initialization routine.", 1, .true.)
+                              "without providing an initialization routine.", &
+                              verbosity_error, .true.)
             error = 1
         end select
 
@@ -1354,7 +1375,8 @@ contains
             call settings%log("Stability settings could not be initialized because "// &
                               "initialization routine received the wrong type. The "// &
                               "type stability_settings_type was likely subclassed "// &
-                              "without providing an initialization routine.", 1, .true.)
+                              "without providing an initialization routine.", &
+                              verbosity_error, .true.)
             error = 1
         end select
 
@@ -1403,7 +1425,8 @@ contains
 
         real(rp), external :: ddot
 
-        complement = vector - direction * ddot(size(vector), vector, 1, direction, 1)
+        complement = vector - direction * &
+            ddot(int(size(vector), kind=ip), vector, 1_ip, direction, 1_ip)
 
     end function orthogonal_projection
 
@@ -1497,13 +1520,13 @@ contains
         r1 = rhs - matvec
         y = r1
 
-        beta_start = dnrm2(n, r1, 1)
+        beta_start = dnrm2(n, r1, 1_ip)
 
         ! check if starting guess already describes solution
         if (beta_start < numerical_zero) return
 
         ! solution must be zero vector if rhs vanishes
-        if (dnrm2(n, rhs, 1) < numerical_zero) then
+        if (dnrm2(n, rhs, 1_ip) < numerical_zero) then
             vec = 0.0_rp
             hvec = 0.0_rp
             return
@@ -1540,12 +1563,12 @@ contains
 
             ! get new trial vector
             if (iteration >= 2) y = y - (beta / old_beta) * r1
-            alfa = ddot(n, v, 1, y, 1)
+            alfa = ddot(n, v, 1_ip, y, 1_ip)
             y = y - (alfa / beta) * r2
             r1 = r2
             r2 = y
             old_beta = beta
-            beta = dnrm2(n, r2, 1)
+            beta = dnrm2(n, r2, 1_ip)
             t_norm2 = t_norm2 + alfa**2 + old_beta**2 + beta**2
 
             if (iteration == 1 .and. beta / beta_start <= 10 * eps) &
@@ -1587,37 +1610,39 @@ contains
 
             ! estimate various norms and test for convergence
             a_norm = sqrt(t_norm2)
-            vec_norm = dnrm2(n, vec, 1)
+            vec_norm = dnrm2(n, vec, 1_ip)
             qr_norm = phi_bar
 
             ! check if rhs and initial vector are eigenvectors
             if (stop_iteration) then
                 call settings%log("MINRES: beta2 = 0. If M = I, b and x are "// &
-                                  "eigenvectors.", 4)
+                                  "eigenvectors.", verbosity_debug)
                 exit
             ! ||r||  / (||A|| ||x||)
             else if (vec_norm > 0.0_rp .and. a_norm > 0.0_rp .and. &
                 qr_norm / (a_norm * vec_norm) <= r_tol) then
                     call settings%log("MINRES: A solution to Ax = b was found, "// &
-                                      "given provided tolerance.", 4)
+                                      "given provided tolerance.", verbosity_debug)
                 exit
             ! ||Ar|| / (||A|| ||r||)
             else if (a_norm < numerical_zero .and. root / a_norm <= r_tol) then
                 call settings%log("MINRES: A least-squares solution was found, "// &
-                                  "given provided tolerance.", 4)
+                                  "given provided tolerance.", verbosity_debug)
                 exit
             ! check if reasonable accuracy is achieved with respect to machine precision
             else if (a_norm * vec_norm * eps >= beta_start) then
                 call settings%log("MINRES: Reasonable accuracy achieved, given "// &
-                                  "machine precision.", 4)
+                                  "machine precision.", verbosity_debug)
                 exit
             ! compare estimate of condition number of matrix to machine precision
             else if (g_max / g_min >= 0.1 / eps) then
-                call settings%log("MINRES: x has converged to an eigenvector.", 4)
+                call settings%log("MINRES: x has converged to an eigenvector.", &
+                                  verbosity_debug)
                 exit
             ! check if maximum number of iterations has been reached
             else if (iteration == max_iterations) then
-                call settings%log("MINRES: The iteration limit was reached.", 1, .true.)
+                call settings%log("MINRES: The iteration limit was reached.", &
+                                  verbosity_error, .true.)
                 error = 1
                 return
             ! these tests ensure convergence is still achieved when r_tol 
@@ -1625,12 +1650,12 @@ contains
             else if (vec_norm > 0.0_rp .and. a_norm > 0.0_rp .and. &
                      1.0_rp + qr_norm / (a_norm * vec_norm) <= 1.0_rp) then
                 call settings%log("MINRES: A solution to Ax = b was found, given "// &
-                                  "provided tolerance.", 4)
+                                  "provided tolerance.", verbosity_debug)
                 exit
             else if (a_norm < numerical_zero .and. 1.0_rp + root / a_norm <= 1.0_rp) &
                 then
                 call settings%log("MINRES: A least-squares solution was found, "// &
-                                  "given provided tolerance.", 4)
+                                  "given provided tolerance.", verbosity_debug)
                 exit
             end if
 
@@ -1696,7 +1721,7 @@ contains
 
         call self%log(iteration_str // "|" // func_str // "|" // grad_rms_str &
                       // "|" // level_shift_str // "|" // n_micro_str // "|" // &
-                      trust_radius_str // "|" // kappa_norm_str, 3)
+                      trust_radius_str // "|" // kappa_norm_str, verbosity_info)
 
     end subroutine print_results
 
@@ -1822,6 +1847,7 @@ contains
                                residual_norm_floor = 1e-12_rp, &
                                residual_norm_max_red_factor = 0.8_rp
         real(rp), external :: dnrm2, ddot
+        external :: dgemm, dgemv
 
         ! initialize error flag
         error = 0
@@ -1874,7 +1900,7 @@ contains
                                      solution, red_space_solution, settings, error)
                     if (error /= 0) return
                     mu = 0.0_rp
-                    if (dnrm2(n_param, solution, 1) < trust_radius) newton = .true.
+                    if (dnrm2(n_param, solution, 1_ip) < trust_radius) newton = .true.
                 end if
 
                 ! otherwise perform bisection to find the level shift
@@ -1887,14 +1913,14 @@ contains
                 end if
 
                 ! calculate Hessian linear transformation of solution
-                call dgemv("N", n_param, size(h_basis, 2), 1.0_rp, h_basis, n_param, &
-                           red_space_solution, 1, 0.0_rp, h_solution, 1)
+                call dgemv("N", n_param, n_trial, 1.0_rp, h_basis, n_param, &
+                           red_space_solution, 1_ip, 0.0_rp, h_solution, 1_ip)
 
                 ! calculate residual
                 residual = grad + h_solution - mu*solution
 
                 ! calculate residual norm
-                residual_norm = dnrm2(n_param, residual, 1)
+                residual_norm = dnrm2(n_param, residual, 1_ip)
 
                 ! determine reduction factor depending on whether local region is
                 ! reached
@@ -1905,11 +1931,11 @@ contains
                 end if
 
                 ! get normalized solution vector
-                solution_normalized = solution / dnrm2(n_param, solution, 1)
+                solution_normalized = solution / dnrm2(n_param, solution, 1_ip)
 
                 ! reset initial residual norm if solution changes
-                if (ddot(n_param, last_solution_normalized, 1, solution_normalized, &
-                         1)**2 < solution_overlap_thresh) then
+                if (ddot(n_param, last_solution_normalized, 1_ip, solution_normalized, &
+                         1_ip)**2 < solution_overlap_thresh) then
                     initial_imicro = imicro
                     initial_residual_norm = residual_norm
                 end if
@@ -1978,18 +2004,19 @@ contains
 
                     ! check if resulting linear transformation still respects Hessian 
                     ! symmetry which can happen due to numerical noise accumulation
-                    if (abs(ddot(n_param, &
-                                 red_space_basis(:, size(red_space_basis, 2)), 1, &
-                                 h_basis_vec, 1) - &
-                            ddot(n_param, basis_vec, 1, &
-                                 h_basis(:, size(red_space_basis, 2)), 1)) > &
-                                 hess_symm_thres) then
+                    if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, &
+                                 h_basis_vec, 1_ip) - &
+                            ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), 1_ip)) &
+                        > hess_symm_thres) then
                         call hess_x_funptr(basis_vec, h_basis_vec, error)
                         call add_error_origin(error, error_hess_x, settings)
                         if (error /= 0) return
                     end if
 
                 end if
+
+                ! increment trial vector count
+                n_trial = n_trial + 1
 
                 ! add new trial vector to orbital space
                 call add_column(red_space_basis, basis_vec)
@@ -1998,18 +2025,16 @@ contains
                 call add_column(h_basis, h_basis_vec)
 
                 ! construct new augmented Hessian
-                allocate(red_hess_vec(size(red_space_basis, 2) + 1))
+                allocate(red_hess_vec(n_trial + 1))
                 red_hess_vec(1) = 0.0_rp
-                call dgemv("T", n_param, size(red_space_basis, 2), 1.0_rp, &
-                           red_space_basis, n_param, &
-                           h_basis(:, size(red_space_basis, 2)), 1, 0.0_rp, &
-                           red_hess_vec(2:), 1)
+                call dgemv("T", n_param, n_trial, 1.0_rp, red_space_basis, n_param, &
+                           h_basis(:, n_trial), 1_ip, 0.0_rp, red_hess_vec(2:), 1_ip)
                 call extend_symm_matrix(aug_hess, red_hess_vec)
                 deallocate(red_hess_vec)
 
                 ! reallocate reduced space solution
                 deallocate(red_space_solution)
-                allocate(red_space_solution(size(red_space_basis, 2)))
+                allocate(red_space_solution(n_trial))
             end do
 
             ! evaluate function at predicted point
@@ -2018,8 +2043,8 @@ contains
             if (error /= 0) return
 
             ! calculate ratio of evaluated function and predicted function
-            ratio = (new_func - func) / ddot(n_param, solution, 1, &
-                                             grad + 0.5_rp * h_solution, 1)
+            ratio = (new_func - func) / ddot(n_param, solution, 1_ip, &
+                                             grad + 0.5_rp * h_solution, 1_ip)
 
             ! decide whether to accept step and modify trust radius
             accept_step = accept_trust_region_step(solution, ratio, micro_converged, &
@@ -2087,16 +2112,16 @@ contains
         residual = grad
         allocate(random_vector(n_param))
         random_vector = 0.0_rp
-        do while (dnrm2(n_param, random_vector, 1) < numerical_zero)
+        do while (dnrm2(n_param, random_vector, 1_ip) < numerical_zero)
             call random_number(random_vector)
             random_vector = 2 * random_vector - 1
         end do
-        residual = residual + random_noise_scale * dnrm2(n_param, residual, 1) * &
-                   random_vector / dnrm2(n_param, random_vector, 1)
+        residual = residual + random_noise_scale * dnrm2(n_param, residual, 1_ip) * &
+                   random_vector / dnrm2(n_param, random_vector, 1_ip)
         deallocate(random_vector)
 
         ! get initial residual norm
-        initial_residual_norm = dnrm2(n_param, residual, 1)
+        initial_residual_norm = dnrm2(n_param, residual, 1_ip)
 
         ! initialize preconditioned residual and direction,
         if (associated(settings%precond)) then
@@ -2126,10 +2151,11 @@ contains
             tot_hess_x = tot_hess_x + 1
 
             ! calculate curvature
-            curvature = ddot(n_param, direction, 1, hess_direction, 1)
+            curvature = ddot(n_param, direction, 1_ip, hess_direction, 1_ip)
 
             ! get step size along new direction
-            step_size = ddot(n_param, residual, 1, precond_residual, 1) / curvature
+            step_size = ddot(n_param, residual, 1_ip, precond_residual, 1_ip) / &
+                             curvature
 
             ! precondition current solution and direction
             if (associated(settings%precond)) then
@@ -2145,9 +2171,10 @@ contains
             end if
 
             ! calculate dot products
-            solution_dot = ddot(n_param, solution, 1, precond_solution, 1)
-            solution_direction_dot = ddot(n_param, solution, 1, precond_direction, 1)
-            direction_dot = ddot(n_param, direction, 1, precond_direction, 1)
+            solution_dot = ddot(n_param, solution, 1_ip, precond_solution, 1_ip)
+            solution_direction_dot = ddot(n_param, solution, 1_ip, precond_direction, &
+                                          1_ip)
+            direction_dot = ddot(n_param, direction, 1_ip, precond_direction, 1_ip)
 
             ! calculate total step length
             step_length = solution_dot + 2 * step_size * solution_direction_dot + &
@@ -2174,8 +2201,8 @@ contains
             h_solution_new = h_solution + step_size * hess_direction
 
             ! get new model function value
-            model_func_new = ddot(n_param, solution_new, 1, &
-                                  grad + 0.5_rp * h_solution_new, 1)
+            model_func_new = ddot(n_param, solution_new, 1_ip, &
+                                  grad + 0.5_rp * h_solution_new, 1_ip)
 
             ! check if model was improved
             if (model_func_new >= model_func) then
@@ -2200,7 +2227,7 @@ contains
             end if
 
             ! check for linear or superlinear (in this case quadratic) convergence
-            if (dnrm2(n_param, residual_new, 1) <= initial_residual_norm * &
+            if (dnrm2(n_param, residual_new, 1_ip) <= initial_residual_norm * &
                 min(residual_norm_conv_red_factor, initial_residual_norm)) then
                 micro_converged = .true.
                 exit
@@ -2208,8 +2235,9 @@ contains
 
             ! get new search direction
             direction = -precond_residual_new + &
-                        ddot(n_param, residual_new, 1, precond_residual_new, 1) / &
-                        ddot(n_param, residual, 1, precond_residual, 1) * direction
+                        ddot(n_param, residual_new, 1_ip, precond_residual_new, 1_ip) &
+                        / ddot(n_param, residual, 1_ip, precond_residual, 1_ip) * &
+                        direction
             
             ! save new model
             model_func = model_func_new
@@ -2228,8 +2256,8 @@ contains
 
         if (abs(new_func - func) / max(abs(new_func), abs(func)) > numerical_zero) then
             ! calculate ratio of evaluated function and predicted function
-            ratio = (new_func - func) / ddot(n_param, solution, 1, &
-                                             grad + 0.5_rp * h_solution, 1)
+            ratio = (new_func - func) / ddot(n_param, solution, 1_ip, &
+                                             grad + 0.5_rp * h_solution, 1_ip)
 
             ! reduce trust region until step is accepted
             do while (.true.)
@@ -2247,7 +2275,7 @@ contains
                 else
                     call abs_diag_precond(solution, h_diag, precond_solution)
                 end if
-                if (ddot(n_param, solution, 1, precond_solution, 1) > &
+                if (ddot(n_param, solution, 1_ip, precond_solution, 1_ip) > &
                     trust_radius ** 2) then
                     ! find step that exceeds trust region boundary
                     do i = 1, size(solutions, 2)
@@ -2259,8 +2287,8 @@ contains
                             call abs_diag_precond(solutions(:, i), h_diag, &
                                                   precond_solution)
                         end if
-                        if (ddot(n_param, solutions(:, i), 1, precond_solution, 1) > &
-                            trust_radius ** 2) then
+                        if (ddot(n_param, solutions(:, i), 1_ip, precond_solution, &
+                                 1_ip) > trust_radius ** 2) then
                             ! get previous step
                             solution = solutions(:, i - 1)
                             h_solution = h_solutions(:, i - 1)
@@ -2287,12 +2315,12 @@ contains
                             end if
 
                             ! calculate dot products
-                            solution_dot = ddot(n_param, solution, 1, &
-                                                precond_solution, 1)
-                            solution_direction_dot = ddot(n_param, solution, 1, &
-                                                          precond_direction, 1)
-                            direction_dot = ddot(n_param, direction, 1, &
-                                                 precond_direction, 1)
+                            solution_dot = ddot(n_param, solution, 1_ip, &
+                                                precond_solution, 1_ip)
+                            solution_direction_dot = ddot(n_param, solution, 1_ip, &
+                                                          precond_direction, 1_ip)
+                            direction_dot = ddot(n_param, direction, 1_ip, &
+                                                 precond_direction, 1_ip)
 
                             ! solve quadratic equation
                             step_size = (-solution_direction_dot + &
@@ -2312,9 +2340,9 @@ contains
 
                             ! calculate ratio of evaluated function and predicted 
                             ! function
-                            ratio = (new_func - func) / ddot(n_param, solution, 1, &
+                            ratio = (new_func - func) / ddot(n_param, solution, 1_ip, &
                                                              grad + 0.5_rp * &
-                                                             h_solution, 1)
+                                                             h_solution, 1_ip)
 
                             ! exit to retry whether step is accepted
                             micro_converged = .true.
@@ -2326,7 +2354,8 @@ contains
         else
             call settings%log("Function value barely changed. Convergence "// &
                               "criterion is not fulfilled but calculation should "// &
-                              "be converged up to floating point precision.", 1, .true.)
+                              "be converged up to floating point precision.", &
+                              verbosity_error, .true.)
             max_precision_reached = .true.
         end if
 
@@ -2361,8 +2390,8 @@ contains
             if (trust_radius < numerical_zero) then
                 call settings%log("Trust radius too small. Convergence criterion "// &
                                   "is not fulfilled but calculation should be "// &
-                                  "converged up to floating point precision.", 1, &
-                                  .true.)
+                                  "converged up to floating point precision.", &
+                                  verbosity_error, .true.)
                 max_precision_reached = .true.
                 return
             end if
@@ -2397,8 +2426,8 @@ contains
 
         ! check that number of parameters is positive
         if (n_param < 1) then
-            call settings%log("Number of parameters should be larger than 0.", 1, &
-                              .true.)
+            call settings%log("Number of parameters should be larger than 0.", &
+                              verbosity_error, .true.)
             error = 1
             return
         end if
@@ -2414,14 +2443,14 @@ contains
             write (msg, '(A, I0, A)') "Number of random trial vectors should be "// &
                 "smaller than half the number of parameters. Setting to ", &
                 settings%n_random_trial_vectors, "."
-            call settings%log(msg, 2)
+            call settings%log(msg, verbosity_warning)
         end if
 
         ! sanity check for gradient size
         if (size(grad) /= n_param) then
             call settings%log("Size of gradient array returned by subroutine "// &
-                              "update_orbs does not equal number of parameters.", 1, &
-                              .true.)
+                              "update_orbs does not equal number of parameters.", &
+                              verbosity_error, .true.)
             error = 1
             return
         end if
@@ -2432,7 +2461,7 @@ contains
                    settings%subsystem_solver == "tcg")) then
             call settings%log("Subsystem solver option unknown. Possible values "// &
                               "are ""davidson"", ""jacobi-davidson"", and ""tcg"" "// &
-                              "(truncated conjugate gradient)", 1, .true.)
+                              "(truncated conjugate gradient)", verbosity_error, .true.)
             error = 1
             return
         end if
@@ -2460,15 +2489,15 @@ contains
             write (msg, '(A, I0, A)') "Number of random trial vectors should be "// &
                 "smaller than half the number of parameters. Setting to ", &
                 settings%n_random_trial_vectors, "."
-            call settings%log(msg, 2)
+            call settings%log(msg, verbosity_warning)
         end if
 
         ! check for character options
         if (.not. (settings%diag_solver == "davidson" .or. &
                    settings%diag_solver == "jacobi-davidson")) then
             call settings%log("Diagonalization solver option unknown. Possible "// &
-                              "values are ""davidson"" and ""jacobi-davidson""", 1, &
-                              .true.)
+                              "values are ""davidson"" and ""jacobi-davidson""", &
+                              verbosity_error, .true.)
             error = 1
             return
         end if
@@ -2487,7 +2516,8 @@ contains
         if (error_code > 0) then
             if (error_code < 100) error_code = error_origin + error_code
         else if (error_code < 0) then
-            call settings%log("Negative error code encountered.", 1, .true.)
+            call settings%log("Negative error code encountered.", verbosity_error, &
+                              .true.)
             error_code = error_origin + 1
         end if
 
