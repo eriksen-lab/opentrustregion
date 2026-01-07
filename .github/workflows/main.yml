@@ -220,6 +220,7 @@ jobs:
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: |
         set -e
+        export OpenTrustRegion_DIR=$GITHUB_WORKSPACE/install/lib/cmake/OpenTrustRegion
         mkdir consume_fp && cd consume_fp
         cat > CMakeLists.txt <<EOF
         cmake_minimum_required(VERSION 3.22)
