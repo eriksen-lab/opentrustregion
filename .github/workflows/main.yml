@@ -220,6 +220,8 @@ jobs:
             INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
           )
         EOF
+        cmake .
+        cd .. && rm -rf consume_fp
 
     - name: Install Coverage Tools
       if: ${{ matrix.build-type == 'coverage' }}
