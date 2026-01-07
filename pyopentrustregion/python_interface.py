@@ -53,16 +53,15 @@ if sys.platform != "win32":
     lib_candidates.append(f"libotrtestsuite.{ext}")
 lib = None
 
-# try to load from installed package (compiled conda pkg, not site-packages)
-if lib is None:
-    conda_prefix = Path("/opt/anaconda1anaconda2anaconda3")
-    for lib_name in lib_candidates:
-        conda_path_unix = conda_prefix / "lib" / lib_name
-        conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
-        if conda_path_unix.exists():
-            lib = CDLL(str(conda_path_unix))
-        elif conda_path_wind.exists():
-            lib = CDLL(str(conda_path_wind))
+# try to load from installed package (conda)
+conda_prefix = Path("/opt/anaconda1anaconda2anaconda3")
+for lib_name in lib_candidates:
+    conda_path_unix = conda_prefix / "lib" / lib_name
+    conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
+    if conda_path_unix.exists():
+        lib = CDLL(str(conda_path_unix))
+    elif conda_path_wind.exists():
+        lib = CDLL(str(conda_path_wind))
 
 # fallback: try to load from installed package (site-packages)
 if lib is None:

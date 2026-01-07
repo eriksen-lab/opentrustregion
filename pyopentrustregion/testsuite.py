@@ -11,7 +11,6 @@ from importlib import resources
 from ctypes import (
     CDLL,
     c_bool,
-    c_double,
     c_char,
     c_void_p,
     Array,
@@ -33,43 +32,39 @@ except ImportError:
 
 # check if pyopentrustregion is installed or import module in same directory
 try:
-    from pyopentrustregion import (
+    from pyopentrustregion.python_interface import (
         SolverSettings,
         StabilitySettings,
         solver,
         stability_check,
         c_int,
         c_real,
+        ext,
+        conda_prefix,
     )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.absolute()))
-    from pyopentrustregion import (
+    from pyopentrustregion.python_interface import (
         SolverSettings,
         StabilitySettings,
         solver,
         stability_check,
         c_int,
         c_real,
+        ext,
+        conda_prefix,
     )
 
-if sys.platform == "darwin":
-    ext = "dylib"
-elif sys.platform == "win32":
-    ext = "dll"
-else:
-    ext = "so"
 lib = None
 
-# try to load from installed package (compiled conda pkg, not site-packages)
-conda_prefix = Path("/opt/anaconda1anaconda2anaconda3")
-if lib is None:
-    lib_name = f"libotrtestsuite.{ext}"
-    conda_path_unix = conda_prefix / "lib" / lib_name
-    conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
-    if conda_path_unix.exists():
-        lib = CDLL(str(conda_path_unix))
-    elif conda_path_wind.exists():
-        lib = CDLL(str(conda_path_wind))
+# try to load from installed package (conda)
+lib_name = f"libotrtestsuite.{ext}"
+conda_path_unix = conda_prefix / "lib" / lib_name
+conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
+if conda_path_unix.exists():
+    lib = CDLL(str(conda_path_unix))
+elif conda_path_wind.exists():
+    lib = CDLL(str(conda_path_wind))
 
 # fallback: try to load from installed package (site-packages)
 if lib is None:
