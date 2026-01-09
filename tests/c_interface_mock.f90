@@ -50,17 +50,16 @@ contains
 
         procedure(logger_c_type), pointer :: logger_funptr
         character(:), allocatable, target :: message
-        integer(c_ip) :: error
 
         ! test passed orbital update function
         test_solver_interface = test_solver_interface .and. &
             test_update_orbs_c_funptr(update_orbs_c_funptr, "solver_py_interface", &
-                                      " by passed orbital updating function")
+                                      " by given orbital updating function")
 
         ! test passed objective function
         test_solver_interface = test_solver_interface .and. &
             test_obj_func_c_funptr(obj_func_c_funptr, "solver_py_interface", &
-                                   " by passed objective function")
+                                   " by given objective function")
 
         ! check if passed number of parameters is correct
         if (n_param_c /= 3) then
@@ -72,12 +71,12 @@ contains
         ! test passed preconditioner function
         test_solver_interface = test_solver_interface .and. &
             test_precond_c_funptr(settings_c%precond, "solver_py_interface", &
-                                  " by passed preconditioning function")
+                                  " by given preconditioning function")
 
         ! test passed convergence check function
         test_solver_interface = test_solver_interface .and. &
             test_conv_check_c_funptr(settings_c%conv_check, "solver_py_interface", &
-                                     " by passed convergence check function")
+                                     " by given convergence check function")
 
         ! get Fortran pointer to passed logging function and call it
         message = "test" // c_null_char
@@ -119,7 +118,6 @@ contains
         real(c_rp), pointer :: kappa_ptr(:)
         procedure(logger_c_type), pointer :: logger_funptr
         character(:), allocatable, target :: message
-        integer(c_ip) :: error
 
         ! check if Hessian diagonal is passed correctly
         if (any(abs(h_diag_c(:n_param_c) - 3.0_c_rp) > tol_c)) then
@@ -131,7 +129,7 @@ contains
         ! test passed Hessian linear transformation
         test_stability_check_interface = test_stability_check_interface .and. &
             test_hess_x_c_funptr(hess_x_c_funptr, "stability_check_py_interface", &
-                                  " by passed Hessian linear transformation function")
+                                 " by given Hessian linear transformation function")
 
         ! check if passed number of parameters is correct
         if (n_param_c /= 3) then
@@ -143,7 +141,7 @@ contains
         ! test passed preconditioner
         test_stability_check_interface = test_stability_check_interface .and. &
             test_precond_c_funptr(settings_c%precond, "stability_check_py_interface", &
-                                  " by passed preconditioning function")
+                                  " by given preconditioning function")
 
         ! get Fortran pointer to passed logging function and call it
         message = "test" // c_null_char

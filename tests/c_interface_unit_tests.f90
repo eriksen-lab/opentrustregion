@@ -12,7 +12,7 @@ module c_interface_unit_tests
                            logger_c_type
     use test_reference, only: tol, tol_c, n_param, n_param_c
     use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_loc, c_funptr, c_funloc, &
-                                           c_char, c_associated, c_null_char
+                                           c_char, c_associated, c_null_ptr, c_null_char
 
     implicit none
 
@@ -207,6 +207,9 @@ contains
         settings = ref_settings
         settings%precond = c_funloc(mock_precond)
         settings%logger = c_funloc(mock_logger)
+
+        ! unassociate returned direction pointer
+        kappa_c_ptr = c_null_ptr
 
         ! call stability check first without initialized returned direction
         error = stability_check_c_wrapper(h_diag, hess_x_c_funptr, n_param_c, stable, &
