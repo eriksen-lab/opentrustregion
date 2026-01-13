@@ -24,7 +24,9 @@ message(STATUS "Showing option ${otr}_INSTALL_CMAKEDIR: ${${otr}_INSTALL_CMAKEDI
 
 # default to not building tests
 option(${otr}_BUILD_TESTING "Build testsuite" ${PROJECT_IS_TOP_LEVEL})
+option(${otr}_INSTALL_TESTING_LIBRARY "Install the compiled library used for testsuite" OFF)
 message(STATUS "Showing option ${otr}_BUILD_TESTING: ${${otr}_BUILD_TESTING}")
+message(STATUS "Showing option ${otr}_INSTALL_TESTING_LIBRARY: ${${otr}_INSTALL_TESTING_LIBRARY}")
 
 # default to static libraries
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
@@ -185,11 +187,13 @@ if (${otr}_BUILD_TESTING)
     )
 
     # install testsuite
-    install(TARGETS otrtestsuite
-            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT testing_interface # Windows (.dll)
-            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface # shared libraries (.so, .dylib)
-            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface # static libraries (.a)
-    )
+    if (${otr}_INSTALL_TESTING_LIBRARY)
+        install(TARGETS otrtestsuite
+                RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT testing_interface # Windows (.dll)
+                LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface # shared libraries (.so, .dylib)
+                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface # static libraries (.a)
+        )
+    endif()
 endif()
 
 # create targets file in the build tree for build-tree usage
