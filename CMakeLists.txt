@@ -9,6 +9,10 @@ include(CheckFortranFunctionExists)
 # set namespace
 set(otr OpenTrustRegion)
 
+# set components
+set(runtime_component runtime)
+set(test_component testsuite)
+
 # ====  Options  ================================================================
 
 # set installation directories, this needs to be separate for windows and unix to avoid 
@@ -189,9 +193,9 @@ if (${otr}_BUILD_TESTING)
     # install testsuite
     if (${otr}_INSTALL_TESTING_LIBRARY)
         install(TARGETS otrtestsuite
-                RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT testing_interface # Windows (.dll)
-                LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface # shared libraries (.so, .dylib)
-                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT testing_interface # static libraries (.a)
+                RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT ${test_component} # Windows (.dll)
+                LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${test_component} # shared libraries (.so, .dylib)
+                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${test_component} # static libraries (.a)
         )
     endif()
 endif()
@@ -219,16 +223,17 @@ write_basic_package_version_file(
 # install library
 install(TARGETS opentrustregion
         EXPORT library_interface
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} # Windows (.dll)
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} # shared libraries (.so, .dylib)
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} # static libraries (.a)
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT ${runtime_component} # Windows (.dll)
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${runtime_component} # shared libraries (.so, .dylib)
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${runtime_component} # static libraries (.a)
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT ${runtime_component}
 )
 
 # install headers
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        COMPONENT ${runtime_component}
 )
 
 # install targets
@@ -236,6 +241,7 @@ install(EXPORT library_interface
         FILE ${otr}Targets-${LIB_SUFFIX}.cmake
         NAMESPACE "${otr}::"
         DESTINATION ${${otr}_INSTALL_CMAKEDIR}
+        COMPONENT ${runtime_component}
 )
 
 # install config files
@@ -243,4 +249,5 @@ install(FILES
         ${CMAKE_CURRENT_BINARY_DIR}/${otr}Config.cmake
         ${CMAKE_CURRENT_BINARY_DIR}/${otr}ConfigVersion.cmake
         DESTINATION ${${otr}_INSTALL_CMAKEDIR}
+        COMPONENT ${runtime_component}
 )
