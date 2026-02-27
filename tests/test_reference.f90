@@ -499,6 +499,99 @@ contains
 
     end function test_precond_c_funptr
 
+    function test_project_funptr(project_funptr, test_name, message) result(test_passed)
+        !
+        ! this function tests a provided projection function pointer
+        !
+        use opentrustregion, only: project_type
+
+        procedure(project_type), intent(in), pointer :: project_funptr
+        character(*), intent(in) :: test_name, message
+        logical :: test_passed
+        
+        real(rp), allocatable :: vector(:)
+        integer(ip) :: error
+
+        ! assume tests pass
+        test_passed = .true.
+
+        ! allocate arrays
+        allocate(vector(n_param))
+
+        ! initialize vector
+        vector = 1.0_rp
+
+        ! call projection subroutine
+        call project_funptr(vector, error)
+
+        ! check for error
+        if (error /= 0) then
+            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
+                "."
+            test_passed = .false.
+        end if
+
+        ! check projected vector
+        if (any(abs(vector - 2.0_rp) > tol)) then
+            write (stderr, *) "test_"//test_name//" failed: Projected vector "// &
+                "returned"//message//" wrong."
+            test_passed = .false.
+        end if
+
+        ! deallocate arrays
+        deallocate(vector)
+
+    end function test_project_funptr
+
+    function test_project_c_funptr(project_c_funptr, test_name, message) &
+        result(test_passed)
+        !
+        ! this function tests a provided projection C function pointer
+        !
+        use c_interface, only: project_c_type
+
+        type(c_funptr), intent(in) :: project_c_funptr
+        character(*), intent(in) :: test_name, message
+        logical :: test_passed
+
+        procedure(project_c_type), pointer :: project_funptr
+        real(c_rp), allocatable :: vector(:)
+        integer(c_ip) :: error
+
+        ! assume tests pass
+        test_passed = .true.
+
+        ! convert to Fortran function pointer
+        call c_f_procpointer(cptr=project_c_funptr, fptr=project_funptr)
+
+        ! allocate arrays
+        allocate(vector(n_param))
+
+        ! initialize vector
+        vector = 1.0_c_rp
+
+        ! call projection function
+        error = project_funptr(vector)
+
+        ! check for error
+        if (error /= 0) then
+            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
+                "."
+            test_passed = .false.
+        end if
+
+        ! check projected vector
+        if (any(abs(vector - 2.0_c_rp) > tol_c)) then
+            write (stderr, *) "test_"//test_name//" failed: Projected vector "// &
+                "returned"//message//" wrong."
+            test_passed = .false.
+        end if
+
+        ! deallocate arrays
+        deallocate(vector)
+
+    end function test_project_c_funptr
+
     function test_conv_check_funptr(conv_check_funptr, test_name, message) &
         result(test_passed)
         !
@@ -597,6 +690,7 @@ contains
 
         ! unassociate function pointers
         lhs%precond => null()
+        lhs%project => null()
         lhs%conv_check => null()
         lhs%logger => null()
 
@@ -632,6 +726,7 @@ contains
 
         ! unassociate function pointers
         lhs%precond => null()
+        lhs%project => null()
         lhs%logger => null()
 
         ! set reference values

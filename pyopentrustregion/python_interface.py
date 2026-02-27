@@ -121,6 +121,7 @@ obj_func_interface_type = CFUNCTYPE(c_int, POINTER(c_real), POINTER(c_real))
 precond_interface_type = CFUNCTYPE(
     c_int, POINTER(c_real), POINTER(c_real), POINTER(c_real)
 )
+project_interface_type = CFUNCTYPE(c_int, POINTER(c_real))
 conv_check_interface_type = CFUNCTYPE(c_int, POINTER(c_bool))
 logger_interface_type = CFUNCTYPE(None, c_char_p)
 
@@ -188,6 +189,34 @@ def precond_interface_factory(
     return precond_interface
 
 
+def project_interface_factory(
+    project: Optional[Callable[[np.ndarray], None]], n_param: int
+) -> Any:
+    """
+    this function is a factory for the projection interface
+    """
+    if project is None:
+        return None
+
+    @project_interface_type
+    def project_interface(vector_ptr):
+        """
+        this function interfaces the projection function
+        """
+        # convert pointers to numpy array and float
+        vector = np.ctypeslib.as_array(vector_ptr, shape=(n_param,))
+
+        # call projection function
+        try:
+            project(vector)
+        except RuntimeError:
+            return 1
+
+        return 0
+
+    return project_interface
+
+
 def conv_check_interface_factory(conv_check: Optional[Callable[[], bool]]) -> Any:
     """
     this function is a factory for the convergence check interface
@@ -233,6 +262,7 @@ def logger_interface_factory(logger: Optional[Callable[[str], None]]) -> Any:
 class SolverSettingsC(Structure):
     _fields_ = [
         ("precond", c_void_p),
+        ("project", c_void_p),
         ("conv_check", c_void_p),
         ("logger", c_void_p),
         ("stability", c_bool),
@@ -255,6 +285,7 @@ class SolverSettingsC(Structure):
 class StabilitySettingsC(Structure):
     _fields_ = [
         ("precond", c_void_p),
+        ("project", c_void_p),
         ("logger", c_void_p),
         ("initialized", c_bool),
         ("conv_tol", c_real),
@@ -309,9 +340,11 @@ class SolverSettings(Settings):
     init_c_struct = lib.init_solver_settings
 
     precond: Optional[Callable[[np.ndarray, float, np.ndarray], None]]
+    project: Optional[Callable[[np.ndarray], None]]
     conv_check: Optional[Callable[[], bool]]
     logger: Optional[Callable[[str], None]]
     precond_interface: Any
+    project_interface: Any
     conv_check_interface: Any
     logger_interface: Any
 
@@ -322,8 +355,10 @@ class StabilitySettings(Settings):
     init_c_struct = lib.init_stability_settings
 
     precond: Optional[Callable[[np.ndarray, float, np.ndarray], None]]
+    project: Optional[Callable[[np.ndarray], None]]
     logger: Optional[Callable[[str], None]]
     precond_interface: Any
+    project_interface: Any
     logger_interface: Any
 
 
@@ -450,6 +485,9 @@ def solver(
         "precond", precond_interface_factory(settings.precond, n_param)
     )
     settings.set_optional_callback(
+        "project", project_interface_factory(settings.project, n_param)
+    )
+    settings.set_optional_callback(
         "conv_check", conv_check_interface_factory(settings.conv_check)
     )
     settings.set_optional_callback("logger", logger_interface_factory(settings.logger))
@@ -487,6 +525,9 @@ def stability_check(
     # settings is set (e.g. n_param)
     settings.set_optional_callback(
         "precond", precond_interface_factory(settings.precond, n_param)
+    )
+    settings.set_optional_callback(
+        "project", project_interface_factory(settings.project, n_param)
     )
     settings.set_optional_callback("logger", logger_interface_factory(settings.logger))
 

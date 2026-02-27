@@ -32,7 +32,7 @@ module opentrustregion
     integer(ip), parameter :: error_solver = 100, error_stability_check = 200, &
                               error_obj_func = 1100, error_update_orbs = 1200, &
                               error_hess_x = 1300, error_precond = 1400, &
-                              error_conv_check = 1500
+                              error_conv_check = 1500, error_project = 1600
 
     ! define useful parameters
     real(rp), parameter :: numerical_zero = 1e-14_rp, precond_floor = 1e-10_rp, &
@@ -42,6 +42,23 @@ module opentrustregion
     integer(ip), parameter :: verbosity_silent = 0, verbosity_error = 1, &
                               verbosity_warning = 2, verbosity_info = 3, &
                               verbosity_debug = 4
+
+    ! define log messages
+    character(len=*), parameter :: &
+        random_trial_vector_warning_msg = &
+            "Number of random trial vectors should be smaller than half the number "// &
+            "of parameters.", &
+        gram_schmidt_zero_vector_error_msg = &
+            "Vector passed to Gram-Schmidt procedure is numerically zero.", &
+        gram_schmidt_too_many_vectors_error_msg = &
+            "Number of vectors in Gram-Schmidt procedure larger than dimension of "// &
+            "vector space.", &
+        project_warning_msg = &
+            "Custom projection is provided. To optimize performance, OTR assumes "// &
+            "that all other provided routines (update_orbs, hess_x, precond) are "// &
+            "already projected onto the relevant orbital rotation subspace. If "// &
+            "these routines are not self-projecting, redundant rotations may "// &
+            "contaminate the trial space and cause convergence issues."
 
     ! interfaces for callback functions
     abstract interface
@@ -88,6 +105,15 @@ module opentrustregion
     end interface
 
     abstract interface
+        subroutine project_type(vector, error)
+            import :: rp, ip
+
+            real(rp), intent(inout), target :: vector(:)
+            integer(ip), intent(out) :: error
+        end subroutine project_type
+    end interface
+
+    abstract interface
         function conv_check_type(error) result(converged)
             import :: ip
 
@@ -108,6 +134,7 @@ module opentrustregion
         real(rp) :: conv_tol
         integer(ip) :: n_random_trial_vectors, jacobi_davidson_start, seed, verbose
         procedure(precond_type), pointer, nopass :: precond
+        procedure(project_type), pointer, nopass :: project
         procedure(logger_type), pointer, nopass :: logger
     contains
         procedure :: log => print_message
@@ -142,15 +169,16 @@ module opentrustregion
 
     ! default settings
     type(solver_settings_type), parameter :: default_solver_settings = &
-        solver_settings_type(precond = null(), conv_check = null(), logger = null(), &
-                             stability = .false., line_search = .false., &
-                             initialized = .true., conv_tol = 1e-5_rp, &
-                             start_trust_radius = 0.4_rp, global_red_factor = 1e-3_rp, &
-                             local_red_factor = 1e-4_rp, n_random_trial_vectors = 1, &
-                             n_macro = 150, n_micro = 50, jacobi_davidson_start = 30, &
-                             seed = 42, verbose = 0, subsystem_solver = "davidson")
+        solver_settings_type(precond = null(), project = null(), conv_check = null(), &
+                             logger = null(), stability = .false., &
+                             line_search = .false., initialized = .true., &
+                             conv_tol = 1e-5_rp, start_trust_radius = 0.4_rp, &
+                             global_red_factor = 1e-3_rp, local_red_factor = 1e-4_rp, &
+                             n_random_trial_vectors = 1, n_macro = 150, n_micro = 50, &
+                             jacobi_davidson_start = 30, seed = 42, verbose = 0, &
+                             subsystem_solver = "davidson")
     type(stability_settings_type), parameter :: default_stability_settings = &
-        stability_settings_type(precond = null(), logger = null(), &
+        stability_settings_type(precond = null(), project = null(), logger = null(), &
                                 initialized = .true., conv_tol = 1e-8_rp, &
                                 n_random_trial_vectors = 20, n_iter = 100, &
                                 jacobi_davidson_start = 50, seed = 42, verbose = 0, &
@@ -256,13 +284,9 @@ contains
                         settings%subsystem_solver == "jacobi-davidson") then
                         kappa_norm = dnrm2(n_param, kappa, 1_ip)
                     else
-                        if (associated(settings%precond)) then
-                            call settings%precond(kappa, 0.0_rp, precond_kappa, error)
-                            call add_error_origin(error, error_precond, settings)
-                            if (error /= 0) return
-                        else
-                            call abs_diag_precond(kappa, h_diag, precond_kappa)
-                        end if
+                        call abs_diag_precond(kappa, h_diag, precond_kappa, settings, &
+                                              error)
+                        if (error /= 0) return
                         kappa_norm = sqrt(ddot(n_param, kappa, 1_ip, precond_kappa, &
                                                1_ip))
                         mu = 0.0_rp
@@ -534,13 +558,9 @@ contains
             if (settings%diag_solver == "davidson" .or. iter <= &
                 settings%jacobi_davidson_start) then
                 ! precondition residual
-                if (associated(settings%precond)) then
-                    call settings%precond(residual, 0.0_rp, basis_vec, error)
-                    call add_error_origin(error, error_precond, settings)
-                    if (error /= 0) return
-                else
-                    call level_shifted_diag_precond(residual, 0.0_rp, h_diag, basis_vec)
-                end if
+                call level_shifted_diag_precond(residual, 0.0_rp, h_diag, basis_vec, &
+                                                settings, error)
+                if (error /= 0) return
 
                 ! orthonormalize to current orbital space to get new basis vector
                 call gram_schmidt(basis_vec, red_space_basis, settings, error)
@@ -1187,6 +1207,11 @@ contains
             red_space_basis(:, 1) = grad/grad_norm
             red_space_basis(:, 2) = 0.0_rp
             red_space_basis(min_idx, 2) = 1.0_rp
+            if (associated(settings%project)) then
+                call settings%project(red_space_basis(:, 2), error)
+                call add_error_origin(error, error_project, settings)
+                if (error /= 0) return
+            end if
             call gram_schmidt(red_space_basis(:, 2), &
                               reshape(red_space_basis(:, 1), &
                                       [size(red_space_basis, 1), 1]), &
@@ -1231,6 +1256,11 @@ contains
                 call random_number(red_space_basis(:, i))
                 red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
             end do
+            if (associated(settings%project)) then
+                call settings%project(red_space_basis(:, i), error)
+                call add_error_origin(error, error_project, settings)
+                if (error /= 0) return
+            end if
             call gram_schmidt(red_space_basis(:, i), red_space_basis(:, :i - 1), &
                               settings, error)
             if (error /= 0) return
@@ -1270,13 +1300,13 @@ contains
         n_vectors = size(space, 2)
 
         if (dnrm2(n_param, vector, 1_ip) < zero_thres) then
-            call settings%log("Vector passed to Gram-Schmidt procedure is "// &
-                "numerically zero.", verbosity_error, .true.)
+            call settings%log(gram_schmidt_zero_vector_error_msg, verbosity_error, &
+                              .true.)
             error = 1
             return
         else if (n_vectors > n_param - 1) then
-            call settings%log("Number of vectors in Gram-Schmidt procedure larger "// &
-                "than dimension of vector space.", verbosity_error, .true.)
+            call settings%log(gram_schmidt_too_many_vectors_error_msg, &
+                              verbosity_error, .true.)
             error = 1
             return
         end if
@@ -1382,36 +1412,71 @@ contains
 
     end subroutine init_stability_settings
 
-    subroutine level_shifted_diag_precond(vector, mu, h_diag, precond_vector)
+    subroutine level_shifted_diag_precond(vector, mu, h_diag, precond_vector, &
+                                          settings, error)
         !
         ! this function defines the default level-shifted diagonal preconditioner
         !
         real(rp), intent(in) :: vector(:), mu, h_diag(:)
         real(rp), intent(out) :: precond_vector(:)
-        
-        ! construct level-shifted preconditioner
-        precond_vector = h_diag - mu
-        where (abs(precond_vector) < precond_floor)
-            precond_vector = precond_floor
-        end where
+        class(settings_type), intent(in) :: settings
+        integer(ip), intent(out) :: error
 
-        ! precondition vector
-        precond_vector = vector / precond_vector
+        ! initialize error flag
+        error = 0
+
+        ! check for user-defined preconditioner
+        if (associated(settings%precond)) then
+            call settings%precond(vector, mu, precond_vector, error)
+            call add_error_origin(error, error_precond, settings)
+            if (error /= 0) return
+        ! construct level-shifted preconditioner
+        else
+            precond_vector = h_diag - mu
+            where (abs(precond_vector) < precond_floor)
+                precond_vector = precond_floor
+            end where
+            precond_vector = vector / precond_vector
+
+            ! ensure basis vector stays in subspace
+            if (associated(settings%project)) then
+                call settings%project(precond_vector, error)
+                call add_error_origin(error, error_project, settings)
+                if (error /= 0) return
+            end if
+        end if
         
     end subroutine level_shifted_diag_precond
 
-    subroutine abs_diag_precond(vector, h_diag, precond_vector)
+    subroutine abs_diag_precond(vector, h_diag, precond_vector, settings, error)
         !
         ! this function defines the default absolute diagonal preconditioner
         !
         real(rp), intent(in) :: vector(:), h_diag(:)
         real(rp), intent(out) :: precond_vector(:)
+        class(settings_type), intent(in) :: settings
+        integer(ip), intent(out) :: error
 
+        ! initialize error flag
+        error = 0
+
+        ! check for user-defined preconditioner
+        if (associated(settings%precond)) then
+            call settings%precond(vector, 0.0_rp, precond_vector, error)
+            call add_error_origin(error, error_precond, settings)
+            if (error /= 0) return
         ! construct positive-definite preconditioner
-        precond_vector = max(abs(h_diag), precond_floor)
-        
-        ! precondition vector
-        precond_vector = vector / precond_vector
+        else
+            precond_vector = max(abs(h_diag), precond_floor)
+            precond_vector = vector / precond_vector
+
+            ! ensure basis vector stays in subspace
+            if (associated(settings%project)) then
+                call settings%project(precond_vector, error)
+                call add_error_origin(error, error_project, settings)
+                if (error /= 0) return
+            end if
+        end if
         
     end subroutine abs_diag_precond
 
@@ -1969,13 +2034,9 @@ contains
 
                 if (.not. jacobi_davidson_started) then
                     ! precondition residual
-                    if (associated(settings%precond)) then
-                        call settings%precond(residual, mu, basis_vec, error)
-                        call add_error_origin(error, error_precond, settings)
-                        if (error /= 0) return
-                    else
-                        call level_shifted_diag_precond(residual, mu, h_diag, basis_vec)
-                    end if
+                    call level_shifted_diag_precond(residual, mu, h_diag, basis_vec, &
+                                                    settings, error)
+                    if (error /= 0) return
 
                     ! orthonormalize to current orbital space to get new basis vector
                     call gram_schmidt(basis_vec, red_space_basis, settings, error)
@@ -2123,14 +2184,10 @@ contains
         ! get initial residual norm
         initial_residual_norm = dnrm2(n_param, residual, 1_ip)
 
-        ! initialize preconditioned residual and direction,
-        if (associated(settings%precond)) then
-            call settings%precond(residual, 0.0_rp, precond_residual, error)
-            call add_error_origin(error, error_precond, settings)
-            if (error /= 0) return
-        else
-            call abs_diag_precond(residual, h_diag, precond_residual)
-        end if
+        ! initialize preconditioned residual and direction
+        call abs_diag_precond(residual, h_diag, precond_residual, settings, error)
+        if (error /= 0) return
+
         direction = -precond_residual
 
         ! allocate arrays needed to propose a new step
@@ -2158,17 +2215,10 @@ contains
                              curvature
 
             ! precondition current solution and direction
-            if (associated(settings%precond)) then
-                call settings%precond(solution, 0.0_rp, precond_solution, error)
-                call add_error_origin(error, error_precond, settings)
-                if (error /= 0) return
-                call settings%precond(direction, 0.0_rp, precond_direction, error)
-                call add_error_origin(error, error_precond, settings)
-                if (error /= 0) return
-            else
-                call abs_diag_precond(solution, h_diag, precond_solution)
-                call abs_diag_precond(direction, h_diag, precond_direction)
-            end if
+            call abs_diag_precond(solution, h_diag, precond_solution, settings, error)
+            if (error /= 0) return
+            call abs_diag_precond(direction, h_diag, precond_direction, settings, error)
+            if (error /= 0) return
 
             ! calculate dot products
             solution_dot = ddot(n_param, solution, 1_ip, precond_solution, 1_ip)
@@ -2218,13 +2268,9 @@ contains
             
             ! get residual for model
             residual_new = residual + step_size * hess_direction
-            if (associated(settings%precond)) then
-                call settings%precond(residual_new, 0.0_rp, precond_residual_new, error)
-                call add_error_origin(error, error_precond, settings)
-                if (error /= 0) return
-            else
-                call abs_diag_precond(residual_new, h_diag, precond_residual_new)
-            end if
+            call abs_diag_precond(residual_new, h_diag, precond_residual_new, &
+                                  settings, error)
+            if (error /= 0) return
 
             ! check for linear or superlinear (in this case quadratic) convergence
             if (dnrm2(n_param, residual_new, 1_ip) <= initial_residual_norm * &
@@ -2269,24 +2315,18 @@ contains
                 if (accept_step .or. max_precision_reached) exit
 
                 ! check if step exceeds new trust region boundary
-                if (associated(settings%precond)) then
-                    call settings%precond(solution, 0.0_rp, precond_solution, error)
-                    if (error /= 0) return
-                else
-                    call abs_diag_precond(solution, h_diag, precond_solution)
-                end if
+                call abs_diag_precond(solution, h_diag, precond_solution, settings, &
+                                      error)
+                if (error /= 0) return
+
                 if (ddot(n_param, solution, 1_ip, precond_solution, 1_ip) > &
                     trust_radius ** 2) then
                     ! find step that exceeds trust region boundary
                     do i = 1, size(solutions, 2)
-                        if (associated(settings%precond)) then
-                            call settings%precond(solutions(:, i), 0.0_rp, &
-                                                  precond_solution, error)
-                            if (error /= 0) return
-                        else
-                            call abs_diag_precond(solutions(:, i), h_diag, &
-                                                  precond_solution)
-                        end if
+                        call abs_diag_precond(solutions(:, i), h_diag, &
+                                              precond_solution, settings, error)
+                        if (error /= 0) return
+
                         if (ddot(n_param, solutions(:, i), 1_ip, precond_solution, &
                                  1_ip) > trust_radius ** 2) then
                             ! get previous step
@@ -2298,21 +2338,12 @@ contains
                             hess_direction = h_solutions(:, i) - h_solutions(:, i - 1)
 
                             ! precondition current solution and direction
-                            if (associated(settings%precond)) then
-                                call settings%precond(solution, 0.0_rp, &
-                                                      precond_solution, error)
-                                call add_error_origin(error, error_precond, settings)
-                                if (error /= 0) return
-                                call settings%precond(direction, 0.0_rp, &
-                                                      precond_direction, error)
-                                call add_error_origin(error, error_precond, settings)
-                                if (error /= 0) return
-                            else
-                                call abs_diag_precond(solution, h_diag, &
-                                                      precond_solution)
-                                call abs_diag_precond(direction, h_diag, &
-                                                      precond_direction)
-                            end if
+                            call abs_diag_precond(solution, h_diag, precond_solution, &
+                                                  settings, error)
+                            if (error /= 0) return
+                            call abs_diag_precond(direction, h_diag, &
+                                                  precond_direction, settings, error)
+                            if (error /= 0) return
 
                             ! calculate dot products
                             solution_dot = ddot(n_param, solution, 1_ip, &
@@ -2440,8 +2471,7 @@ contains
              settings%subsystem_solver == "jacobi-davidson") .and. &
             settings%n_random_trial_vectors > n_param/2) then
             settings%n_random_trial_vectors = n_param/2
-            write (msg, '(A, I0, A)') "Number of random trial vectors should be "// &
-                "smaller than half the number of parameters. Setting to ", &
+            write (msg, '(A, I0, A)') random_trial_vector_warning_msg//" Setting to ", &
                 settings%n_random_trial_vectors, "."
             call settings%log(msg, verbosity_warning)
         end if
@@ -2466,6 +2496,10 @@ contains
             return
         end if
 
+        ! check whether projection functions is passed
+        if (associated(settings%project)) call settings%log(project_warning_msg, &
+                                                            verbosity_warning)
+
     end subroutine solver_sanity_check
 
     subroutine stability_sanity_check(settings, n_param, error)
@@ -2486,8 +2520,7 @@ contains
         ! check that number of random trial vectors is below number of parameters
         if (settings%n_random_trial_vectors > n_param/2) then
             settings%n_random_trial_vectors = n_param/2
-            write (msg, '(A, I0, A)') "Number of random trial vectors should be "// &
-                "smaller than half the number of parameters. Setting to ", &
+            write (msg, '(A, I0, A)') random_trial_vector_warning_msg//" Setting to ", &
                 settings%n_random_trial_vectors, "."
             call settings%log(msg, verbosity_warning)
         end if
@@ -2501,6 +2534,10 @@ contains
             error = 1
             return
         end if
+
+        ! check whether projection functions is passed
+        if (associated(settings%project)) call settings%log(project_warning_msg, &
+                                                            verbosity_warning)
 
     end subroutine stability_sanity_check
 

@@ -10,7 +10,7 @@ module c_interface
                                standard_stability_check => stability_check, &
                                default_solver_settings, default_stability_settings, &
                                update_orbs_type, hess_x_type, obj_func_type, &
-                               precond_type, conv_check_type, logger_type
+                               precond_type, project_type, conv_check_type, logger_type
     use, intrinsic :: iso_c_binding, only: c_double, c_int64_t, c_int32_t, c_bool, &
                                            c_ptr, c_funptr, c_f_pointer, &
                                            c_f_procpointer, c_associated, c_char, &
@@ -35,6 +35,7 @@ module c_interface
     procedure(hess_x_c_type), pointer :: hess_x_before_wrapping => null()
     procedure(obj_func_c_type), pointer :: obj_func_before_wrapping => null()
     procedure(precond_c_type), pointer :: precond_before_wrapping => null()
+    procedure(project_c_type), pointer :: project_before_wrapping => null()
     procedure(conv_check_c_type), pointer :: conv_check_before_wrapping => null()
     procedure(logger_c_type), pointer :: logger_before_wrapping => null()
 
@@ -84,6 +85,15 @@ module c_interface
     end interface
 
     abstract interface
+        function project_c_type(vector_c) result(error) bind(C)
+            import :: c_rp, c_ip
+
+            real(c_rp), intent(inout), target :: vector_c(*)
+            integer(c_ip) :: error
+        end function project_c_type
+    end interface
+
+    abstract interface
         function conv_check_c_type(converged) result(error) bind(C)
             import :: c_bool, c_ip
 
@@ -102,7 +112,7 @@ module c_interface
 
     ! derived type for solver settings
     type, bind(C) :: solver_settings_type_c
-        type(c_funptr) :: precond, conv_check, logger
+        type(c_funptr) :: precond, project, conv_check, logger
         logical(c_bool) :: stability, line_search, initialized
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
@@ -111,7 +121,7 @@ module c_interface
     end type
 
     type, bind(C) :: stability_settings_type_c
-        type(c_funptr) :: precond, logger
+        type(c_funptr) :: precond, project, logger
         logical(c_bool) :: initialized
         real(c_rp) :: conv_tol
         integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
@@ -129,6 +139,7 @@ module c_interface
     procedure(hess_x_type), pointer :: hess_x_f_wrapper_ptr => hess_x_f_wrapper
     procedure(obj_func_type), pointer :: obj_func_f_wrapper_ptr => obj_func_f_wrapper
     procedure(precond_type), pointer :: precond_f_wrapper_ptr => precond_f_wrapper
+    procedure(project_type), pointer :: project_f_wrapper_ptr => project_f_wrapper
     procedure(conv_check_type), pointer :: conv_check_f_wrapper_ptr => &
         conv_check_f_wrapper
     procedure(logger_type), pointer :: logger_f_wrapper_ptr => logger_f_wrapper
@@ -409,6 +420,36 @@ contains
 
     end subroutine precond_f_wrapper
 
+    subroutine project_f_wrapper(vector, error)
+        !
+        ! this subroutine exposes a C-implemented projection function to Fortran
+        !
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+
+        real(c_rp), pointer :: vector_c(:)
+        integer(c_ip) :: error_c
+
+        ! convert arguments to C kind
+        if (rp == c_rp) then
+            vector_c => vector
+        else
+            allocate(vector_c(size(vector)))
+            vector_c = real(vector, kind=c_rp)
+        end if
+
+        ! call project C function
+        error_c = project_before_wrapping(vector_c)
+
+        ! convert arguments to Fortran kind
+        error = int(error_c, kind=ip)
+        if (rp /= c_rp) then
+            vector = real(vector_c, kind=rp)
+            deallocate(vector_c)
+        end if
+
+    end subroutine project_f_wrapper
+
     function conv_check_f_wrapper(error) result(converged)
         !
         ! this function exposes a C-implemented convergence check function to Fortran
@@ -492,6 +533,13 @@ contains
             else
                 settings%precond => null()
             end if
+            if (c_associated(settings_c%project)) then
+                call c_f_procpointer(cptr=settings_c%project, &
+                                     fptr=project_before_wrapping)
+                settings%project => project_f_wrapper
+            else
+                settings%project => null()
+            end if
             if (c_associated(settings_c%conv_check)) then
                 call c_f_procpointer(cptr=settings_c%conv_check, &
                                      fptr=conv_check_before_wrapping)
@@ -554,6 +602,13 @@ contains
             else
                 settings%precond => null()
             end if
+            if (c_associated(settings_c%project)) then
+                call c_f_procpointer(cptr=settings_c%project, &
+                                     fptr=project_before_wrapping)
+                settings%project => project_f_wrapper
+            else
+                settings%project => null()
+            end if
             if (c_associated(settings_c%logger)) then
                 call c_f_procpointer(cptr=settings_c%logger, &
                                      fptr=logger_before_wrapping)
@@ -595,6 +650,7 @@ contains
         if (settings%initialized) then
             ! callback functions cannot be converted
             settings_c%precond = c_null_funptr
+            settings_c%project = c_null_funptr
             settings_c%conv_check = c_null_funptr
             settings_c%logger = c_null_funptr
 
@@ -639,6 +695,7 @@ contains
         if (settings%initialized) then
             ! callback functions cannot be converted
             settings_c%precond = c_null_funptr
+            settings_c%project = c_null_funptr
             settings_c%logger = c_null_funptr
 
             ! convert reals

@@ -28,7 +28,8 @@ contains
         !
         use opentrustregion, only: solver_settings_type
         use test_reference, only: test_update_orbs_funptr, test_obj_func_funptr, &
-                                  test_precond_funptr, test_conv_check_funptr
+                                  test_precond_funptr, test_project_funptr, &
+                                  test_conv_check_funptr
 
         procedure(update_orbs_type), intent(in), pointer :: update_orbs_funptr
         procedure(obj_func_type), intent(in), pointer :: obj_func_funptr
@@ -70,6 +71,17 @@ contains
                                 " by given preconditioner subroutine")
         end if
 
+        ! check if optional projection subroutine is correctly passed
+        if (.not. associated(settings%project)) then
+            test_passed = .false.
+            write (stderr, *) "test_solver_c_wrapper failed: Passed projection "// &
+                "function not associated with value."
+        else
+            test_passed = test_passed .and. &
+            test_project_funptr(settings%project, "solver_c_wrapper", &
+                                " by given projection subroutine")
+        end if
+
         ! check if optional convergence check function is correctly passed
         if (.not. associated(settings%conv_check)) then
             test_passed = .false.
@@ -106,7 +118,8 @@ contains
         ! interface
         !
         use opentrustregion, only: stability_settings_type
-        use test_reference, only: test_hess_x_funptr, test_precond_funptr
+        use test_reference, only: test_hess_x_funptr, test_precond_funptr, &
+                                  test_project_funptr
 
         real(rp), intent(in) :: h_diag(:)
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
@@ -144,6 +157,17 @@ contains
             test_passed = test_passed .and. &
             test_precond_funptr(settings%precond, "stability_check_c_wrapper", &
                                 " by given preconditioner subroutine")
+        end if
+
+        ! check if optional projection subroutine is correctly passed
+        if (.not. associated(settings%project)) then
+            test_passed = .false.
+            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+                "projection function not associated with value."
+        else
+            test_passed = test_passed .and. &
+            test_project_funptr(settings%project, "stability_check_c_wrapper", &
+                                " by given projection subroutine")
         end if
 
         ! check if optional logging function is correctly passed

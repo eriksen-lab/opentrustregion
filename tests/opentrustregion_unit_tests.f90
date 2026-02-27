@@ -183,13 +183,41 @@ contains
 
     end subroutine update_orbs
 
+    subroutine mock_precond(residual, mu, precond_residual, error)
+        !
+        ! this subroutine is a test subroutine for the preconditioner subroutine
+        !
+        real(rp), intent(in), target :: residual(:)
+        real(rp), intent(in) :: mu
+        real(rp), intent(out), target :: precond_residual(:)
+        integer(ip), intent(out) :: error
+
+        precond_residual = mu * residual
+
+        error = 0
+
+    end subroutine mock_precond
+
+    subroutine mock_project(vector, error)
+        !
+        ! this subroutine is a test subroutine for the projection subroutine
+        !
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+
+        vector = 2 * vector
+
+        error = 0
+
+    end subroutine mock_project
+
     subroutine logger(message)
         !
         ! this subroutine is a mock logging subroutine
         !
         character(*), intent(in) :: message
 
-        log_message = message
+        log_message = log_message//trim(message)
 
     end subroutine logger
 
@@ -205,6 +233,7 @@ contains
         call settings%init(error)
         settings%verbose = 3
         settings%logger => logger
+        log_message = ""
 
     end subroutine setup_settings
 
@@ -977,7 +1006,9 @@ contains
         ! this function tests the Gram-Schmidt subroutine which orthonormalizes a 
         ! vector to a given basis
         !
-        use opentrustregion, only: solver_settings_type, gram_schmidt
+        use opentrustregion, only: solver_settings_type, gram_schmidt, &
+                                   gram_schmidt_zero_vector_error_msg, &
+                                   gram_schmidt_too_many_vectors_error_msg
 
         type(solver_settings_type) :: settings
         real(rp) :: vector(4), lin_trans_vector(4), vector_small(2), space(4, 2), &
@@ -1055,8 +1086,8 @@ contains
         ! perform Gram-Schmidt orthogonalization and determine if function correctly
         ! throws error
         call gram_schmidt(vector, space, settings, error)
-        if ((error == 0) .or. (log_message /= " Vector passed to Gram-Schmidt "// &
-                                "procedure is numerically zero.")) then
+        if ((error == 0) .or. &
+            (adjustl(log_message) /= gram_schmidt_zero_vector_error_msg)) then
             write (stderr, *) "test_gram_schmidt failed: No error returned during "// &
                 "orthogonalization for zero vector."
             test_gram_schmidt = .false.
@@ -1067,11 +1098,14 @@ contains
         space_small(:, 1) = [1.0_rp, 0.0_rp]
         space_small(:, 2) = [0.0_rp, 1.0_rp]
 
+        ! reset log message
+        log_message = ""
+
         ! perform Gram-Schmidt orthogonalization and determine if function correctly
         ! throws error
         call gram_schmidt(vector_small, space_small, settings, error)
-        if (error == 0 .or. (log_message /= " Number of vectors in Gram-Schmidt "// &
-                              "procedure larger than dimension of vector space.")) then
+        if (error == 0 .or. &
+            (adjustl(log_message) /= gram_schmidt_too_many_vectors_error_msg)) then
             write (stderr, *) "test_gram_schmidt failed: No error returned during "// &
                 "orthogonalization when number of vectors is larger than dimension "// &
                 "of vector space."
@@ -1105,8 +1139,8 @@ contains
         end if
 
         ! check function pointers
-        if (associated(settings%precond) .or. associated(settings%conv_check) .or. &
-            associated(settings%logger)) then
+        if (associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%conv_check) .or. associated(settings%logger)) then
             write (stderr, *) "test_init_solver_settings failed: Function pointers "// &
                 "should not be initialized."
             test_init_solver_settings = .false.
@@ -1147,7 +1181,8 @@ contains
         end if
 
         ! check function pointers
-        if (associated(settings%precond) .or. associated(settings%logger)) then
+        if (associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%logger)) then
             write (stderr, *) "test_init_stability_settings failed: Function "// &
                 "pointers should not be initialized."
             test_init_stability_settings = .false.
@@ -1167,22 +1202,68 @@ contains
         ! this function tests the subroutine that constructs the level-shifted diagonal 
         ! preconditioner
         !
-        use opentrustregion, only: level_shifted_diag_precond
+        use opentrustregion, only: solver_settings_type, level_shifted_diag_precond
 
-        real(rp) :: residual(3), h_diag(3), precond_residual(3)
+        real(rp) :: vector(3), mu, h_diag(3), precond_vector(3)
+        type(solver_settings_type) :: settings
+        integer(ip) :: error
 
         ! assume tests pass
         test_level_shifted_diag_precond = .true.
 
+        ! setup settings object
+        call setup_settings(settings)
+
         ! initialize quantities
-        residual = [1.0_rp, 1.0_rp, 1.0_rp]
+        vector = [1.0_rp, 1.0_rp, 1.0_rp]
+        mu = -2.0_rp
         h_diag = [-2.0_rp, 1.0_rp, 2.0_rp]
 
         ! call subroutine and check if results match
-        call level_shifted_diag_precond(residual, -2.0_rp, h_diag, precond_residual)
-        if (any(abs(precond_residual - [1e10_rp, 1.0_rp / 3, 0.25_rp]) > tol)) then
+        call level_shifted_diag_precond(vector, mu, h_diag, precond_vector, settings, &
+                                        error)
+        if (error /= 0) then
             write (stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
-                "preconditioned residual not correct."
+                "error for default preconditioner."
+            test_level_shifted_diag_precond = .false.
+        end if
+        if (any(abs(precond_vector - [1e10_rp, 1.0_rp / 3, 0.25_rp]) > tol)) then
+            write (stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
+                "preconditioned vector not correct for default preconditioner."
+            test_level_shifted_diag_precond = .false.
+        end if
+
+        ! test custum projector
+        settings%project => mock_project
+
+        ! call subroutine and check if results match
+        call level_shifted_diag_precond(vector, mu, h_diag, precond_vector, settings, &
+                                        error)
+        if (error /= 0) then
+            write (stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
+                "error for custom projection function."
+            test_level_shifted_diag_precond = .false.
+        end if
+        if (any(abs(precond_vector - [2e10_rp, 2.0_rp / 3, 0.5_rp]) > tol)) then
+            write (stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
+                "preconditioned vector not correct for custom projection function."
+            test_level_shifted_diag_precond = .false.
+        end if
+
+        ! test custom preconditioner
+        settings%precond => mock_precond
+
+        ! call subroutine and check if results match
+        call level_shifted_diag_precond(vector, mu, h_diag, precond_vector, settings, &
+                                        error)
+        if (error /= 0) then
+            write (stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
+                "error for custom preconditioner."
+            test_level_shifted_diag_precond = .false.
+        end if
+        if (any(abs(precond_vector - [-2.0_rp, -2.0_rp, -2.0_rp]) > tol)) then
+            write (stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
+                "preconditioned vector not correct for custom preconditioner."
             test_level_shifted_diag_precond = .false.
         end if
 
@@ -1193,22 +1274,64 @@ contains
         ! this function tests the subroutine that constructs the absolute diagonal 
         ! preconditioner
         !
-        use opentrustregion, only: abs_diag_precond
+        use opentrustregion, only: solver_settings_type, abs_diag_precond
 
-        real(rp) :: residual(3), h_diag(3), precond_residual(3)
+        real(rp) :: vector(3), h_diag(3), precond_vector(3)
+        type(solver_settings_type) :: settings
+        integer(ip) :: error
 
         ! assume tests pass
         test_abs_diag_precond = .true.
 
+        ! setup settings object
+        call setup_settings(settings)
+
         ! initialize quantities
-        residual = [1.0_rp, 1.0_rp, 1.0_rp]
+        vector = [1.0_rp, 1.0_rp, 1.0_rp]
         h_diag = [-2.0_rp, 0.0_rp, 2.0_rp]
 
         ! call subroutine and check if results match
-        call abs_diag_precond(residual, h_diag, precond_residual)
-        if (any(abs(precond_residual - [0.5_rp, 1e10_rp, 0.5_rp]) > tol)) then
+        call abs_diag_precond(vector, h_diag, precond_vector, settings, error)
+        if (error /= 0) then
+            write (stderr, *) "test_abs_diag_precond failed: Returned error for "// &
+                "default preconditioner."
+            test_abs_diag_precond = .false.
+        end if
+        if (any(abs(precond_vector - [0.5_rp, 1e10_rp, 0.5_rp]) > tol)) then
             write (stderr, *) "test_abs_diag_precond failed: Returned "// &
-                "preconditioned residual not correct."
+                "preconditioned vector not correct for default preconditioner."
+            test_abs_diag_precond = .false.
+        end if
+
+        ! test custum projector
+        settings%project => mock_project
+
+        ! call subroutine and check if results match
+        call abs_diag_precond(vector, h_diag, precond_vector, settings, error)
+        if (error /= 0) then
+            write (stderr, *) "test_abs_diag_precond failed: Returned error for "// &
+                "custom projector."
+            test_abs_diag_precond = .false.
+        end if
+        if (any(abs(precond_vector - [1.0_rp, 2e10_rp, 1.0_rp]) > tol)) then
+            write (stderr, *) "test_abs_diag_precond failed: Returned "// &
+                "preconditioned vector not correct for custom projector."
+            test_abs_diag_precond = .false.
+        end if
+
+        ! test custom preconditioner
+        settings%precond => mock_precond
+
+        ! call subroutine and check if results match
+        call abs_diag_precond(vector, h_diag, precond_vector, settings, error)
+        if (error /= 0) then
+            write (stderr, *) "test_abs_diag_precond failed: Returned error for "// &
+                "custom preconditioner."
+            test_abs_diag_precond = .false.
+        end if
+        if (any(abs(precond_vector - [0.0_rp, 0.0_rp, 0.0_rp]) > tol)) then
+            write (stderr, *) "test_abs_diag_precond failed: Returned "// &
+                "preconditioned vector not correct for custom preconditioner."
             test_abs_diag_precond = .false.
         end if
 
@@ -1405,6 +1528,9 @@ contains
                 "optional arguments not correct."
             test_print_results = .false.
         end if
+
+        ! reset log message
+        log_message = ""
 
         ! print row of results table with optional arguments
         call settings%print_results(1_ip, 2.0_rp, 3.0_rp, 4.0_rp, 5_ip, 6_ip, 7.0_rp, &
@@ -1608,7 +1734,8 @@ contains
         ! this function tests the subroutine which performs a sanity check for the 
         ! solver
         !
-        use opentrustregion, only: solver_settings_type, solver_sanity_check
+        use opentrustregion, only: solver_settings_type, solver_sanity_check, &
+                                   project_warning_msg
 
         type(solver_settings_type) :: settings
         real(rp) :: grad(3)
@@ -1651,7 +1778,7 @@ contains
         call solver_sanity_check(settings, 3_ip, grad, error)
         if (settings%n_random_trial_vectors /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: Number of random "// &
-                "trial not correctly set."
+                "trial vectors not correctly set."
             test_solver_sanity_check = .false.
         end if
 
@@ -1699,6 +1826,19 @@ contains
             test_solver_sanity_check = .false.
         end if
 
+        ! reset log message
+        log_message = ""
+
+        ! check if preconditioner and projector are correctly checked
+        settings%subsystem_solver = "davidson"
+        settings%project => mock_project
+        call solver_sanity_check(settings, 3_ip, grad, error)
+        if (adjustl(log_message) /= project_warning_msg) then
+            write(stderr, *) "test_solver_sanity_check failed: Warning message "// &
+                "not correctly printed when custom projecting function is set."
+            test_solver_sanity_check = .false.
+        end if
+
     end function test_solver_sanity_check
 
     logical(c_bool) function test_stability_sanity_check() bind(C)
@@ -1706,7 +1846,8 @@ contains
         ! this function tests the subroutine which performs a sanity check for the 
         ! stability check
         !
-        use opentrustregion, only: stability_settings_type, stability_sanity_check
+        use opentrustregion, only: stability_settings_type, stability_sanity_check, &
+                                   project_warning_msg
 
         type(stability_settings_type) :: settings
         integer(ip) :: error
@@ -1746,6 +1887,19 @@ contains
         if (error == 0) then
             write(stderr, *) "test_stability_sanity_check failed: Error not thrown "// &
                 "for unknown diagonalization solver."
+            test_stability_sanity_check = .false.
+        end if
+
+        ! reset log message
+        log_message = ""
+
+        ! check if preconditioner and projector are correctly checked
+        settings%diag_solver = "davidson"
+        settings%project => mock_project
+        call stability_sanity_check(settings, 3_ip, error)
+        if (adjustl(log_message) /= project_warning_msg) then
+            write(stderr, *) "test_stability_sanity_check failed: Warning message "// &
+                "not correctly printed when custom projecting function is set."
             test_stability_sanity_check = .false.
         end if
 

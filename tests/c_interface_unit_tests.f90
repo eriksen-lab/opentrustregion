@@ -8,8 +8,8 @@ module c_interface_unit_tests
 
     use opentrustregion, only: rp, ip, stderr
     use c_interface, only: c_rp, c_ip, update_orbs_c_type, hess_x_c_type, &
-                           obj_func_c_type, precond_c_type, conv_check_c_type, &
-                           logger_c_type
+                           obj_func_c_type, precond_c_type, project_c_type, &
+                           conv_check_c_type, logger_c_type
     use test_reference, only: tol, tol_c, n_param, n_param_c
     use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_loc, c_funptr, c_funloc, &
                                            c_char, c_associated, c_null_ptr, c_null_char
@@ -24,6 +24,7 @@ module c_interface_unit_tests
     procedure(hess_x_c_type), pointer :: mock_hess_x_ptr => mock_hess_x
     procedure(obj_func_c_type), pointer ::  mock_obj_func_ptr => mock_obj_func
     procedure(precond_c_type), pointer ::  mock_precond_ptr => mock_precond
+    procedure(project_c_type), pointer ::  mock_project_ptr => mock_project
     procedure(conv_check_c_type), pointer ::  mock_conv_check_ptr => mock_conv_check
     procedure(logger_c_type), pointer ::  mock_logger_ptr => mock_logger
 
@@ -94,6 +95,19 @@ contains
 
     end function mock_precond
 
+    function mock_project(vector) result(error) bind(C)
+        !
+        ! this function is a test function for the C projection function
+        !
+        real(c_rp), intent(inout), target :: vector(*)
+        integer(c_ip) :: error
+
+        vector(:n_param) = 2 * vector(:n_param)
+
+        error = 0
+
+    end function mock_project
+
     function mock_conv_check(converged) result(error) bind(C)
         !
         ! this function is a test function for the convergence check function
@@ -144,6 +158,7 @@ contains
         ! associate optional settings with values
         settings = ref_settings
         settings%precond = c_funloc(mock_precond)
+        settings%project = c_funloc(mock_project)
         settings%conv_check = c_funloc(mock_conv_check)
         settings%logger = c_funloc(mock_logger)
 
@@ -206,6 +221,7 @@ contains
         ! associate optional arguments with values
         settings = ref_settings
         settings%precond = c_funloc(mock_precond)
+        settings%project = c_funloc(mock_project)
         settings%logger = c_funloc(mock_logger)
 
         ! unassociate returned direction pointer
@@ -370,6 +386,28 @@ contains
 
     end function test_precond_f_wrapper
 
+    logical(c_bool) function test_project_f_wrapper() bind(C)
+        !
+        ! this function tests the Fortran wrapper for the projection function
+        !
+        use opentrustregion, only: project_type
+        use c_interface, only: project_before_wrapping, project_f_wrapper
+        use test_reference, only: test_project_funptr
+
+        procedure(project_type), pointer :: project_funptr
+
+        ! inject mock function
+        project_before_wrapping => mock_project
+
+        ! get pointer to subroutine
+        project_funptr => project_f_wrapper
+
+        ! test projection wrapper
+        test_project_f_wrapper = test_project_funptr(project_funptr, &
+                                                     "project_f_wrapper", "")
+
+    end function test_project_f_wrapper
+
     logical(c_bool) function test_conv_check_f_wrapper() bind(C)
         !
         ! this function tests the Fortran wrapper for the convergence check function
@@ -435,8 +473,8 @@ contains
         call init_solver_settings_c(settings)
 
         ! check function pointers
-        if (c_associated(settings%precond) .or. c_associated(settings%conv_check) .or. &
-            c_associated(settings%logger)) then
+        if (c_associated(settings%precond) .or. c_associated(settings%project) .or. &
+            c_associated(settings%conv_check) .or. c_associated(settings%logger)) then
             write (stderr, *) "test_init_solver_settings_c failed: Function "// &
                 "pointers should not be initialized."
             test_init_solver_settings_c = .false.
@@ -469,7 +507,8 @@ contains
         call init_stability_settings_c(settings)
 
         ! check function pointers
-        if (c_associated(settings%precond) .or. c_associated(settings%logger)) then
+        if (c_associated(settings%precond) .or. c_associated(settings%project) .or. &
+            c_associated(settings%logger)) then
             write (stderr, *) "test_init_stability_settings_c failed: Function "// &
                 "pointers should not be initialized."
             test_init_stability_settings_c = .false.
@@ -491,13 +530,12 @@ contains
         !
         use c_interface, only: solver_settings_type_c, assignment(=)
         use opentrustregion, only: solver_settings_type
-        use test_reference, only: assignment(=), ref_settings, operator(/=)
+        use test_reference, only: assignment(=), ref_settings, test_precond_funptr, &
+                                  test_project_funptr, test_conv_check_funptr, &
+                                  operator(/=)
 
         type(solver_settings_type_c) :: settings_c
         type(solver_settings_type) :: settings
-        real(rp), allocatable :: residual(:), precond_residual(:)
-        integer(ip) :: error
-        logical :: converged
 
         ! assume test passes
         test_assign_solver_f_c = .true.
@@ -505,6 +543,7 @@ contains
         ! initialize the C settings with custom values
         settings_c = ref_settings
         settings_c%precond = c_funloc(mock_precond)
+        settings_c%project = c_funloc(mock_project)
         settings_c%conv_check = c_funloc(mock_conv_check)
         settings_c%logger = c_funloc(mock_logger)
 
@@ -517,20 +556,20 @@ contains
             write (stderr, *) "test_assign_solver_f_c failed: Preconditioner "// &
                 "function not associated with value."
         else
-            allocate(residual(n_param), precond_residual(n_param))
-            residual = 1.0_rp
-            call settings%precond(residual, 5.0_rp, precond_residual, error)
-            if (error /= 0) then
-                test_assign_solver_f_c = .false.
-                write (stderr, *) "test_assign_solver_f_c failed: Preconditioner "// &
-                    "function produced error."
-            end if
-            if (any(abs(precond_residual - 5.0_rp) > tol)) then
-                test_assign_solver_f_c = .false.
-                write (stderr, *) "test_assign_solver_f_c failed: Returned "// &
-                    "preconditioner of preconditioner function wrong."
-            end if
-            deallocate(residual, precond_residual)
+            test_assign_solver_f_c = test_assign_solver_f_c .and. &
+                test_precond_funptr(settings%precond, "assign_solver_f_c", &
+                                    " by preconditioner function")
+        end if
+
+        ! check projection function
+        if (.not. associated(settings%project)) then
+            test_assign_solver_f_c = .false.
+            write (stderr, *) "test_assign_solver_f_c failed: Projection function "// &
+                "not associated with value."
+        else
+            test_assign_solver_f_c = test_assign_solver_f_c .and. &
+                test_project_funptr(settings%project, "assign_solver_f_c", &
+                                    " by projection function")
         end if
 
         ! check convergence check
@@ -539,17 +578,9 @@ contains
             write (stderr, *) "test_assign_solver_f_c failed: Convergence check "// &
                 "function not associated with value."
         else
-            converged = settings%conv_check(error)
-            if (error /= 0) then
-                test_assign_solver_f_c = .false.
-                write (stderr, *) "test_assign_solver_f_c failed: Convergence "// &
-                    "check function produced error."
-            end if
-            if (.not. converged) then
-                test_assign_solver_f_c = .false.
-                write (stderr, *) "test_assign_solver_f_c failed: Returned "// &
-                    "convergence logical of convergence check function wrong."
-            end if
+            test_assign_solver_f_c = test_assign_solver_f_c .and. &
+                test_conv_check_funptr(settings%conv_check, "assign_solver_f_c", &
+                                       " by convergence check function")
         end if
 
         ! check logging function
@@ -590,12 +621,11 @@ contains
         !
         use c_interface, only: stability_settings_type_c, assignment(=)
         use opentrustregion, only: stability_settings_type
-        use test_reference, only: assignment(=), ref_settings, operator(/=)
+        use test_reference, only: assignment(=), ref_settings, test_precond_funptr, &
+                                  test_project_funptr, operator(/=)
 
         type(stability_settings_type_c) :: settings_c
         type(stability_settings_type)   :: settings
-        real(rp), allocatable :: residual(:), precond_residual(:)
-        integer(ip) :: error
 
         ! assume test passes
         test_assign_stability_f_c = .true.
@@ -603,6 +633,7 @@ contains
         ! initialize the C settings with custom values
         settings_c = ref_settings
         settings_c%precond = c_funloc(mock_precond)
+        settings_c%project = c_funloc(mock_project)
         settings_c%logger  = c_funloc(mock_logger)
 
         ! convert to Fortran settings
@@ -612,29 +643,29 @@ contains
         if (.not. associated(settings%precond)) then
             test_assign_stability_f_c = .false.
             write (stderr, *) "test_assign_stability_f_c failed: Preconditioner "// &
-                "function not associated."
+                "function not associated with value."
         else
-            allocate(residual(n_param), precond_residual(n_param))
-            residual = 1.0_rp
-            call settings%precond(residual, 5.0_rp, precond_residual, error)
-            if (error /= 0) then
-                test_assign_stability_f_c = .false.
-                write (stderr, *) "test_assign_stability_f_c failed: "// &
-                    "Preconditioner function produced error."
-            end if
-            if (any(abs(precond_residual - 5.0_rp) > tol)) then
-                test_assign_stability_f_c = .false.
-                write (stderr, *) "test_assign_stability_f_c failed: Returned "// &
-                    "preconditioner output wrong."
-            end if
-            deallocate(residual, precond_residual)
+            test_assign_stability_f_c = test_assign_stability_f_c .and. &
+                test_precond_funptr(settings%precond, "assign_stability_f_c", &
+                                    " by preconditioner function")
+        end if
+
+        ! check projection function
+        if (.not. associated(settings%project)) then
+            test_assign_stability_f_c = .false.
+            write (stderr, *) "test_assign_stability_f_c failed: Projection "// &
+                "function not associated with value."
+        else
+            test_assign_stability_f_c = test_assign_stability_f_c .and. &
+            test_project_funptr(settings%project, "assign_stability_f_c", &
+                                " by projection function")
         end if
 
         ! check logging function
         if (.not. associated(settings%logger)) then
             test_assign_stability_f_c = .false.
             write (stderr, *) "test_assign_stability_f_c failed: Logging function "// &
-                "not associated."
+                "not associated with value."
         else
             test_logger = .true.
             call settings%logger("stability test")
@@ -688,6 +719,11 @@ contains
             write (stderr, *) "test_assign_solver_c_f failed: Preconditioner "// &
                 "function associated."
         end if
+        if (c_associated(settings_c%project)) then
+            test_assign_solver_c_f = .false.
+            write (stderr, *) "test_assign_solver_c_f failed: Projection function "// &
+                "associated."
+        end if
         if (c_associated(settings_c%conv_check)) then
             test_assign_solver_c_f = .false.
             write (stderr, *) "test_assign_solver_c_f failed: Convergence check "// &
@@ -740,6 +776,11 @@ contains
         if (c_associated(settings_c%precond)) then
             test_assign_stability_c_f = .false.
             write (stderr, *) "test_assign_stability_c_f failed: Preconditioner "// &
+                "function associated."
+        end if
+        if (c_associated(settings_c%project)) then
+            test_assign_stability_c_f = .false.
+            write (stderr, *) "test_assign_stability_c_f failed: Projection "// &
                 "function associated."
         end if
         if (c_associated(settings_c%logger)) then
