@@ -198,6 +198,16 @@ if (${otr}_BUILD_TESTING)
                 ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT ${test_component} # static libraries (.a)
         )
     endif()
+
+    # pure-C system test that compiles against include/opentrustregion.h. This
+    # is the only build target that exercises the public C header directly,
+    # and so the only one that catches drift between the Fortran bind(C) types
+    # and the hand-maintained C struct declarations.
+    enable_testing()
+    add_executable(c_system_test tests/c_system_test.c)
+    target_link_libraries(c_system_test PRIVATE opentrustregion)
+    target_link_libraries(c_system_test PRIVATE m)
+    add_test(NAME c_system_test COMMAND c_system_test)
 endif()
 
 # create targets file in the build tree for build-tree usage

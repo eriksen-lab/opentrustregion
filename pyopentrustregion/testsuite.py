@@ -565,5 +565,184 @@ class SystemTests(unittest.TestCase):
         return super().setUpClass()
 
 
+@unittest.skipUnless(NUMPY_AVAILABLE, "NumPy not available.")
+class PySystemTests(unittest.TestCase):
+    """
+    end-to-end system tests that drive the real pyopentrustregion.solver and
+    stability_check wrappers (not the mock library) against the Hartmann 6D
+    problem. This is the only test path that exercises the full Python public
+    API on a real numerical workload.
+    """
+
+    # Hartmann 6D parameters (mirrors tests/opentrustregion_unit_tests.f90)
+    alpha = np.array([1.0, 1.2, 3.0, 3.2])
+    A = np.array(
+        [
+            [10.0,  3.0, 17.0,  3.5,  1.7,  8.0],
+            [ 0.05, 10.0, 17.0,  0.1,  8.0, 14.0],
+            [ 3.0,  3.5,  1.7, 10.0, 17.0,  8.0],
+            [17.0,  8.0,  0.05, 10.0,  0.1, 14.0],
+        ]
+    )
+    P = np.array(
+        [
+            [0.1312, 0.1696, 0.5569, 0.0124, 0.8283, 0.5886],
+            [0.2329, 0.4135, 0.8307, 0.3736, 0.1004, 0.9991],
+            [0.2348, 0.1451, 0.3522, 0.2883, 0.3047, 0.6650],
+            [0.4047, 0.8828, 0.8732, 0.5743, 0.1091, 0.0381],
+        ]
+    )
+    minimum1 = np.array(
+        [0.20168951, 0.15001069, 0.47687398,
+         0.27533243, 0.31165162, 0.65730053]
+    )
+    minimum2 = np.array(
+        [0.40465313, 0.88244493, 0.84610160,
+         0.57398969, 0.13892673, 0.03849589]
+    )
+    saddle_point = np.array(
+        [0.35278250, 0.59374767, 0.47631257,
+         0.40058250, 0.31111531, 0.32397158]
+    )
+    n_param = 6
+
+    @classmethod
+    def setUpClass(cls):
+        print(50 * "-")
+        print("Running system tests for Python interface...")
+        print(50 * "-")
+        return super().setUpClass()
+
+    # ---- Hartmann 6D primitives shared by the callbacks ------------------
+
+    @classmethod
+    def _exp_terms(cls, x):
+        return np.exp(-np.sum(cls.A * (x - cls.P) ** 2, axis=1))
+
+    @classmethod
+    def _func(cls, x):
+        return -np.dot(cls.alpha, cls._exp_terms(x))
+
+    @classmethod
+    def _grad(cls, x):
+        e = cls._exp_terms(x)
+        return np.array(
+            [np.sum(2.0 * cls.alpha * cls.A[:, j] * (x[j] - cls.P[:, j]) * e)
+             for j in range(cls.n_param)]
+        )
+
+    @classmethod
+    def _hess(cls, x):
+        e = cls._exp_terms(x)
+        H = np.zeros((cls.n_param, cls.n_param))
+        for i in range(cls.n_param):
+            H[i, i] = 2.0 * np.sum(
+                cls.alpha * cls.A[:, i] * e
+                * (1.0 - 2.0 * cls.A[:, i] * (x[i] - cls.P[:, i]) ** 2)
+            )
+            for j in range(i):
+                H[i, j] = -4.0 * np.sum(
+                    cls.alpha * cls.A[:, i] * cls.A[:, j]
+                    * (x[i] - cls.P[:, i]) * (x[j] - cls.P[:, j]) * e
+                )
+                H[j, i] = H[i, j]
+        return H
+
+    # ---- Tests -----------------------------------------------------------
+
+    def test_solver_py_system(self):
+        """drive solver() end-to-end on Hartmann 6D from two starting points"""
+        # mutable closure state, mirroring the curr_vars module global on the
+        # Fortran side
+        state = {"curr": np.array([0.20, 0.15, 0.48, 0.28, 0.31, 0.66]),
+                 "hess": None,
+                 "logger_called": False}
+
+        def update_orbs(delta_vars, grad, h_diag):
+            state["curr"] = state["curr"] + delta_vars
+            x = state["curr"]
+            state["hess"] = self._hess(x)
+            grad[:] = self._grad(x)
+            h_diag[:] = np.diag(state["hess"])
+
+            def hess_x(v, hv):
+                hv[:] = state["hess"] @ v
+
+            return self._func(x), hess_x
+
+        def obj_func(delta_vars):
+            return self._func(state["curr"] + delta_vars)
+
+        def precond(residual, mu, out):
+            # identity preconditioner; exercises the callback without
+            # producing a zero vector when mu=0 (which would trip the
+            # Gram-Schmidt zero-vector guard)
+            out[:] = residual
+
+        def logger(msg):
+            state["logger_called"] = True
+
+        settings = SolverSettings()
+        settings.precond = precond
+        settings.logger = logger
+        settings.verbose = 3  # ensure logger is exercised
+
+        solver(obj_func, update_orbs, self.n_param, settings)
+        self.assertTrue(
+            np.allclose(state["curr"], self.minimum1, atol=1e-4),
+            f"did not converge to minimum1: got {state['curr']}",
+        )
+        self.assertTrue(state["logger_called"], "logger was never called")
+
+        # restart near the saddle - solver must still reach a known minimum
+        state["curr"] = np.array([0.35, 0.59, 0.48, 0.40, 0.31, 0.32])
+        solver(obj_func, update_orbs, self.n_param, settings)
+        reached_min = (
+            np.allclose(state["curr"], self.minimum1, atol=1e-4)
+            or np.allclose(state["curr"], self.minimum2, atol=1e-4)
+        )
+        self.assertTrue(
+            reached_min, f"solver from saddle did not reach a minimum: got {state['curr']}"
+        )
+        print(" test_solver_py_system PASSED")
+
+    def test_stability_check_py_system(self):
+        """drive stability_check() end-to-end at a minimum and at a saddle"""
+        # at the minimum: must be reported stable
+        H = self._hess(self.minimum1)
+        h_diag = np.diag(H).copy()
+
+        def hess_x(v, hv):
+            hv[:] = H @ v
+
+        settings = StabilitySettings()
+        kappa = np.zeros(self.n_param)
+        stable = stability_check(h_diag, hess_x, self.n_param, settings, kappa=kappa)
+        self.assertTrue(stable, "minimum1 was reported unstable")
+
+        # at the saddle: must be reported unstable, descent direction parallel
+        # to the known negative-curvature eigenvector
+        H = self._hess(self.saddle_point)
+        h_diag = np.diag(H).copy()
+
+        def hess_x_saddle(v, hv):
+            hv[:] = H @ v
+
+        kappa = np.zeros(self.n_param)
+        stable = stability_check(
+            h_diag, hess_x_saddle, self.n_param, settings, kappa=kappa
+        )
+        self.assertFalse(stable, "saddle_point was reported stable")
+        ref = np.array(
+            [-0.173375920238, -0.518489821791, -6.432848975252e-3,
+             -0.340127852882,  3.066460316955e-3, 0.765095650196]
+        )
+        self.assertAlmostEqual(
+            abs(np.dot(kappa, ref)), 1.0, places=6,
+            msg="descent direction does not match the known eigenvector",
+        )
+        print(" test_stability_check_py_system PASSED")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=0)
