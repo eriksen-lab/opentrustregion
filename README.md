@@ -51,8 +51,10 @@ The build process can be customized using the following CMake options:
 | **OpenTrustRegion_INSTALL_CMAKEDIR** | `STRING` | (auto) | Project install directory. |
 | **CMAKE_BUILD_TYPE** | `STRING` | `Release` | Choose the build type (`Debug`, `Release`, etc.). |
 | **INTEGER_SIZE** | `STRING` | *(auto)* | Set the integer precision to `4` (32-bit) or `8` (64-bit). Required when providing custom BLAS/LAPACK libraries. Otherwise defaults to 32-bit integers and tries to locate compatible BLAS and LAPACK libraries. Falls back to 64-bit integers if 32-bit libraries cannot be found. The resulting library name reflects the chosen integer precision (`libopentrustregion_32.*` or `libopentrustregion_64.*`) |
-| **BLAS_LIBRARIES** | `PATH` | *(auto)* | Path(s) to BLAS libraries. If not provided, CMake attempts to locate a suitable BLAS automatically. |
-| **LAPACK_LIBRARIES** | `PATH` | *(auto)* | Path(s) to LAPACK libraries. If not provided, CMake attempts to locate a suitable LAPACK automatically. |
+| **BLAS_LIBRARIES** | `PATH` | *(auto)* | Path(s) to BLAS libraries. If not provided, CMake attempts to locate a suitable BLAS automatically. Ignored when `OPENTRUSTREGION_USE_INTERNAL_BLAS=ON`. |
+| **LAPACK_LIBRARIES** | `PATH` | *(auto)* | Path(s) to LAPACK libraries. If not provided, CMake attempts to locate a suitable LAPACK automatically. Ignored when `OPENTRUSTREGION_USE_INTERNAL_BLAS=ON`. |
+| **OPENTRUSTREGION_PRECISION** | `STRING` | `double` | Working real precision: `double` (IEEE 754 binary64) or `quad` (IEEE 754 binary128). Quad-precision builds use the internal BLAS/LAPACK shim and currently require gfortran. The library name reflects the precision (`libopentrustregion_32q.*` or `libopentrustregion_64q.*` for quad). |
+| **OPENTRUSTREGION_USE_INTERNAL_BLAS** | `BOOL` | *(auto)* | Use the internal BLAS/LAPACK shim instead of an external library. Defaults to `OFF` for `double` precision and `ON` (and required) for `quad`. Setting this to `ON` for double-precision builds produces a portable binary with no external BLAS/LAPACK dependency. |
 
 ## Usage
 
