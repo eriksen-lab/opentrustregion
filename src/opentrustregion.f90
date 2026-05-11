@@ -1005,24 +1005,22 @@ contains
         real(rp), allocatable, intent(inout) :: matrix(:, :)
         real(rp), intent(in) :: vector(:)
 
-        real(rp), allocatable :: temp(:, :)
+        real(rp), allocatable :: new_matrix(:, :)
+        integer(ip) :: nrows, ncols
 
-        ! copy data
-        temp = matrix
+        nrows = size(matrix, 1, kind=ip)
+        ncols = size(matrix, 2, kind=ip)
 
-        ! reallocate matrix
-        deallocate(matrix)
-        allocate(matrix(size(temp, 1) + 1, size(temp, 2) + 1))
-
-        ! copy data back
-        matrix(:size(temp, 1), :size(temp, 2)) = temp
+        ! allocate the larger matrix and copy existing contents only once
+        allocate(new_matrix(nrows + 1, ncols + 1))
+        new_matrix(:nrows, :ncols) = matrix
 
         ! add new row and column
-        matrix(:, size(temp, 2) + 1) = vector
-        matrix(size(temp, 1) + 1, :) = vector
+        new_matrix(:, ncols + 1) = vector
+        new_matrix(nrows + 1, :) = vector
 
-        ! deallocate temporary array
-        deallocate(temp)
+        ! transfer allocation back into matrix; old storage is freed by move_alloc
+        call move_alloc(new_matrix, matrix)
 
     end subroutine extend_symm_matrix
 
@@ -1033,23 +1031,21 @@ contains
         real(rp), allocatable, intent(inout) :: matrix(:, :)
         real(rp), intent(in) :: new_col(:)
 
-        real(rp), allocatable :: temp(:, :)
+        real(rp), allocatable :: new_matrix(:, :)
+        integer(ip) :: nrows, ncols
 
-        ! copy data
-        temp = matrix
+        nrows = size(matrix, 1, kind=ip)
+        ncols = size(matrix, 2, kind=ip)
 
-        ! reallocate matrix
-        deallocate(matrix)
-        allocate(matrix(size(temp, 1), size(temp, 2) + 1))
-
-        ! copy data back
-        matrix(:, :size(temp, 2)) = temp
+        ! allocate the wider matrix and copy existing contents only once
+        allocate(new_matrix(nrows, ncols + 1))
+        new_matrix(:, :ncols) = matrix
 
         ! add new column
-        matrix(:, size(temp, 2) + 1) = new_col
+        new_matrix(:, ncols + 1) = new_col
 
-        ! deallocate temporary array
-        deallocate(temp)
+        ! transfer allocation back into matrix; old storage is freed by move_alloc
+        call move_alloc(new_matrix, matrix)
 
     end subroutine add_column
 
