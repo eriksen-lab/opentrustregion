@@ -13,4 +13,4 @@ dependencies = ["numpy"]
 "pyopentrustregion" = ["test_data/*"]
 
 [tool.setuptools.packages.find]
-exclude = ["test_data"]
+include = ["pyopentrustregion*"]
