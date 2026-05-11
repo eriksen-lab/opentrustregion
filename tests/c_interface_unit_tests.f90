@@ -187,9 +187,7 @@ contains
         ! check if test has passed
         test_solver_c_wrapper = test_solver_c_wrapper .and. test_passed
 
-        ! restore the procedure pointer so later tests (notably the Python
-        ! system test that drives the real solver via the C ABI) do not
-        ! inherit the mock
+        ! restore the procedure pointer so later tests do not inherit the mock
         solver => standard_solver
 
     end function test_solver_c_wrapper

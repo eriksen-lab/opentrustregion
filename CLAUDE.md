@@ -10,15 +10,16 @@ OpenTrustRegion is a Fortran library implementing second-order trust region orbi
 
 **Clarity over performance.** The library is not on the performance hot path of a quantum-chemistry calculation — the host program's integral transforms and Hessian-vector products dominate. Prefer code that is short and obviously correct over code that is fast. Don't propose performance refactors (amortized buffer growth, pooling, micro-optimizations) unless there is evidence the affected code is hot for a real workload.
 
-**Fortran/C/Python interfaces must always be consistent.** The same callback signatures, settings fields, and default values are described in five places that must agree:
+**Fortran/C/Python interfaces must always be consistent.** The same callback signatures, settings fields, and default values are described in six places that must agree:
 
 1. Fortran abstract interfaces and `solver_settings_type` / `stability_settings_type` in `src/opentrustregion.f90`
-2. `bind(C)` `solver_settings_type_c` / `stability_settings_type_c` and the C abstract interfaces in `src/c_interface.f90`
+2. C abstract interfaces and `bind(C)` `solver_settings_type_c` / `stability_settings_type_c in `src/c_interface.f90` 
 3. C struct layouts and typedefs in `include/opentrustregion.h`
 4. `SolverSettingsC` / `StabilitySettingsC` ctypes `_fields_` and `CFUNCTYPE` declarations in `pyopentrustregion/python_interface.py`
 5. `default_solver_settings` / `default_stability_settings` (Fortran) ↔ `solver_settings_init` / `stability_settings_init` (C) ↔ the Python `Settings` wrapper defaults
+6. The argument lists and snippets in `README.md`
 
-Any change to a callback signature, a settings field (add / remove / reorder), or a default value must land in all five locations in the same PR. The testsuite drives Fortran from Python and never exercises the standalone C header, so a header drift can be invisible to CI — review explicitly. Same rule for the error-origin codes (`error_obj_func` etc. in `opentrustregion.f90`) and the README error-code table.
+Any change to a callback signature, a settings field (add / remove / reorder), or a default value must land in all six locations in the same PR. Additionally, the error-origin codes (`error_obj_func` etc. in `opentrustregion.f90`) must be synchronized with the README error-code table.
 
 ## Build & test
 
@@ -47,7 +48,7 @@ python3 -m unittest pyopentrustregion.testsuite.SystemTests
 python3 -m unittest pyopentrustregion.testsuite.OpenTrustRegionUnitTests.test_solver
 ```
 
-The Python suite both runs Fortran-side tests (via symbols dynamically loaded from `libotrtestsuite`) and pure-Python wrapper tests. System tests need `pyopentrustregion/test_data/*.bin`.
+The Python suite runs Fortran- and C-side tests (via symbols dynamically loaded from `libotrtestsuite`) and pure-Python wrapper tests. System tests need `pyopentrustregion/test_data/*.bin`.
 
 ### CMake options that matter
 
@@ -66,8 +67,9 @@ The Python suite both runs Fortran-side tests (via symbols dynamically loaded fr
 - `pyopentrustregion/python_interface.py` — ctypes wrapper. Defines `SolverSettings` / `StabilitySettings` as `ctypes.Structure` mirrors of the C structs, wraps Python callbacks with `CFUNCTYPE`, and converts the integer error codes returned by the C entry points into `RuntimeError`.
 - `tests/` — three layers:
   - `opentrustregion_unit_tests.f90` / `c_interface_unit_tests.f90` — unit tests against the Fortran and C interfaces respectively, both built into `libotrtestsuite`.
-  - `opentrustregion_system_tests.f90` — system tests using reference binary inputs from `pyopentrustregion/test_data/`.
-  - `*_mock.f90` — mock callbacks used by both unit suites.
+  - `opentrustregion_system_tests.f90` — system tests using reference binary inputs from `pyopentrustregion/test_data/`, built into `libotrtestsuite`.
+  - `c_system_tests.c` — system tests through the C interface.
+  - `*_mock.f90` — mock callbacks used by both unit test suites.
   - `test_reference.f90` — shared tolerance constants and reference values.
 
 ### Three-language interface chain
