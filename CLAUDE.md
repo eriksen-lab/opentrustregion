@@ -13,7 +13,7 @@ OpenTrustRegion is a Fortran library implementing second-order trust region orbi
 **Fortran/C/Python interfaces must always be consistent.** The same callback signatures, settings fields, and default values are described in six places that must agree:
 
 1. Fortran abstract interfaces and `solver_settings_type` / `stability_settings_type` in `src/opentrustregion.f90`
-2. C abstract interfaces and `bind(C)` `solver_settings_type_c` / `stability_settings_type_c in `src/c_interface.f90` 
+2. C abstract interfaces and `bind(C)` `solver_settings_type_c` / `stability_settings_type_c` in `src/c_interface.f90`
 3. C struct layouts and typedefs in `include/opentrustregion.h`
 4. `SolverSettingsC` / `StabilitySettingsC` ctypes `_fields_` and `CFUNCTYPE` declarations in `pyopentrustregion/python_interface.py`
 5. `default_solver_settings` / `default_stability_settings` (Fortran) ↔ `solver_settings_init` / `stability_settings_init` (C) ↔ the Python `Settings` wrapper defaults

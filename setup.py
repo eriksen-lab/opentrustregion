@@ -73,7 +73,7 @@ if os.getenv("CONDA_BUILD", "0") != "1":
         package_data_files.append(libopentrustregion_file)
 
 setup(
-    packages=find_packages(exclude=("build", "build.*")),
+    packages=find_packages(),
     include_package_data=True,
     package_data={"pyopentrustregion": package_data_files},
     cmdclass={"build_py": CMakeBuild},

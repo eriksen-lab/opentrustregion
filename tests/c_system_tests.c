@@ -180,16 +180,17 @@ static void logger(const char* message)
 // Helpers
 // ---------------------------------------------------------------------------
 
-static int near(const c_real* a, const c_real* b, c_real tol)
+// note: not named `near` because that is a legacy keyword macro on MSVC
+static int vec_close(const c_real* a, const c_real* b, c_real tol)
 {
     for (int i = 0; i < N_PARAM; i++) if (fabs(a[i] - b[i]) > tol) return 0;
     return 1;
 }
 
-static int near_either(const c_real* x, const c_real* a, const c_real* b,
-                       c_real tol)
+static int vec_close_either(const c_real* x, const c_real* a, const c_real* b,
+                            c_real tol)
 {
-    return near(x, a, tol) || near(x, b, tol);
+    return vec_close(x, a, tol) || vec_close(x, b, tol);
 }
 
 // ---------------------------------------------------------------------------
@@ -308,20 +309,20 @@ bool test_solver_c(void)
     const c_real start_near_min1[N_PARAM] = {0.20, 0.15, 0.48, 0.28, 0.31, 0.66};
     memcpy(curr_vars, start_near_min1, sizeof(curr_vars));
     c_int error = solver(update_orbs, obj_func, N_PARAM, settings);
-    if (error != 0) { fprintf(stderr, "test_solver_failed: Produced error.\n"); ok = false; }
-    if (!near(curr_vars, minimum1, 1e-4)) {
-        fprintf(stderr, "test_solver_failed: Solver did not find minimum.\n");
+    if (error != 0) { fprintf(stderr, "test_solver_c failed: Produced error.\n"); ok = false; }
+    if (!vec_close(curr_vars, minimum1, 1e-4)) {
+        fprintf(stderr, "test_solver_c failed: Solver did not find minimum.\n");
         ok = false;
     }
-    if (!logger_called) { fprintf(stderr, "test_solver_failed: Logger was not called.\n"); ok = false; }
+    if (!logger_called) { fprintf(stderr, "test_solver_c failed: Logger was not called.\n"); ok = false; }
 
     // start near a saddle so the solver has to switch to a non-Newton step
     const c_real start_near_saddle[N_PARAM] = {0.35, 0.59, 0.48, 0.40, 0.31, 0.32};
     memcpy(curr_vars, start_near_saddle, sizeof(curr_vars));
     error = solver(update_orbs, obj_func, N_PARAM, settings);
-    if (error != 0) { fprintf(stderr, "test_solver_failed: Produced error when starting near saddle.\n"); ok = false; }
-    if (!near_either(curr_vars, minimum1, minimum2, 1e-4)) {
-        fprintf(stderr, "test_solver_failed: Solver did not find minimum when starting near saddle.\n");
+    if (error != 0) { fprintf(stderr, "test_solver_c failed: Produced error when starting near saddle.\n"); ok = false; }
+    if (!vec_close_either(curr_vars, minimum1, minimum2, 1e-4)) {
+        fprintf(stderr, "test_solver_c failed: Solver did not find minimum when starting near saddle.\n");
         ok = false;
     }
 
@@ -347,15 +348,15 @@ bool test_stability_check_c(void)
     c_int error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, settings, 
                                   direction);
     if (error != 0) { 
-        fprintf(stderr, "test_stability_check failed: Produced error.\n"); 
+        fprintf(stderr, "test_stability_check_c failed: Produced error.\n"); 
         ok = false; 
     }
     if (!stable) { 
-        fprintf(stderr, "test_stability_check failed: Stability incorrectly classifies stability of minimum.\n"); 
+        fprintf(stderr, "test_stability_check_c failed: Stability incorrectly classifies stability of minimum.\n"); 
         ok = false; 
     }
     if (!logger_called) { 
-        fprintf(stderr, "test_stability_check failed: Logger was not called invoked.\n"); 
+        fprintf(stderr, "test_stability_check_c failed: Logger was not called.\n");
         ok = false; 
     }
 
@@ -367,11 +368,11 @@ bool test_stability_check_c(void)
     stable = true;
     error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, settings, direction);
     if (error != 0) { 
-        fprintf(stderr, "test_stability_check failed: Produced error near saddle.\n"); 
+        fprintf(stderr, "test_stability_check_c failed: Produced error near saddle.\n"); 
         ok = false; 
     }
     if (stable) { 
-        fprintf(stderr, "test_stability_check failed: Stability incorrectly classifies stability of saddle point.\n"); 
+        fprintf(stderr, "test_stability_check_c failed: Stability incorrectly classifies stability of saddle point.\n"); 
         ok = false; 
     }
 
@@ -384,7 +385,7 @@ bool test_stability_check_c(void)
     c_real dot = 0.0;
     for (int i = 0; i < N_PARAM; i++) dot += direction[i] * ref_direction[i];
     if (fabs(fabs(dot) - 1.0) > 1e-6) {
-        fprintf(stderr, "test_stability_check failed: Stability check does not return correct direction for saddle point.\n");
+        fprintf(stderr, "test_stability_check_c failed: Stability check does not return correct direction for saddle point.\n");
         ok = false;
     }
 
@@ -392,11 +393,11 @@ bool test_stability_check_c(void)
     stable = true;
     error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, settings, NULL);
     if (error != 0) { 
-        fprintf(stderr, "test_stability_check failed: Produced error when not passing direction.\n"); 
+        fprintf(stderr, "test_stability_check_c failed: Produced error when not passing direction.\n"); 
         ok = false; 
     }
     if (stable) { 
-        fprintf(stderr, "test_stability_check failed: Stability incorrectly classifies stability of saddle point when not passing direction.\n"); 
+        fprintf(stderr, "test_stability_check_c failed: Stability incorrectly classifies stability of saddle point when not passing direction.\n"); 
         ok = false; 
     }
 
