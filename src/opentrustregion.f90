@@ -497,7 +497,7 @@ contains
 
         ! perform sanity check
         call stability_sanity_check(settings, n_param, error)
-        call add_error_origin(error, error_solver, settings)
+        call add_error_origin(error, error_stability_check, settings)
         if (error /= 0) return
 
         ! generate trial vectors
