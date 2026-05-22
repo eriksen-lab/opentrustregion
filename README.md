@@ -9,10 +9,10 @@ This library provides a robust and flexible implementation for second-order trus
 
 The following paper documents the theory and implementation of the methodology in OpenTrustRegion, and should be cited in any work using OpenTrustRegion:  
 
-- A Reusable Library for Second-Order Orbital Optimization Using the Trust Region Method\
-  Greiner, J.; Høyvik, I.-M.; Lehtola, S.; Eriksen, J. J.\
-  [10.1021/acs.jctc.5c01576](https://doi.org/10.1021/acs.jctc.5c01576)\
-  [arXiv:2509.13931](https://arxiv.org/abs/2509.13931)
+- Greiner, J.; Høyvik, I.-M.; Lehtola, S.; Eriksen, J. J. 
+  A Reusable Library for Second-Order Orbital Optimization Using the Trust Region Method. Journal of Chemical Theory and Computation 2026, 22(2), 881–895. 
+  DOI: [10.1021/acs.jctc.5c01576](https://doi.org/10.1021/acs.jctc.5c01576). 
+  arXiv: [2509.13931](https://arxiv.org/abs/2509.13931).
 
 ## Installation
 
