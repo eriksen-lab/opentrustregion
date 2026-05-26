@@ -32,6 +32,10 @@ option(${otr}_INSTALL_TESTING_LIBRARY "Install the compiled library used for tes
 message(STATUS "Showing option ${otr}_BUILD_TESTING: ${${otr}_BUILD_TESTING}")
 message(STATUS "Showing option ${otr}_INSTALL_TESTING_LIBRARY: ${${otr}_INSTALL_TESTING_LIBRARY}")
 
+# host program provides BLAS/LAPACK (skip find/link in this project)
+option(${otr}_HOST_PROVIDES_BLAS "Host program will provide BLAS/LAPACK; skip finding/linking them" OFF)
+message(STATUS "Showing option ${otr}_HOST_PROVIDES_BLAS: ${${otr}_HOST_PROVIDES_BLAS}")
+
 # default to static libraries
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 message(STATUS "Showing option BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
@@ -62,22 +66,33 @@ set(LAPACK_LIBRARIES "" CACHE STRING "User-specified LAPACK library path(s)")
 # check if integer size is provided
 if(INTEGER_SIZE)
     set(BLA_SIZEOF_INTEGER ${INTEGER_SIZE} CACHE INTERNAL "BLAS/LAPACK integer size")
-    if(BLAS_LIBRARIES)
-        message(STATUS "Using user-specified BLAS")
+    if(NOT ${otr}_HOST_PROVIDES_BLAS)
+        if(BLAS_LIBRARIES)
+            message(STATUS "Using user-specified BLAS")
+        else()
+            find_package(BLAS REQUIRED)
+        endif()
+        if(LAPACK_LIBRARIES)
+            message(STATUS "Using user-specified LAPACK")
+        else()
+            find_package(LAPACK REQUIRED)
+        endif()
     else()
-        find_package(BLAS REQUIRED)
-    endif()
-    if(LAPACK_LIBRARIES)
-        message(STATUS "Using user-specified LAPACK")
-    else()
-        find_package(LAPACK REQUIRED)
+        message(STATUS 
+            "Host will provide BLAS/LAPACK; skipping finding and linking these libraries "
+            "and building testsuite since tests require BLAS at build/link time"
+        )
     endif()
 else()
     if(BLAS_LIBRARIES OR LAPACK_LIBRARIES)
         message(FATAL_ERROR
-            "You provided explicit BLAS or LAPACK libraries but did not specify INTEGER_SIZE. "
+            "Explicitly provided BLAS or LAPACK libraries require INTEGER_SIZE to be set. "
             "Please set INTEGER_SIZE to 4 (LP64) or 8 (ILP64) to ensure compatibility."
         )
+    elseif(${otr}_HOST_PROVIDES_BLAS)
+        message(FATAL_ERROR
+            "OpenTrustRegion_HOST_PROVIDES_BLAS requires INTEGER_SIZE to be set "
+            "Please set INTEGER_SIZE to 4 (LP64) or 8 (ILP64) to match the host's BLAS/LAPACK integer width.")
     else()
         # autodetect BLAS and LAPACK, try 32-bit first, then 64-bit
         set(BLA_SIZEOF_INTEGER 4 CACHE INTERNAL "BLAS/LAPACK integer size")
@@ -98,19 +113,24 @@ if(BLA_SIZEOF_INTEGER EQUAL 8)
     set(LIB_SUFFIX "64")
 
     # check whether 64-bit BLAS and LAPACK routines are called differently
-    set(CMAKE_REQUIRED_LIBRARIES ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
-    check_fortran_function_exists("sgemm_64" BLAS_64)
-    check_fortran_function_exists("sgesv_64" LAPACK_64)
-    if(BLAS_64)
-        add_compile_definitions("ddot=ddot_64")
-        add_compile_definitions("dnrm2=dnrm2_64")
-        add_compile_definitions("dgemv=dgemv_64")
-        add_compile_definitions("dgemm=dgemm_64")
-    endif()
-    if(LAPACK_64)
-        add_compile_definitions("dsyev=dsyev_64")
-        add_compile_definitions("dsysv=dsysv_64")
-        add_compile_definitions("zheev=zheev_64")
+    if(NOT ${otr}_HOST_PROVIDES_BLAS)
+        set(CMAKE_REQUIRED_LIBRARIES ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+        check_fortran_function_exists("sgemm_64" BLAS_64)
+        check_fortran_function_exists("sgesv_64" LAPACK_64)
+        if(BLAS_64)
+            add_compile_definitions("ddot=ddot_64")
+            add_compile_definitions("dnrm2=dnrm2_64")
+            add_compile_definitions("dgemv=dgemv_64")
+            add_compile_definitions("dgemm=dgemm_64")
+        endif()
+        if(LAPACK_64)
+            add_compile_definitions("dsyev=dsyev_64")
+            add_compile_definitions("dsysv=dsysv_64")
+            add_compile_definitions("zheev=zheev_64")
+        endif()
+    else()
+        set(BLAS_64 FALSE)
+        set(LAPACK_64 FALSE)
     endif()
 else()
     set(LIB_SUFFIX "32")
@@ -155,10 +175,12 @@ set_source_files_properties(${OPENTRUSTREGION_SOURCES}
                             PROPERTIES Fortran_PREPROCESS ON
 )
 
-# link against BLAS and LAPACK
-target_link_libraries(opentrustregion
-                      PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
-)
+# link against BLAS and LAPACK (unless host provides these)
+if(NOT ${otr}_HOST_PROVIDES_BLAS)
+    target_link_libraries(opentrustregion
+                          PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
+    )
+endif()
 
 # set include directories
 target_include_directories(opentrustregion PUBLIC
@@ -166,8 +188,9 @@ target_include_directories(opentrustregion PUBLIC
                            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-# option to build testsuite
-if (${otr}_BUILD_TESTING)
+# option to build testsuite but skip when the host provides BLAS/LAPACK (tests require 
+# BLAS at build/link time)
+if (${otr}_BUILD_TESTING AND NOT ${otr}_HOST_PROVIDES_BLAS)
     # define test files
     set(OPENTRUSTREGION_TESTS
         tests/test_reference.f90

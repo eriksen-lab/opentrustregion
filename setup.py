@@ -28,6 +28,7 @@ for suffix in ["", "_32", "_64"]:
 else:
     libopentrustregion_file = None
 libtestsuite_file = f"libotrtestsuite.{ext}"
+libtestsuite_path = build_dir / libtestsuite_file
 
 
 class CMakeBuild(build_py):
@@ -58,8 +59,10 @@ class CMakeBuild(build_py):
                     libopentrustregion_path, target_dir / libopentrustregion_file
                 )
 
-            # always copy testsuite
-            shutil.copy(build_dir / libtestsuite_file, target_dir / libtestsuite_file)
+            # copy testsuite only if it exists (i.e., built and not skipped due to not 
+            # building tests or host-provided BLAS/LAPACK)
+            if libtestsuite_path.exists():
+                shutil.copy(libtestsuite_path, target_dir / libtestsuite_file)
 
         # run steps in parent class
         super().run()
@@ -68,7 +71,8 @@ class CMakeBuild(build_py):
 # update package_data dynamically
 package_data_files = ["test_data/*.bin"]
 if os.getenv("CONDA_BUILD", "0") != "1":
-    package_data_files.append(libtestsuite_file)
+    if libtestsuite_path.exists():
+        package_data_files.append(libtestsuite_file)
     if libopentrustregion_file is not None:
         package_data_files.append(libopentrustregion_file)
 
