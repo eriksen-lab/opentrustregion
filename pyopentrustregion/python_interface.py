@@ -32,7 +32,7 @@ from ctypes import (
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from typing import Tuple, Callable, Optional, Any
+    from typing import Tuple, Callable, Optional, Any, Dict
 
 
 # load the opentrustregion library, fallback to testsuite in case opentrustregion was
@@ -128,7 +128,9 @@ logger_interface_type = CFUNCTYPE(None, c_char_p)
 
 # define interface factories
 def hess_x_interface_factory(
-    hess_x: Callable[[np.ndarray, np.ndarray], None], n_param: int
+    hess_x: Callable[[np.ndarray, np.ndarray], None],
+    n_param: int,
+    exception: Dict[str, Exception],
 ) -> Any:
     """
     this function is a factory for the Hessian linear transformation interface
@@ -146,7 +148,8 @@ def hess_x_interface_factory(
         # perform linear transformation
         try:
             hess_x(x, hx)
-        except RuntimeError:
+        except Exception as e:
+            exception["exc"] = e
             return 1
 
         return 0
@@ -160,7 +163,9 @@ def hess_x_interface_factory(
 
 
 def precond_interface_factory(
-    precond: Optional[Callable[[np.ndarray, float, np.ndarray], None]], n_param: int
+    precond: Optional[Callable[[np.ndarray, float, np.ndarray], None]],
+    n_param: int,
+    exception: Dict[str, Exception],
 ) -> Any:
     """
     this function is a factory for the preconditioning interface
@@ -181,7 +186,8 @@ def precond_interface_factory(
         # call preconditioner
         try:
             precond(residual, mu, precond_residual)
-        except RuntimeError:
+        except Exception as e:
+            exception["exc"] = e
             return 1
 
         return 0
@@ -190,7 +196,9 @@ def precond_interface_factory(
 
 
 def project_interface_factory(
-    project: Optional[Callable[[np.ndarray], None]], n_param: int
+    project: Optional[Callable[[np.ndarray], None]],
+    n_param: int,
+    exception: Dict[str, Exception],
 ) -> Any:
     """
     this function is a factory for the projection interface
@@ -209,7 +217,8 @@ def project_interface_factory(
         # call projection function
         try:
             project(vector)
-        except RuntimeError:
+        except Exception as e:
+            exception["exc"] = e
             return 1
 
         return 0
@@ -217,7 +226,9 @@ def project_interface_factory(
     return project_interface
 
 
-def conv_check_interface_factory(conv_check: Optional[Callable[[], bool]]) -> Any:
+def conv_check_interface_factory(
+    conv_check: Optional[Callable[[], bool]], exception: Dict[str, Exception]
+) -> Any:
     """
     this function is a factory for the convergence check interface
     """
@@ -232,7 +243,8 @@ def conv_check_interface_factory(conv_check: Optional[Callable[[], bool]]) -> An
         # call convergence check
         try:
             conv_ptr[0] = conv_check()
-        except RuntimeError:
+        except Exception as e:
+            exception["exc"] = e
             return 1
 
         return 0
@@ -433,6 +445,9 @@ def solver(
     n_param: int,
     settings: SolverSettings,
 ):
+    # variable to capture exceptions in the callback interfaces
+    exception: Dict[str, Exception] = {}
+
     # define interfaces for callback functions
     @update_orbs_interface_type
     def update_orbs_interface(kappa_ptr, func_ptr, grad_ptr, h_diag_ptr, hess_x_funptr):
@@ -450,13 +465,14 @@ def solver(
         # and Hessian linear transformation function
         try:
             func_ptr[0], hess_x = update_orbs(kappa, grad, h_diag)
-        except RuntimeError:
+        except Exception as e:
+            exception["exc"] = e
             return 1
 
         # attach the Hessian-vector product function to the solver function so that it
         # persists in Python to ensure that it is not garbage collected when the
         # current orbital updating function completes
-        solver._hess_x_interface = hess_x_interface_factory(hess_x, n_param)
+        solver._hess_x_interface = hess_x_interface_factory(hess_x, n_param, exception)
 
         # store the function pointer in hess_x_ptr so that it can be accessed by Fortran
         hess_x_funptr[0] = solver._hess_x_interface
@@ -473,7 +489,8 @@ def solver(
 
         try:
             func_ptr[0] = obj_func(kappa)
-        except RuntimeError:
+        except Exception as e:
+            exception["exc"] = e
             return 1
 
         return 0
@@ -482,13 +499,13 @@ def solver(
     # the interface might need parameters that are not known when the attribute to
     # settings is set (e.g. n_param)
     settings.set_optional_callback(
-        "precond", precond_interface_factory(settings.precond, n_param)
+        "precond", precond_interface_factory(settings.precond, n_param, exception)
     )
     settings.set_optional_callback(
-        "project", project_interface_factory(settings.project, n_param)
+        "project", project_interface_factory(settings.project, n_param, exception)
     )
     settings.set_optional_callback(
-        "conv_check", conv_check_interface_factory(settings.conv_check)
+        "conv_check", conv_check_interface_factory(settings.conv_check, exception)
     )
     settings.set_optional_callback("logger", logger_interface_factory(settings.logger))
 
@@ -507,7 +524,12 @@ def solver(
     )
 
     if error:
-        raise RuntimeError("OpenTrustRegion solver produced error.")
+        if exception is not None and "exc" in exception:
+            raise RuntimeError(
+                f"OpenTrustRegion solver produced error (code {error})."
+            ) from exception["exc"]
+        else:
+            raise RuntimeError(f"OpenTrustRegion solver produced error (code {error}).")
 
 
 def stability_check(
@@ -517,17 +539,20 @@ def stability_check(
     settings: StabilitySettings,
     kappa: Optional[np.ndarray] = None,
 ) -> bool:
+    # variable to capture exceptions in the callback interfaces
+    exception: Dict[str, Exception] = {}
+
     # define interfaces for callback functions
-    hess_x_interface = hess_x_interface_factory(hess_x, n_param)
+    hess_x_interface = hess_x_interface_factory(hess_x, n_param, exception)
 
     # set interfaces for optional callback functions, these need to be set here since
     # the interface might need parameters that are not known when the attribute to
     # settings is set (e.g. n_param)
     settings.set_optional_callback(
-        "precond", precond_interface_factory(settings.precond, n_param)
+        "precond", precond_interface_factory(settings.precond, n_param, exception)
     )
     settings.set_optional_callback(
-        "project", project_interface_factory(settings.project, n_param)
+        "project", project_interface_factory(settings.project, n_param, exception)
     )
     settings.set_optional_callback("logger", logger_interface_factory(settings.logger))
 
@@ -556,6 +581,13 @@ def stability_check(
     )
 
     if error:
-        raise RuntimeError("OpenTrustRegion stability check produced error.")
+        if exception is not None and "exc" in exception:
+            raise RuntimeError(
+                f"OpenTrustRegion stability check produced error (code {error})."
+            ) from exception["exc"]
+        else:
+            raise RuntimeError(
+                f"OpenTrustRegion stability check produced error (code {error})."
+            )
 
     return bool(stable)
