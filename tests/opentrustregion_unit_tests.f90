@@ -7,7 +7,7 @@
 module opentrustregion_unit_tests
 
     use opentrustregion, only: rp, ip, stderr
-    use c_interface, only: c_rp
+    use c_interface, only: c_rp, c_ip
     use test_reference, only: tol
     use, intrinsic :: iso_c_binding, only: c_bool
 
@@ -27,8 +27,8 @@ module opentrustregion_unit_tests
                  0.0124_rp, 0.3736_rp, 0.2883_rp, 0.5743_rp, 0.8283_rp, 0.1004_rp, &
                  0.3047_rp, 0.1091_rp, 0.5886_rp, 0.9991_rp, 0.6650_rp, 0.0381_rp], &
                 [n_terms, n_param])
-    integer(ip), bind(C, name="hartmann6d_n_param") :: n_param_c = n_param
-    integer(ip), bind(C, name="hartmann6d_n_terms") :: n_terms_c = n_terms
+    integer(c_ip), bind(C, name="hartmann6d_n_param") :: n_param_c = n_param
+    integer(c_ip), bind(C, name="hartmann6d_n_terms") :: n_terms_c = n_terms
     real(c_rp), bind(C, name="hartmann6d_alpha") :: alpha_c(n_terms) = alpha
     real(c_rp), bind(C, name="hartmann6d_A") :: A_c(n_terms, n_param) = A
     real(c_rp), bind(C, name="hartmann6d_P") :: P_c(n_terms, n_param) = P
