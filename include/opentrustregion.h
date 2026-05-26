@@ -58,6 +58,10 @@ typedef c_int precond_fn(
 );
 typedef precond_fn* precond_fp;
 
+/* Projection callback */
+typedef c_int project_fn(c_real* vector);
+typedef project_fn* project_fp;
+
 /* Convergence check callback */
 typedef c_int conv_check_fn(c_bool* converged);
 typedef conv_check_fn* conv_check_fp;
@@ -73,6 +77,7 @@ typedef logger_fn* logger_fp;
 // Struct corresponding to Fortran type(solver_settings_type_c)
 typedef struct {
     precond_fp precond;
+    project_fp project;
     conv_check_fp conv_check;
     logger_fp logger;
 
@@ -101,6 +106,7 @@ void init_solver_settings(solver_settings_type* settings);
 // Struct corresponding to Fortran type(stability_settings_type_c)
 typedef struct {
     precond_fp precond;
+    project_fp project;
     logger_fp logger;
 
     c_bool initialized;

@@ -7,40 +7,50 @@
 module opentrustregion_unit_tests
 
     use opentrustregion, only: rp, ip, stderr
+    use c_interface, only: c_rp, c_ip
     use test_reference, only: tol
     use, intrinsic :: iso_c_binding, only: c_bool
 
     implicit none
 
     ! parameters for 6D Hartmann function
-    real(rp), parameter :: alpha(4) = [1.0_rp, 1.2_rp, 3.0_rp, 3.2_rp]
-    real(rp), parameter :: A(4, 6) = reshape([10.0_rp, 0.05_rp, 3.0_rp, 17.0_rp, &
-                                              3.0_rp, 10.0_rp, 3.5_rp, 8.0_rp, &
-                                              17.0_rp, 17.0_rp, 1.7_rp, 0.05_rp, &
-                                              3.5_rp, 0.1_rp, 10.0_rp, 10.0_rp, &
-                                              1.7_rp, 8.0_rp, 17.0_rp, 0.1_rp, &
-                                              8.0_rp, 14.0_rp, 8.0_rp, 14.0_rp], [4, 6])
-    real(rp), parameter :: P(4, 6) = reshape([0.1312_rp, 0.2329_rp, 0.2348_rp, &
-                                              0.4047_rp, 0.1696_rp, 0.4135_rp, &
-                                              0.1451_rp, 0.8828_rp, 0.5569_rp, &
-                                              0.8307_rp, 0.3522_rp, 0.8732_rp, &
-                                              0.0124_rp, 0.3736_rp, 0.2883_rp, &
-                                              0.5743_rp, 0.8283_rp, 0.1004_rp, &
-                                              0.3047_rp, 0.1091_rp, 0.5886_rp, &
-                                              0.9991_rp, 0.6650_rp, 0.0381_rp], [4, 6])
+    integer(ip), parameter :: n_param = 6, n_terms = 4
+    real(rp), parameter :: alpha(n_terms) = [1.0_rp, 1.2_rp, 3.0_rp, 3.2_rp]
+    real(rp), parameter :: A(n_terms, n_param) = &
+        reshape([10.0_rp, 0.05_rp, 3.0_rp, 17.0_rp, 3.0_rp, 10.0_rp, 3.5_rp, 8.0_rp, &
+                 17.0_rp, 17.0_rp, 1.7_rp, 0.05_rp, 3.5_rp, 0.1_rp, 10.0_rp, 10.0_rp, &
+                 1.7_rp, 8.0_rp, 17.0_rp, 0.1_rp, 8.0_rp, 14.0_rp, 8.0_rp, 14.0_rp], &
+                [n_terms, n_param])
+    real(rp), parameter :: P(n_terms, n_param) = &
+        reshape([0.1312_rp, 0.2329_rp, 0.2348_rp, 0.4047_rp, 0.1696_rp, 0.4135_rp, &
+                 0.1451_rp, 0.8828_rp, 0.5569_rp, 0.8307_rp, 0.3522_rp, 0.8732_rp, &
+                 0.0124_rp, 0.3736_rp, 0.2883_rp, 0.5743_rp, 0.8283_rp, 0.1004_rp, &
+                 0.3047_rp, 0.1091_rp, 0.5886_rp, 0.9991_rp, 0.6650_rp, 0.0381_rp], &
+                [n_terms, n_param])
+    integer(c_ip), bind(C, name="hartmann6d_n_param") :: n_param_c = n_param
+    integer(c_ip), bind(C, name="hartmann6d_n_terms") :: n_terms_c = n_terms
+    real(c_rp), bind(C, name="hartmann6d_alpha") :: alpha_c(n_terms) = alpha
+    real(c_rp), bind(C, name="hartmann6d_A") :: A_c(n_terms, n_param) = A
+    real(c_rp), bind(C, name="hartmann6d_P") :: P_c(n_terms, n_param) = P
 
     ! stationary points of 6D Hartmann function
-    real(rp), parameter :: minimum1(6) = [0.20168951_rp, 0.15001069_rp, 0.47687398_rp, &
-                                          0.27533243_rp, 0.31165162_rp, 0.65730053_rp]
-    real(rp), parameter :: minimum2(6) = [0.40465313_rp, 0.88244493_rp, 0.84610160_rp, &
-                                          0.57398969_rp, 0.13892673_rp, 0.03849589_rp]
-    real(rp), parameter :: saddle_point(6) = [0.35278250_rp, 0.59374767_rp, &
-                                              0.47631257_rp, 0.40058250_rp, &
-                                              0.31111531_rp, 0.32397158_rp]
+    real(rp), parameter :: minimum1(n_param) = &
+        [0.20168951_rp, 0.15001069_rp, 0.47687398_rp, &
+         0.27533243_rp, 0.31165162_rp, 0.65730053_rp]
+    real(rp), parameter :: minimum2(n_param) = &
+        [0.40465313_rp, 0.88244493_rp, 0.84610160_rp, &
+         0.57398969_rp, 0.13892673_rp, 0.03849589_rp]
+    real(rp), parameter :: saddle_point(n_param) = &
+        [0.35278250_rp, 0.59374767_rp, 0.47631257_rp, &
+         0.40058250_rp, 0.31111531_rp, 0.32397158_rp]
+    real(c_rp), bind(C, name="hartmann6d_minimum1") :: minimum1_c(n_param) = minimum1
+    real(c_rp), bind(C, name="hartmann6d_minimum2") :: minimum2_c(n_param) = minimum2
+    real(c_rp), bind(C, name="hartmann6d_saddle_point") :: saddle_point_c(n_param) = &
+        saddle_point
 
     ! define global current variable and 6D Hartmann Hessian so that these can be 
     ! accessed by procedure pointers
-    real(rp) :: curr_vars(6), hess(6, 6)
+    real(rp) :: curr_vars(n_param), hess(n_param, n_param)
 
     ! global log message
     character(:), allocatable :: log_message
@@ -54,10 +64,10 @@ contains
         ! this function defines the Hartmann 6D function
         !
         real(rp), intent(in) :: vars(:)
-        real(rp) :: f, exp_term(4)
+        real(rp) :: f, exp_term(n_terms)
         integer(ip) :: i
 
-        do i = 1, 4
+        do i = 1, n_terms
             exp_term(i) = exp(-sum(A(i, :)*(vars - P(i, :))**2))
         end do
 
@@ -71,14 +81,14 @@ contains
         !
         real(rp), intent(in) :: vars(:)
         real(rp), intent(out) :: grad(:)
-        real(rp) :: exp_term(4)
+        real(rp) :: exp_term(n_terms)
         integer(ip) :: i, j
 
-        do i = 1, 4
+        do i = 1, n_terms
             exp_term(i) = exp(-sum(A(i, :)*(vars - P(i, :))**2))
         end do
 
-        do j = 1, size(vars)
+        do j = 1, n_param
             grad(j) = sum(2.0_rp*alpha*A(:, j)*(vars(j) - P(:, j))*exp_term)
         end do
 
@@ -89,14 +99,14 @@ contains
         ! this subroutine defines the Hartmann 6D function's Hessian
         !
         real(rp), intent(in) :: vars(:)
-        real(rp) :: exp_term(4)
+        real(rp) :: exp_term(n_terms)
         integer(ip) :: i, j
 
-        do i = 1, 4
+        do i = 1, n_terms
             exp_term(i) = exp(-sum(A(i, :)*(vars - P(i, :))**2))
         end do
 
-        do i = 1, size(vars)
+        do i = 1, n_param
             hess(i, i) = 2.0_rp*sum(alpha*A(:, i)*exp_term* &
                                     (1.0_rp - 2.0_rp*A(:, i)*(vars(i) - P(:, i))**2))
             do j = 1, i - 1
@@ -245,7 +255,6 @@ contains
                                    solver_settings_type, solver, &
                                    default_settings => default_solver_settings
 
-        integer(ip), parameter :: n_param = 6
         real(rp), parameter :: var_thres = 1e-6_rp
         integer(ip) :: error
         real(rp), allocatable :: final_grad(:)
@@ -422,8 +431,10 @@ contains
         use opentrustregion, only: solver_settings_type, newton_step
 
         type(solver_settings_type) :: settings
-        real(rp) :: red_space_basis(6, 3), vars(6), grad(6), grad_norm, &
-                    aug_hess(4, 4), solution(6), red_space_solution(3)
+        integer(ip), parameter :: n_trial = 3
+        real(rp) :: red_space_basis(n_param, n_trial), vars(n_param), grad(n_param), &
+                    grad_norm, aug_hess(n_trial + 1, n_trial + 1), solution(n_param), &
+                    red_space_solution(n_trial)
         integer(ip) :: i, j, error
 
         ! assume tests pass
@@ -439,7 +450,7 @@ contains
                      -2.0_rp/sqrt(6.0_rp), 0.0_rp, 0.0_rp, 0.0_rp, &
                      1.0_rp/sqrt(12.0_rp), -1.0_rp/sqrt(12.0_rp), &
                      1.0_rp/sqrt(12.0_rp), -3.0_rp/sqrt(12.0_rp), 0.0_rp, 0.0_rp], &
-                    [6, 3])
+                    [n_param, n_trial])
 
         ! point in quadratic region near minimum
         vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
@@ -449,8 +460,8 @@ contains
         grad_norm = norm2(grad)
         call hartmann6d_hessian(vars)
         aug_hess = 0.0_rp
-        do i = 1, 3
-            do j = 1, 3
+        do i = 1, n_trial
+            do j = 1, n_trial
                 aug_hess(i + 1, j + 1) = &
                     dot_product(red_space_basis(:, i), &
                                 matmul(hess, red_space_basis(:, j)))
@@ -487,8 +498,10 @@ contains
         use opentrustregion, only: solver_settings_type, bisection
 
         type(solver_settings_type) :: settings
-        real(rp) :: red_space_basis(6, 3), vars(6), grad(6), grad_norm, &
-                    aug_hess(4, 4), solution(6), red_space_solution(3), trust_radius, mu
+        integer(ip), parameter :: n_trial = 3
+        real(rp) :: red_space_basis(n_param, n_trial), vars(n_param), grad(n_param), &
+                    grad_norm, aug_hess(n_trial + 1, n_trial + 1), solution(n_param), &
+                    red_space_solution(n_trial), trust_radius, mu
         integer(ip) :: i, j, error
         logical :: bracketed
 
@@ -505,7 +518,7 @@ contains
                      -2.0_rp/sqrt(6.0_rp), 0.0_rp, 0.0_rp, 0.0_rp, &
                      1.0_rp/sqrt(12.0_rp), -1.0_rp/sqrt(12.0_rp), &
                      1.0_rp/sqrt(12.0_rp), -3.0_rp/sqrt(12.0_rp), 0.0_rp, 0.0_rp], &
-                    [6, 3])
+                    [n_param, n_trial])
 
         ! choose target trust radius
         trust_radius = 0.4_rp
@@ -518,8 +531,8 @@ contains
         grad_norm = norm2(grad)
         call hartmann6d_hessian(vars)
         aug_hess = 0.0_rp
-        do i = 1, 3
-            do j = 1, 3
+        do i = 1, n_trial
+            do j = 1, n_trial
                 aug_hess(i + 1, j + 1) = dot_product(red_space_basis(:, i), &
                                                     matmul(hess, red_space_basis(:, j)))
             end do
@@ -563,8 +576,8 @@ contains
         grad_norm = norm2(grad)
         call hartmann6d_hessian(vars)
         aug_hess = 0.0_rp
-        do i = 1, 3
-            do j = 1, 3
+        do i = 1, n_trial
+            do j = 1, n_trial
                 aug_hess(i + 1, j + 1) = &
                     dot_product(red_space_basis(:, i), &
                                 matmul(hess, red_space_basis(:, j)))
@@ -1915,7 +1928,6 @@ contains
                                    trust_radius_shrink_factor, &
                                    trust_radius_expand_factor
 
-        integer(ip), parameter :: n_param = 6
         real(rp) :: func, grad_norm, trust_radius, mu, ratio, solution_norm
         real(rp), dimension(n_param) :: grad, h_diag, solution
         integer(ip) :: i, imicro, imicro_jacobi_davidson, error
@@ -2089,7 +2101,6 @@ contains
                                    trust_radius_shrink_factor, &
                                    trust_radius_expand_factor
 
-        integer(ip), parameter :: n_param = 6
         real(rp) :: func, trust_radius, ratio, solution_norm
         real(rp), dimension(n_param) :: grad, h_diag, solution
         integer(ip) :: i, imicro, error

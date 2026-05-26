@@ -138,6 +138,7 @@ contains
         ! this function tests the C wrapper for the solver
         !
         use c_interface, only: solver_settings_type_c, solver, solver_c_wrapper
+        use opentrustregion, only: standard_solver => solver
         use opentrustregion_mock, only: mock_solver, test_passed
         use test_reference, only: assignment(=), ref_settings
 
@@ -186,6 +187,9 @@ contains
         ! check if test has passed
         test_solver_c_wrapper = test_solver_c_wrapper .and. test_passed
 
+        ! restore the procedure pointer so later tests do not inherit the mock
+        solver => standard_solver
+
     end function test_solver_c_wrapper
 
     logical(c_bool) function test_stability_check_c_wrapper() bind(C)
@@ -194,6 +198,7 @@ contains
         !
         use c_interface, only: stability_settings_type_c, stability_check, &
                                stability_check_c_wrapper
+        use opentrustregion, only: standard_stability_check => stability_check
         use opentrustregion_mock, only: mock_stability_check, test_passed
         use test_reference, only: assignment(=), ref_settings
 
@@ -295,6 +300,9 @@ contains
         ! check if test has passed
         test_stability_check_c_wrapper = test_passed .and. &
                                          test_stability_check_c_wrapper
+
+        ! restore the procedure pointer so later tests do not inherit the mock
+        stability_check => standard_stability_check
 
     end function test_stability_check_c_wrapper
 

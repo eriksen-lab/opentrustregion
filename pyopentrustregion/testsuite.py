@@ -147,6 +147,12 @@ fortran_tests = {
         "update_orbs_f_wrapper",
     ],
     "system_tests": ["h2o_atomic_fb", "h2o_saddle_fb"],
+    "c_system_tests": [
+        "solver_settings_init",
+        "stability_settings_init",
+        "solver_c",
+        "stability_check_c",
+    ],
 }
 
 # define return type of Fortran functions
@@ -563,6 +569,226 @@ class SystemTests(unittest.TestCase):
             )
         lib.set_test_data_path(str(test_data).encode("utf-8"))
         return super().setUpClass()
+
+
+@add_tests
+class CSystemTests(unittest.TestCase):
+    """
+    this class contains system tests for the C interface
+    """
+
+    tests = fortran_tests["c_system_tests"]
+
+    @classmethod
+    def setUpClass(cls):
+        print(50 * "-")
+        print("Running system tests for C interface...")
+        print(50 * "-")
+        return super().setUpClass()
+
+
+@unittest.skipUnless(NUMPY_AVAILABLE, "NumPy not available.")
+class PySystemTests(unittest.TestCase):
+    """
+    this class contains end-to-end system tests that drive the real
+    pyopentrustregion.solver and stability_check wrappers (not the mock library)
+    against the Hartmann 6D problem. This is the only test path that exercises the full
+    Python public API on a real numerical workload.
+    """
+
+    # Hartmann 6D parameters
+    n_param = c_int.in_dll(lib, "hartmann6d_n_param").value
+    n_terms = c_int.in_dll(lib, "hartmann6d_n_terms").value
+    alpha_ctypes = (c_real * n_terms).in_dll(lib, "hartmann6d_alpha")
+    alpha = np.frombuffer(alpha_ctypes, dtype=np.dtype(c_real), count=n_terms)
+    A_ctypes = ((c_real * n_param) * n_terms).in_dll(lib, "hartmann6d_A")
+    A = np.frombuffer(
+        A_ctypes, dtype=np.dtype(c_real), count=n_terms * n_param
+    ).reshape((n_terms, n_param), order="F")
+    P_ctypes = ((c_real * n_param) * n_terms).in_dll(lib, "hartmann6d_P")
+    P = np.frombuffer(
+        P_ctypes, dtype=np.dtype(c_real), count=n_terms * n_param
+    ).reshape((n_terms, n_param), order="F")
+    minimum1_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_minimum1")
+    minimum1 = np.frombuffer(minimum1_ctypes, dtype=np.dtype(c_real), count=n_param)
+    minimum2_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_minimum2")
+    minimum2 = np.frombuffer(minimum2_ctypes, dtype=np.dtype(c_real), count=n_param)
+    saddle_point_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_saddle_point")
+    saddle_point = np.frombuffer(
+        saddle_point_ctypes, dtype=np.dtype(c_real), count=n_param
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        print(50 * "-")
+        print("Running system tests for Python interface...")
+        print(50 * "-")
+        return super().setUpClass()
+
+    # Hartmann 6D primitives shared by the callbacks
+
+    @classmethod
+    def _exp_terms(cls, x):
+        return np.exp(-np.sum(cls.A * (x - cls.P) ** 2, axis=1))
+
+    @classmethod
+    def _func(cls, x):
+        return -np.dot(cls.alpha, cls._exp_terms(x))
+
+    @classmethod
+    def _grad(cls, x):
+        e = cls._exp_terms(x)
+        return np.array(
+            [
+                np.sum(2.0 * cls.alpha * cls.A[:, j] * (x[j] - cls.P[:, j]) * e)
+                for j in range(cls.n_param)
+            ]
+        )
+
+    @classmethod
+    def _hess(cls, x):
+        e = cls._exp_terms(x)
+        H = np.zeros((cls.n_param, cls.n_param))
+        for i in range(cls.n_param):
+            H[i, i] = 2.0 * np.sum(
+                cls.alpha
+                * cls.A[:, i]
+                * e
+                * (1.0 - 2.0 * cls.A[:, i] * (x[i] - cls.P[:, i]) ** 2)
+            )
+            for j in range(i):
+                H[i, j] = -4.0 * np.sum(
+                    cls.alpha
+                    * cls.A[:, i]
+                    * cls.A[:, j]
+                    * (x[i] - cls.P[:, i])
+                    * (x[j] - cls.P[:, j])
+                    * e
+                )
+                H[j, i] = H[i, j]
+        return H
+
+    # Tests
+
+    def test_solver_py(self):
+        """
+        this function drives solver() end-to-end at a minimum and at a saddle point
+        """
+        test_passed = True
+
+        # mutable closure state, mirroring the curr_vars module global on the Fortran
+        # side
+        state = {
+            "curr": np.array([0.20, 0.15, 0.48, 0.28, 0.31, 0.66]),
+            "hess": None,
+            "logger_called": False,
+        }
+
+        def update_orbs(delta_vars, grad, h_diag):
+            state["curr"] = state["curr"] + delta_vars
+            x = state["curr"]
+            state["hess"] = self._hess(x)
+            grad[:] = self._grad(x)
+            h_diag[:] = np.diag(state["hess"])
+
+            def hess_x(v, hv):
+                hv[:] = state["hess"] @ v
+
+            return self._func(x), hess_x
+
+        def obj_func(delta_vars):
+            return self._func(state["curr"] + delta_vars)
+
+        def precond(residual, mu, out):
+            # identity preconditioner; exercises the callback without producing a zero
+            # vector when mu=0 (which would trip the Gram-Schmidt zero-vector guard)
+            out[:] = residual
+
+        def logger(msg):
+            state["logger_called"] = True
+
+        settings = SolverSettings()
+        settings.precond = precond
+        settings.logger = logger
+        settings.verbose = 3  # ensure logger is exercised
+
+        solver(obj_func, update_orbs, self.n_param, settings)
+        if not np.allclose(state["curr"], self.minimum1, atol=1e-4):
+            print(" test_solver_py failed: Solver did not find minimum.")
+            test_passed = False
+        if not state["logger_called"]:
+            print(" test_solver_py failed: Logger was not called.")
+            test_passed = False
+
+        # restart near the saddle - solver must still reach a known minimum
+        state["curr"] = np.array([0.35, 0.59, 0.48, 0.40, 0.31, 0.32])
+        solver(obj_func, update_orbs, self.n_param, settings)
+        if not (
+            np.allclose(state["curr"], self.minimum1, atol=1e-4)
+            or np.allclose(state["curr"], self.minimum2, atol=1e-4)
+        ):
+            print(
+                " test_solver_py failed: Solver did not find minimum when starting "
+                "near saddle starting point."
+            )
+            test_passed = False
+        self.assertTrue(test_passed, "test_solver_py failed")
+        print(" test_solver_py PASSED")
+
+    def test_stability_check_py(self):
+        """
+        this function drives stability_check() end-to-end at a minimum and at a saddle
+        point
+        """
+        test_passed = True
+        settings = StabilitySettings()
+
+        # at the minimum: must be reported stable
+        H = self._hess(self.minimum1)
+        h_diag = np.diag(H).copy()
+
+        def hess_x(v, hv):
+            hv[:] = H @ v
+
+        kappa = np.zeros(self.n_param)
+        stable = stability_check(h_diag, hess_x, self.n_param, settings, kappa=kappa)
+        if not stable:
+            print(
+                " test_stability_check_py failed: Stability incorrectly classifies "
+                "stability of minimum."
+            )
+            test_passed = False
+
+        # at the saddle: must be reported unstable, descent direction parallel to the
+        # known negative-curvature eigenvector
+        H = self._hess(self.saddle_point)
+        h_diag = np.diag(H).copy()
+
+        stable = stability_check(h_diag, hess_x, self.n_param, settings, kappa=kappa)
+        if stable:
+            print(
+                " test_stability_check_py failed: Stability incorrectly classifies "
+                "stability of saddle point."
+            )
+            test_passed = False
+        ref = np.array(
+            [
+                -0.173375920238,
+                -0.518489821791,
+                -6.432848975252e-3,
+                -0.340127852882,
+                3.066460316955e-3,
+                0.765095650196,
+            ]
+        )
+        if not np.allclose(abs(np.dot(kappa, ref)), 1.0, atol=1e-6):
+            print(
+                " test_stability_check_py failed: Stability check does not return "
+                "correct direction for saddle point."
+            )
+            test_passed = False
+        self.assertTrue(test_passed, "test_stability_check_py failed")
+        print(" test_stability_check_py PASSED")
 
 
 if __name__ == "__main__":
