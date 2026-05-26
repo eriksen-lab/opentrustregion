@@ -215,6 +215,11 @@ contains
         ! initialize error flag
         error = 0
 
+        ! reset global counter variables so they do not accumulate across calls if a
+        ! previous call returned early on error or non-convergence
+        tot_orb_update = 0
+        tot_hess_x = 0
+
         ! initialize settings
         if (.not. settings%initialized) then
             call settings%init(error)
@@ -444,10 +449,6 @@ contains
         call settings%log(msg, verbosity_info)
         write (msg, '(A, I0)') "Total number of orbital updates: ", tot_orb_update
         call settings%log(msg, verbosity_info)
-
-        ! reset global counter variables
-        tot_orb_update = 0
-        tot_hess_x = 0
 
         ! flush output
         flush (stdout)

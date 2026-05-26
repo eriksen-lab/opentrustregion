@@ -678,6 +678,32 @@ contains
 
     end subroutine get_reference_values
 
+    subroutine get_default_solver_values(default_values_out) bind(C)
+        !
+        ! this subroutine exports the default values for tests
+        !
+        use opentrustregion, only: default_solver_settings
+        use c_interface, only: solver_settings_type_c, assignment(=)
+
+        type(solver_settings_type_c), intent(out) :: default_values_out
+
+        default_values_out = default_solver_settings
+
+    end subroutine get_default_solver_values
+
+    subroutine get_default_stability_values(default_values_out) bind(C)
+        !
+        ! this subroutine exports the default values for tests
+        !
+        use opentrustregion, only: default_stability_settings
+        use c_interface, only: stability_settings_type_c, assignment(=)
+
+        type(stability_settings_type_c), intent(out) :: default_values_out
+
+        default_values_out = default_stability_settings
+
+    end subroutine get_default_stability_values
+
     subroutine assign_ref_to_solver(lhs, rhs)
         !
         ! this subroutine overloads the assignment operator to set solver settings to 

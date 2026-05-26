@@ -9,9 +9,10 @@ This library provides a robust and flexible implementation for second-order trus
 
 The following paper documents the theory and implementation of the methodology in OpenTrustRegion, and should be cited in any work using OpenTrustRegion:  
 
-- A Reusable Library for Second-Order Orbital Optimization Using the Trust Region Method\
-  Greiner, J.; Høyvik, I.-M.; Lehtola, S.; Eriksen, J. J.\
-  [arXiv:2509.13931](https://arxiv.org/abs/2509.13931)
+- Greiner, J.; Høyvik, I.-M.; Lehtola, S.; Eriksen, J. J. 
+  A Reusable Library for Second-Order Orbital Optimization Using the Trust Region Method. Journal of Chemical Theory and Computation 2026, 22(2), 881–895. 
+  DOI: [10.1021/acs.jctc.5c01576](https://doi.org/10.1021/acs.jctc.5c01576). 
+  arXiv: [2509.13931](https://arxiv.org/abs/2509.13931).
 
 ## Installation
 
@@ -54,6 +55,18 @@ The build process can be customized using the following CMake options:
 | **BLAS_LIBRARIES** | `PATH` | *(auto)* | Path(s) to BLAS libraries. If not provided, CMake attempts to locate a suitable BLAS automatically. |
 | **LAPACK_LIBRARIES** | `PATH` | *(auto)* | Path(s) to LAPACK libraries. If not provided, CMake attempts to locate a suitable LAPACK automatically. |
 | **OpenTrustRegion_HOST_PROVIDES_BLAS** | `BOOL` | `OFF` | Bypass internal BLAS/LAPACK detection assuming the calling program provides math libraries. |
+
+## Program Interfaces
+
+The PySCF interface is available as an extension hosted at https://github.com/eriksen-lab/pyscf_opentrustregion. To install it, simply add its path to the **`PYSCF_EXT_PATH`** environment variable:
+```sh
+export PYSCF_EXT_PATH=path/to/pyscf_opentrustregion
+```
+Usage examples can be found in the **`examples`** directory of the PySCF interface repository.
+
+The interface supports Hartree–Fock and DFT calculations via the **`mf_to_otr`** function, which wraps PySCF **`HF`** and **`KS`** objects into their OpenTrustRegion counterparts. Similarly, localization methods are available through the **`BoysOTR`**, **`PipekMezeyOTR`**, and **`EdmistonRuedenbergOTR`** classes, and state-specific CASSCF calculations are supported via the **`casscf_to_otr`** function applied to a PySCF **`CASSCF`** object. All returned objects are fully compatible with the original PySCF classes and can be used interchangeably.
+
+Optional settings can be adjusted by modifying object attributes directly. Orbital optimization and internal stability analysis are performed using the **`kernel`** and **`stability_check`** member functions, respectively.
 
 ## Usage
 
@@ -122,8 +135,8 @@ The following C snippet demonstrates the equivalent usage through the C interfac
 c_int n_param;
 
 // set callback function pointers to existing implementations
-update_orbs_fp update_orbs_funptr = (void*)update_orbs;
-obj_func_fp obj_func_funptr = (void*)obj_func;
+update_orbs_fp update_orbs_funptr = update_orbs;
+obj_func_fp obj_func_funptr = obj_func;
 
 // initialize settings
 solver_settings_type settings = solver_settings_init();
@@ -265,7 +278,7 @@ double* h_diag;
 double* kappa;
 
 // run stability check
-c_int = stability_check(h_diag, hess_x_funptr, n_param, &stable, settings, kappa);
+c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, settings, kappa);
 ```
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
@@ -356,14 +369,3 @@ The error field (`EE`) is currently always set to `01`. Future versions may defi
 | `0101`     | Error in `solver`      |
 | `1201`     | Error in `update_orbs` |
 
-## Program Interfaces
-
-The PySCF interface is available as an extension hosted at https://github.com/eriksen-lab/pyscf_opentrustregion. To install it, simply add its path to the **`PYSCF_EXT_PATH`** environment variable:
-```sh
-export PYSCF_EXT_PATH=path/to/pyscf_opentrustregion
-```
-Usage examples can be found in the **`examples`** directory of the PySCF interface repository.
-
-The interface supports Hartree–Fock and DFT calculations via the **`mf_to_otr`** function, which wraps PySCF **`HF`** and **`KS`** objects into their OpenTrustRegion counterparts. Similarly, localization methods are available through the **`BoysOTR`**, **`PipekMezeyOTR`**, and **`EdmistonRuedenbergOTR`** classes, and state-specific CASSCF calculations are supported via the **`casscf_to_otr`** function applied to a PySCF **`CASSCF`** object. All returned objects are fully compatible with the original PySCF classes and can be used interchangeably.
-
-Optional settings can be adjusted by modifying object attributes directly. Orbital optimization and internal stability analysis are performed using the **`kernel`** and **`stability_check`** member functions, respectively.
