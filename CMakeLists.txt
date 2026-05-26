@@ -86,9 +86,13 @@ if(INTEGER_SIZE)
 else()
     if(BLAS_LIBRARIES OR LAPACK_LIBRARIES)
         message(FATAL_ERROR
-            "You provided explicit BLAS or LAPACK libraries but did not specify INTEGER_SIZE. "
+            "Explicitly provided BLAS or LAPACK libraries require INTEGER_SIZE to be set. "
             "Please set INTEGER_SIZE to 4 (LP64) or 8 (ILP64) to ensure compatibility."
         )
+    elseif(${otr}_HOST_PROVIDES_BLAS)
+        message(FATAL_ERROR
+            "OpenTrustRegion_HOST_PROVIDES_BLAS requires INTEGER_SIZE to be set "
+            "Please set INTEGER_SIZE to 4 (LP64) or 8 (ILP64) to match the host's BLAS/LAPACK integer width.")
     else()
         # autodetect BLAS and LAPACK, try 32-bit first, then 64-bit
         set(BLA_SIZEOF_INTEGER 4 CACHE INTERNAL "BLAS/LAPACK integer size")
@@ -109,7 +113,7 @@ if(BLA_SIZEOF_INTEGER EQUAL 8)
     set(LIB_SUFFIX "64")
 
     # check whether 64-bit BLAS and LAPACK routines are called differently
-    if(NOT ${${otr}_HOST_PROVIDES_BLAS})
+    if(NOT ${otr}_HOST_PROVIDES_BLAS)
         set(CMAKE_REQUIRED_LIBRARIES ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
         check_fortran_function_exists("sgemm_64" BLAS_64)
         check_fortran_function_exists("sgesv_64" LAPACK_64)
@@ -172,7 +176,7 @@ set_source_files_properties(${OPENTRUSTREGION_SOURCES}
 )
 
 # link against BLAS and LAPACK (unless host provides these)
-if(NOT ${${otr}_HOST_PROVIDES_BLAS})
+if(NOT ${otr}_HOST_PROVIDES_BLAS)
     target_link_libraries(opentrustregion
                           PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES}
     )
@@ -186,7 +190,7 @@ target_include_directories(opentrustregion PUBLIC
 
 # option to build testsuite but skip when the host provides BLAS/LAPACK (tests require 
 # BLAS at build/link time)
-if (${otr}_BUILD_TESTING AND NOT ${${otr}_HOST_PROVIDES_BLAS})
+if (${otr}_BUILD_TESTING AND NOT ${otr}_HOST_PROVIDES_BLAS)
     # define test files
     set(OPENTRUSTREGION_TESTS
         tests/test_reference.f90
