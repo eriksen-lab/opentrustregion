@@ -716,32 +716,34 @@ contains
 
     end subroutine newton_step
 
-    subroutine bisection(aug_hess, grad_norm, red_space_basis, trust_radius, solution, &
-                         red_space_solution, mu, bracketed, settings, error)
+    subroutine bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                         red_space_hess_eigvecs, trust_radius, solution, &
+                         red_space_solution, mu, settings, error)
         !
         ! this subroutine performs bisection to find the parameter alpha that matches
         ! the desired trust radius
         !
         real(rp), intent(inout) :: aug_hess(:, :)
-        real(rp), intent(in) :: grad_norm, red_space_basis(:, :), trust_radius
+        real(rp), intent(in) :: grad_norm, red_space_basis(:, :), &
+                                red_space_hess_eigvals(:), &
+                                red_space_hess_eigvecs(:, :), trust_radius
         type(solver_settings_type), intent(in) :: settings
         real(rp), intent(out) :: solution(:), red_space_solution(:), mu
-        logical, intent(out) :: bracketed
         integer(ip), intent(out) :: error
 
+        real(rp), allocatable :: eigspace_solution(:)
         real(rp) :: lower_alpha, middle_alpha, upper_alpha, lower_trust_dist, &
-                    middle_trust_dist, upper_trust_dist
-        integer(ip) :: n_param, n_red, iter
-        real(rp), parameter :: lower_alpha_bound = 1e-4_rp, &
-                               upper_alpha_bound = 1e6_rp, &
-                               alpha_conv_factor = 1e-12_rp
+                    middle_trust_dist, upper_trust_dist, current_norm
+        integer(ip) :: n_param, n_red, iter, min_idx, i
+        real(rp), parameter :: lower_alpha_bound = 1e-30_rp, &
+                               upper_alpha_bound = 1e30_rp, &
+                               alpha_conv_factor = 1e-12_rp, &
+                               orthogonality_thres = 1e-12_rp
         real(rp), external :: dnrm2
+        external :: dgemv
 
         ! initialize error flag
         error = 0
-
-        ! initialize bracketing flag
-        bracketed = .false.
 
         ! number of parameters
         n_param = size(solution)
@@ -753,24 +755,111 @@ contains
         lower_alpha = lower_alpha_bound
         upper_alpha = upper_alpha_bound
 
-        ! solve reduced space problem with scaled gradient
-        call get_ah_lowest_eigenvec(lower_alpha)
-        if (error /= 0) return
-        lower_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
-        call get_ah_lowest_eigenvec(upper_alpha)
-        if (error /= 0) return
-        upper_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
+        ! check if lowest eigenvector of reduced space Hessian has gradient component
+        min_idx = minloc(red_space_hess_eigvals, dim=1)
+        if (abs(red_space_hess_eigvecs(1, min_idx)) <= orthogonality_thres) then
+            ! get crossover point between lowest reduced space Hessian eigenvalue and 
+            ! second lowest Hessian eigenvalue in augmented Hessian to get lower 
+            ! boundary for alpha which ensures that the solution has a gradient 
+            ! component
+            lower_alpha = sqrt(red_space_hess_eigvals(min_idx) / &
+                               sum(red_space_hess_eigvecs(1, :)**2 / &
+                                   (red_space_hess_eigvals(min_idx) - &
+                                    red_space_hess_eigvals), &
+                                    mask=[(i, i=1, n_red)] /= min_idx)) / grad_norm
 
-        ! check if trust region is within bracketing range
-        if ((lower_trust_dist*upper_trust_dist) > 0.0_rp) then
-            solution = 0.0_rp
-            red_space_solution = 0.0_rp
-            mu = 0.0_rp
-            return
+            ! construct solution at crossover point in eigenvector basis while avoiding 
+            ! contributions of lowest Hessian eigenvalue as the gradient component is 
+            ! vanishing anyways
+            eigspace_solution = merge(grad_norm * red_space_hess_eigvecs(1, :) / &
+                                      (red_space_hess_eigvals(min_idx) - &
+                                       red_space_hess_eigvals), 0.0_rp, &
+                                      [(i, i=1, n_red)] /= min_idx)
+
+            ! transform from eigenvector basis to reduced step basis
+            call dgemv("N", n_red, n_red, 1.0_rp, red_space_hess_eigvecs, n_red, &
+                       eigspace_solution, 1_ip, 0.0_rp, red_space_solution, 1_ip)
+            deallocate(eigspace_solution)
+
+            ! get solution in full space
+            call dgemv("N", n_param, n_red, 1.0_rp, red_space_basis, n_param, &
+                       red_space_solution, 1_ip, 0.0_rp, solution, 1_ip)
+            current_norm = dnrm2(n_param, solution, 1_ip)
+            lower_trust_dist = current_norm - trust_radius
+
+            ! check if step lies inside trust region at lower boundary
+            if (current_norm < trust_radius) then
+                ! fill the rest of the trust radius with the lowest eigenvector
+                red_space_solution = red_space_solution + &
+                                     sqrt(max(0.0_rp, trust_radius**2 - &
+                                              dnrm2(n_param, solution, 1_ip)**2)) * &
+                                     red_space_hess_eigvecs(:, min_idx)
+
+                ! construct full space solution
+                call dgemv("N", n_param, n_red, 1.0_rp, red_space_basis, n_param, &
+                        red_space_solution, 1_ip, 0.0_rp, solution, 1_ip)
+
+                ! set level shift
+                mu = red_space_hess_eigvals(min_idx)
+                return
+            end if
+        else
+            ! start at Cauchy point to get bracket
+            middle_alpha = grad_norm / trust_radius
+            call get_ah_lowest_eigenvec(middle_alpha)
+            if (error /= 0) return
+            current_norm = dnrm2(n_param, solution, 1_ip)
+            middle_trust_dist = current_norm - trust_radius
+            lower_alpha = middle_alpha
+            lower_trust_dist = middle_trust_dist
+        end if
+
+        ! start bracketing
+        upper_alpha = lower_alpha
+        upper_trust_dist = lower_trust_dist
+
+        ! step is too long: alpha is lower bound
+        if (current_norm > trust_radius) then
+            ! larger alpha is necessary to find upper bound
+            do while (current_norm > trust_radius)
+                lower_alpha = upper_alpha
+                lower_trust_dist = upper_trust_dist
+                upper_alpha = upper_alpha * 10.0_rp
+                call get_ah_lowest_eigenvec(upper_alpha)
+                if (error /= 0) return
+                current_norm = dnrm2(n_param, solution, 1_ip)
+                upper_trust_dist = current_norm - trust_radius
+                if (upper_alpha > upper_alpha_bound) then
+                    call settings%log("Unable to find upper bound for alpha in "// &
+                                      "bisection.", verbosity_error, .true.)
+                    error = 1
+                    return
+                end if
+            end do
+        ! step is too short: alpha is upper bound
+        else
+            ! smaller alpha is necessary to find lower bound
+            do while (current_norm < trust_radius)
+                upper_alpha = lower_alpha
+                upper_trust_dist = lower_trust_dist
+                lower_alpha = lower_alpha / 10.0_rp
+                call get_ah_lowest_eigenvec(lower_alpha)
+                if (error /= 0) return
+                current_norm = dnrm2(n_param, solution, 1_ip)
+                lower_trust_dist = current_norm - trust_radius
+                if (lower_alpha < lower_alpha_bound) then
+                    call settings%log("Unable to find lower bound for alpha in "// &
+                                      "bisection. Interior solution should be "// &
+                                      "found with Newton step.", verbosity_error, &
+                                      .true.)
+                    error = 1
+                    return
+                end if
+            end do
         end if
 
         ! get middle alpha
-        middle_alpha = sqrt(upper_alpha*lower_alpha)
+        middle_alpha = sqrt(upper_alpha * lower_alpha)
         call get_ah_lowest_eigenvec(middle_alpha)
         if (error /= 0) return
         middle_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
@@ -780,16 +869,16 @@ contains
         iter = 0
         do while (upper_alpha - lower_alpha > alpha_conv_factor * upper_alpha)
             ! targeted trust radius is in upper bracket
-            if (lower_trust_dist*middle_trust_dist > 0.0_rp) then
+            if (lower_trust_dist * middle_trust_dist > 0.0_rp) then
                 lower_alpha = middle_alpha
                 lower_trust_dist = middle_trust_dist
-                ! targeted trust radius is in lower bracket
+            ! targeted trust radius is in lower bracket
             else
                 upper_alpha = middle_alpha
                 upper_trust_dist = middle_trust_dist
             end if
             ! get new middle alpha
-            middle_alpha = sqrt(upper_alpha*lower_alpha)
+            middle_alpha = sqrt(upper_alpha * lower_alpha)
             call get_ah_lowest_eigenvec(middle_alpha)
             if (error /= 0) return
             middle_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
@@ -802,8 +891,6 @@ contains
                 return
             end if
         end do
-
-        bracketed = .true.
 
     contains
 
@@ -829,16 +916,17 @@ contains
             if (error /= 0) return
 
             ! check if eigenvector has level-shift component
-            if (abs(eigvec(1)) <= numerical_zero) then
-                call settings%log("Trial subspace too small. Increase "// &
-                                  "n_random_trial_vectors.", verbosity_error, .true.)
+            if (abs(eigvec(1)) <= tiny(1.0_rp)) then
+                call settings%log("Lowest augmented Hessian eigenvector does not "// &
+                                  "have level-shift component.", verbosity_error, &
+                                  .true.)
                 error = 1
                 return
             end if
 
             ! scale eigenvector such that first element is equal to one and divide by
             ! alpha to get solution in reduced space
-            red_space_solution = eigvec(2:)/eigvec(1)/alpha
+            red_space_solution = eigvec(2:) / eigvec(1) / alpha
             deallocate(eigvec)
 
             ! get solution in full space
@@ -1106,16 +1194,17 @@ contains
 
     end subroutine symm_mat_min_eig
 
-    real(rp) function min_eigval(matrix, settings, error)
+    subroutine symm_mat_diag(symm_matrix, eigvals, eigvecs, settings, error)
         !
-        ! this function calculates the lowest eigenvalue of a symmetric matrix
+        ! this subroutine returns eigenvalues and eigenvectors of a symmetric matrix
         !
-        real(rp), intent(in) :: matrix(:, :)
+        real(rp), intent(in) :: symm_matrix(:, :)
         class(settings_type), intent(in) :: settings
+        real(rp), intent(out) :: eigvals(:), eigvecs(:, :)
         integer(ip), intent(out) :: error
 
-        real(rp), allocatable :: eigvals(:), temp(:, :), work(:)
         integer(ip) :: n, lwork, info
+        real(rp), allocatable :: work(:)
         character(300) :: msg
         external :: dsyev
 
@@ -1123,24 +1212,24 @@ contains
         error = 0
 
         ! size of matrix
-        n = size(matrix, 1)
+        n = size(symm_matrix, 1)
 
-        ! copy matrix to avoid modification of original matrix
-        temp = matrix
+        ! copy matrix
+        eigvecs = symm_matrix
 
         ! query optimal workspace size
         lwork = -1
-        allocate(eigvals(n), work(1))
-        call dsyev("N", "U", n, temp, n, eigvals, work, lwork, info)
+        allocate(work(1))
+        call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
         lwork = int(work(1), kind=ip)
         deallocate(work)
         allocate(work(lwork))
 
-        ! compute eigenvalues
-        call dsyev("N", "U", n, temp, n, eigvals, work, lwork, info)
+        ! perform eigendecomposition
+        call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
 
-        ! deallocate temporary and work array
-        deallocate(temp, work)
+        ! deallocate work array
+        deallocate(work)
 
         ! check for successful execution
         if (info /= 0) then
@@ -1151,13 +1240,7 @@ contains
             return
         end if
 
-        ! get lowest eigenvalue
-        min_eigval = eigvals(1)
-
-        ! deallocate eigenvalues
-        deallocate(eigvals)
-
-    end function min_eigval
+    end subroutine symm_mat_diag
 
     subroutine init_rng(seed)
         !
@@ -1898,10 +1981,11 @@ contains
         real(rp), allocatable :: red_space_basis(:, :), h_basis(:, :), aug_hess(:, :), &
                                  red_space_solution(:), red_hess_vec(:), basis_vec(:), &
                                  h_basis_vec(:), h_solution(:), residual(:), &
-                                 solution_normalized(:), last_solution_normalized(:)
-        integer(ip) :: n_trial, i, initial_imicro                          
-        logical :: accept_step, micro_converged, newton, bracketed
-        real(rp) :: aug_hess_min_eigval, residual_norm, red_factor, &
+                                 solution_normalized(:), last_solution_normalized(:), &
+                                 red_space_hess_eigvals(:), red_space_hess_eigvecs(:, :)
+        integer(ip) :: n_trial, i, initial_imicro, min_idx
+        logical :: accept_step, micro_converged, newton
+        real(rp) :: residual_norm, red_factor, &
                     initial_residual_norm, new_func, ratio, minres_tol
         real(rp), parameter :: newton_eigval_thresh = -1e-5_rp, &
                                level_shift_local_thres = 1e-12_rp, &
@@ -1955,9 +2039,13 @@ contains
                 ! do a Newton step if the model is positive definite and the step is 
                 ! within the trust region
                 newton = .false.
-                aug_hess_min_eigval = min_eigval(aug_hess(2:, 2:), settings, error)
+                allocate(red_space_hess_eigvals(n_trial), &
+                         red_space_hess_eigvecs(n_trial, n_trial))
+                call symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                   red_space_hess_eigvecs, settings, error)
                 if (error /= 0) return
-                if (aug_hess_min_eigval > newton_eigval_thresh) then
+                min_idx = minloc(red_space_hess_eigvals, dim=1)
+                if (red_space_hess_eigvals(min_idx) > newton_eigval_thresh) then
                     call newton_step(aug_hess, grad_norm, red_space_basis, &
                                      solution, red_space_solution, settings, error)
                     if (error /= 0) return
@@ -1967,12 +2055,13 @@ contains
 
                 ! otherwise perform bisection to find the level shift
                 if (.not. newton) then
-                    call bisection(aug_hess, grad_norm, red_space_basis, trust_radius, &
-                                   solution, red_space_solution, mu, bracketed, &
+                    call bisection(aug_hess, grad_norm, red_space_basis, &
+                                   red_space_hess_eigvals, red_space_hess_eigvecs, &
+                                   trust_radius, solution, red_space_solution, mu, &
                                    settings, error)
                     if (error /= 0) return
-                    if (.not. bracketed) exit
                 end if
+                deallocate(red_space_hess_eigvals, red_space_hess_eigvecs)
 
                 ! calculate Hessian linear transformation of solution
                 call dgemv("N", n_param, n_trial, 1.0_rp, h_basis, n_param, &

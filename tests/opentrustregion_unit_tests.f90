@@ -500,10 +500,13 @@ contains
         type(solver_settings_type) :: settings
         integer(ip), parameter :: n_trial = 3
         real(rp) :: red_space_basis(n_param, n_trial), vars(n_param), grad(n_param), &
-                    grad_norm, aug_hess(n_trial + 1, n_trial + 1), solution(n_param), &
-                    red_space_solution(n_trial), trust_radius, mu
-        integer(ip) :: i, j, error
-        logical :: bracketed
+                    grad_norm, aug_hess(n_trial + 1, n_trial + 1), &
+                    red_space_hess_eigvals(n_trial), &
+                    red_space_hess_eigvecs(n_trial, n_trial), solution(n_param), &
+                    red_space_solution(n_trial), trust_radius, mu, work(9)
+        integer(ip) :: i, j, error, info
+
+        external :: dsyev
 
         ! assume tests pass
         test_bisection = .true.
@@ -538,17 +541,19 @@ contains
             end do
         end do
 
-        ! perform bisection, check whether error has occured, whether the correct trust 
-        ! region was bracketed, determine whether resulting solution is correct in 
-        ! reduced and full space and respects target trust radius
-        call bisection(aug_hess, grad_norm, red_space_basis, trust_radius, solution, &
-                       red_space_solution, mu, bracketed, settings, error)
+        ! diagonalize Hessian
+        red_space_hess_eigvecs = aug_hess(2:, 2:)
+        call dsyev("V", "U", n_trial, red_space_hess_eigvecs, n_trial, &
+                   red_space_hess_eigvals, work, 9_ip, info)
+
+        ! perform bisection, check whether error has occured and determine whether 
+        ! resulting solution is correct in reduced and full space and respects target 
+        ! trust radius
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
         if (error /= 0) then
             write (stderr, *) "test_bisection failed: Produced error."
-            test_bisection = .false.
-        end if
-        if (.not. bracketed) then
-            write (stderr, *) "test_bisection failed: Unable to bracket trust region."
             test_bisection = .false.
         end if
         if (abs(norm2(solution) - trust_radius) > tol) then
@@ -584,17 +589,18 @@ contains
             end do
         end do
 
+        ! diagonalize Hessian
+        red_space_hess_eigvecs = aug_hess(2:, 2:)
+        call dsyev("V", "U", n_trial, red_space_hess_eigvecs, n_trial, &
+                   red_space_hess_eigvals, work, 9_ip, info)
+
         ! perform bisection and determine whether routine correctly throws error since
         ! minimum is closer than target trust radius and no level shift is necessary
-        call bisection(aug_hess, grad_norm, red_space_basis, trust_radius, solution, &
-                       red_space_solution, mu, bracketed, settings, error)
-        if (error /= 0) then
-            write (stderr, *) "test_bisection failed: Produced error."
-            test_bisection = .false.
-        end if
-        if (bracketed) then
-            write (stderr, *) "test_bisection failed: Bisection should fail if "// &
-                "minimum is closer than trust radius."
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
+        if (error == 0) then
+            write (stderr, *) "test_bisection failed: Failed to produce error."
             test_bisection = .false.
         end if
 
@@ -781,19 +787,19 @@ contains
 
     end function test_symm_mat_min_eig
 
-    logical(c_bool) function test_min_eigval() bind(C)
+    logical(c_bool) function test_symm_mat_diag() bind(C)
         !
-        ! this function tests the function for determining the minimum eigenvalue for
-        ! a symmetric matrix
+        ! this function tests the function for determining the eigenvalues and 
+        ! eigenvectors for a symmetric matrix
         !
-        use opentrustregion, only: solver_settings_type, min_eigval
+        use opentrustregion, only: solver_settings_type, symm_mat_diag
 
         type(solver_settings_type) :: settings
-        real(rp) :: matrix(3, 3), matrix_min_eigval
+        real(rp) :: matrix(3, 3), eigvals(3), eigvecs(3, 3)
         integer(ip) :: error
 
         ! assume tests pass
-        test_min_eigval = .true.
+        test_symm_mat_diag = .true.
 
         ! setup settings object
         call setup_settings(settings)
@@ -804,18 +810,19 @@ contains
                           1.0_rp, 2.0_rp, 5.0_rp], [3, 3])
 
         ! call function and determine if lowest eigenvalue is found
-        matrix_min_eigval = min_eigval(matrix, settings, error)
+        call symm_mat_diag(matrix, eigvals, eigvecs, settings, error)
         if (error /= 0) then
-            write (stderr, *) "test_min_eigval failed: Produced error."
-            test_min_eigval = .false.
+            write (stderr, *) "test_symm_mat_diag failed: Produced error."
+            test_symm_mat_diag = .false.
         end if
-        if (abs(matrix_min_eigval - 2.30797852837_rp) > tol) then
-            write (stderr, *) "test_min_eigval failed: Incorrect minimum "// &
-                "eigenvalue for matrix."
-            test_min_eigval = .false.
+        if (norm2(matmul(matrix, eigvecs) - eigvecs * spread(eigvals, dim=1, &
+            ncopies=size(eigvecs, 1))) > tol) then
+            write (stderr, *) "test_symm_mat_diag failed: Incorrect eigenvectors "// &
+                "and eigenvalues for matrix."
+            test_symm_mat_diag = .false.
         end if
 
-    end function test_min_eigval
+    end function test_symm_mat_diag
 
     logical(c_bool) function test_init_rng() bind(C)
         !
