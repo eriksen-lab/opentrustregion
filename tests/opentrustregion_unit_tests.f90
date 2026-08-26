@@ -1021,6 +1021,7 @@ contains
         !
         use opentrustregion, only: solver_settings_type, gram_schmidt, &
                                    gram_schmidt_zero_vector_error_msg, &
+                                   gram_schmidt_lin_dep_error_msg, &
                                    gram_schmidt_too_many_vectors_error_msg
 
         type(solver_settings_type) :: settings
@@ -1103,6 +1104,22 @@ contains
             (adjustl(log_message) /= gram_schmidt_zero_vector_error_msg)) then
             write (stderr, *) "test_gram_schmidt failed: No error returned during "// &
                 "orthogonalization for zero vector."
+            test_gram_schmidt = .false.
+        end if
+
+        ! define linearly dependent vector
+        vector = space(:, 1)
+
+        ! reset log message
+        log_message = ""
+
+        ! perform Gram-Schmidt orthogonalization and determine if function correctly
+        ! throws error
+        call gram_schmidt(vector, space, settings, error)
+        if ((error /= 2) .or. &
+            (adjustl(log_message) /= gram_schmidt_lin_dep_error_msg)) then
+            write (stderr, *) "test_gram_schmidt failed: No error returned during "// &
+                "orthogonalization for linearly dependent vector."
             test_gram_schmidt = .false.
         end if
 

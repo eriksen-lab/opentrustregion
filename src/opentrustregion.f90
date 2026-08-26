@@ -53,6 +53,9 @@ module opentrustregion
         gram_schmidt_too_many_vectors_error_msg = &
             "Number of vectors in Gram-Schmidt procedure larger than dimension of "// &
             "vector space.", &
+        gram_schmidt_lin_dep_error_msg = &
+            "Vector passed to Gram-Schmidt procedure is linearly dependent on "// &
+            "previously orthonormalized vectors.", &
         project_warning_msg = &
             "Custom projection is provided. To optimize performance, OTR assumes "// &
             "that all other provided routines (update_orbs, hess_x, precond) are "// &
@@ -1247,26 +1250,30 @@ contains
         n_trial = size(red_space_basis, 2)
 
         do i = n_trial - settings%n_random_trial_vectors + 1, n_trial
-            call random_number(red_space_basis(:, i))
-            red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
-            do while (dnrm2(n_param, red_space_basis(:, i), 1_ip) < rnd_vector_min_norm)
+            error = 2
+            do while (error == 2)
                 call random_number(red_space_basis(:, i))
                 red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
+                do while (dnrm2(n_param, red_space_basis(:, i), 1_ip) < &
+                          rnd_vector_min_norm)
+                    call random_number(red_space_basis(:, i))
+                    red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
+                end do
+                if (associated(settings%project)) then
+                    call settings%project(red_space_basis(:, i), error)
+                    call add_error_origin(error, error_project, settings)
+                    if (error /= 0) return
+                end if
+                call gram_schmidt(red_space_basis(:, i), red_space_basis(:, :i - 1), &
+                                  settings, error, silent_on_error=.true.)
             end do
-            if (associated(settings%project)) then
-                call settings%project(red_space_basis(:, i), error)
-                call add_error_origin(error, error_project, settings)
-                if (error /= 0) return
-            end if
-            call gram_schmidt(red_space_basis(:, i), red_space_basis(:, :i - 1), &
-                              settings, error)
             if (error /= 0) return
         end do
 
     end subroutine generate_random_trial_vectors
 
     subroutine gram_schmidt(vector, space, settings, error, lin_trans_vector, &
-                            lin_trans_space)
+                            lin_trans_space, silent_on_error)
         !
         ! this function orthonormalizes a vector with respect to a vector space
         ! this function can additionally also return a linear transformation of the 
@@ -1279,6 +1286,7 @@ contains
         integer(ip), intent(out) :: error
         real(rp), intent(inout), optional :: lin_trans_vector(:)
         real(rp), intent(in), optional :: lin_trans_space(:, :)
+        logical, intent(in), optional :: silent_on_error
 
         real(rp), allocatable :: orth(:)
         real(rp) :: dot, norm
@@ -1312,47 +1320,40 @@ contains
         allocate(orth(size(space, 2)))
 
         iter = 0
-        if (.not. (present(lin_trans_vector) .and. present(lin_trans_space))) then
-            do while (.true.)
-                do i = 1, n_vectors
-                    vector = orthogonal_projection(vector, space(:, i))
-                end do
-                vector = vector / dnrm2(n_param, vector, 1_ip)
-
-                call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, &
-                           vector, 1_ip, 0.0_rp, orth, 1_ip)
-                if (maxval(abs(orth)) < orth_thres) exit
-                iter = iter + 1
-                if (iter > 100) then
-                    call settings%log("Maximum number of Gram-Schmidt iterations "// &
-                                      "reached.", verbosity_error, .true.)
-                    error = 1
-                    return
-                end if
+        do while (.true.)
+            do i = 1, n_vectors
+                dot = ddot(n_param, vector, 1_ip, space(:, i), 1_ip)
+                vector = vector - dot*space(:, i)
+                if (present(lin_trans_vector) .and. present(lin_trans_space)) &
+                    lin_trans_vector = lin_trans_vector - dot*lin_trans_space(:, i)
             end do
-        else
-            do while (.true.)
-                do i = 1, n_vectors
-                    dot = ddot(n_param, vector, 1_ip, space(:, i), 1_ip)
-                    vector = vector - dot * space(:, i)
-                    lin_trans_vector = lin_trans_vector - dot * lin_trans_space(:, i)
-                end do
-                norm = dnrm2(n_param, vector, 1_ip)
-                vector = vector / norm
-                lin_trans_vector = lin_trans_vector / norm
-
-                call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, vector, &
-                           1_ip, 0.0_rp, orth, 1_ip)
-                if (maxval(abs(orth)) < orth_thres) exit
-                iter = iter + 1
-                if (iter > 100) then
-                    call settings%log("Maximum number of Gram-Schmidt iterations "// &
-                                      "reached.", verbosity_error, .true.)
-                    error = 1
-                    return
+            norm = dnrm2(n_param, vector, 1_ip)
+            if (norm < numerical_zero) then
+                error = 2
+                if (.not. present(silent_on_error)) then
+                    call settings%log(gram_schmidt_lin_dep_error_msg, verbosity_error, &
+                                      .true.)
+                else
+                    if (.not. silent_on_error) &
+                        call settings%log(gram_schmidt_lin_dep_error_msg, &
+                                          verbosity_error, .true.)
                 end if
-            end do
-        end if
+                return
+            end if
+            vector = vector / norm
+            if (present(lin_trans_vector)) lin_trans_vector = lin_trans_vector / norm
+
+            call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, vector, &
+                        1_ip, 0.0_rp, orth, 1_ip)
+            if (maxval(abs(orth)) < orth_thres) exit
+            iter = iter + 1
+            if (iter > 100) then
+                call settings%log("Maximum number of Gram-Schmidt iterations "// &
+                                  "reached.", verbosity_error, .true.)
+                error = 1
+                return
+            end if
+        end do
 
         ! allocate array for orthogonalities
         deallocate(orth)
