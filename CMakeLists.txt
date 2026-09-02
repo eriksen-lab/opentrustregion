@@ -40,6 +40,9 @@ message(STATUS "Showing option ${otr}_HOST_PROVIDES_BLAS: ${${otr}_HOST_PROVIDES
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 message(STATUS "Showing option BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 
+option(${otr}_ENABLE_XHOST "Optimize for current machine's instruction set" ON)
+message(STATUS "Showing option ${otr}_ENABLE_XHOST: ${${otr}_ENABLE_XHOST}")
+
 # ====  Build  ==================================================================
 
 # default build type
@@ -50,10 +53,21 @@ endif()
 # set flags for build types
 if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     set(CMAKE_Fortran_FLAGS_DEBUG "-g -Wall -Wextra -fcheck=all -fbacktrace")
-    set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -march=native")
+
+    if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
+        set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
+    else()
+        set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -march=native")
+    endif()
+
 elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
     set(CMAKE_Fortran_FLAGS_DEBUG "-g -warn all -traceback")
-    set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -xHost")
+
+    if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
+        set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
+    else()
+        set(CMAKE_Fortran_FLAGS_RELEASE "-O2 -xHost")
+    endif()
 endif()
 
 # user-supplied integer size
