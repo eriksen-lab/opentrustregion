@@ -133,9 +133,9 @@ module opentrustregion
         logical :: initialized = .false.
         real(rp) :: conv_tol
         integer(ip) :: n_random_trial_vectors, jacobi_davidson_start, seed, verbose
-        procedure(precond_type), pointer, nopass :: precond
-        procedure(project_type), pointer, nopass :: project
-        procedure(logger_type), pointer, nopass :: logger
+        procedure(precond_type), pointer, nopass :: precond => null()
+        procedure(project_type), pointer, nopass :: project => null()
+        procedure(logger_type), pointer, nopass :: logger => null()
     contains
         procedure :: log => print_message
         procedure(init_type), deferred :: init
@@ -155,7 +155,7 @@ module opentrustregion
         real(rp) :: start_trust_radius, global_red_factor, local_red_factor
         integer(ip) :: n_macro, n_micro
         character(kw_len) :: subsystem_solver
-        procedure(conv_check_type), pointer, nopass :: conv_check
+        procedure(conv_check_type), pointer, nopass :: conv_check => null()
     contains
         procedure :: init => init_solver_settings, print_results
     end type
