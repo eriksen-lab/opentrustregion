@@ -6,12 +6,16 @@
 
 module opentrustregion
 
-    use, intrinsic :: iso_fortran_env, only: int32, int64, real64, &
+    use, intrinsic :: iso_fortran_env, only: int32, int64, real64, real128, &
                                              stdout => output_unit, stderr => error_unit
 
     implicit none
 
+#ifdef USE_QUAD
+    integer, parameter :: rp = real128  ! IEEE 754 binary128
+#else
     integer, parameter :: rp = real64
+#endif
 #ifdef USE_ILP64
     integer, parameter :: ip = int64  ! 64-bit integers
 #else

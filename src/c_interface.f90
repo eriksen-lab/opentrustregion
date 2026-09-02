@@ -15,10 +15,17 @@ module c_interface
                                            c_ptr, c_funptr, c_f_pointer, &
                                            c_f_procpointer, c_associated, c_char, &
                                            c_null_char, c_null_funptr
+#ifdef USE_QUAD
+    use, intrinsic :: iso_c_binding, only: c_float128
+#endif
 
     implicit none
 
+#ifdef USE_QUAD
+    integer, parameter :: c_rp = c_float128  ! gfortran extension: kind(__float128)
+#else
     integer, parameter :: c_rp = c_double
+#endif
 #ifdef USE_ILP64
     integer, parameter :: c_ip = c_int64_t  ! 64-bit integers
     logical(c_bool), bind(C) :: ilp64 = .true._c_bool
