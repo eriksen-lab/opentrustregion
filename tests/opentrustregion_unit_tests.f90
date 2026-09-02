@@ -55,6 +55,10 @@ module opentrustregion_unit_tests
     ! global log message
     character(:), allocatable :: log_message
 
+    ! define global variables for ill-conditioned quadratic model used to test the 
+    ! guard that triggers when the reduced space reaches the full space size
+    real(rp) :: overflow_hess(n_param, n_param), overflow_grad(n_param)
+
 contains
 
     ! 6D Hartmann function definition
@@ -145,6 +149,37 @@ contains
         hess_x = hartmann6d_hess_x(x)
 
     end subroutine hess_x_fun
+
+    subroutine overflow_hess_x(x, hess_x, error)
+        !
+        ! this function describes the Hessian linear transformation operation for the
+        ! ill-conditioned quadratic model used to test the guard that triggers when the 
+        ! reduced space reaches the full space size
+        !
+        real(rp), intent(in), target :: x(:)
+        real(rp), intent(out), target :: hess_x(:)
+        integer(ip), intent(out) :: error
+
+        error = 0
+        hess_x = matmul(overflow_hess, x)
+
+    end subroutine overflow_hess_x
+
+    function overflow_obj_func(delta_vars, error) result(func)
+        !
+        ! this function describes the objective function evaluation for the
+        ! ill-conditioned quadratic model used to test the guard that triggers when the 
+        ! reduced space reaches the full space size
+        !
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        real(rp) :: func
+
+        error = 0
+        func = dot_product(overflow_grad, delta_vars) + 0.5_rp * &
+               dot_product(delta_vars, matmul(overflow_hess, delta_vars))
+
+    end function overflow_obj_func
 
     function obj_func(delta_vars, error) result(func)
         !
@@ -419,6 +454,34 @@ contains
             > tol) then
             write (stderr, *) "test_stability_check failed: Stability check does "// &
                 "not return correct direction for saddle point."
+            test_stability_check = .false.
+        end if
+
+        ! force the reduced space to grow until it spans the full parameter space by 
+        ! setting an unreachable convergence tolerance
+        call settings%init(error)
+        settings%conv_tol = 0.0_rp
+
+        call stability_check(h_diag, hess_x_funptr, stable, error, settings, direction)
+        if (error /= 0) then
+            write (stderr, *) "test_stability_check failed: Produced error when "// &
+                "reduced space grows to dimension of full parameter space."
+            test_stability_check = .false.
+        end if
+        if (stable) then
+            write (stderr, *) "test_stability_check failed: Stability check "// &
+                "incorrectly classifies stability of saddle point when reduced "// &
+                "space grows to dimension of full parameter space."
+            test_stability_check = .false.
+        end if
+        if (abs(abs(dot_product(direction, &
+                                [-0.173375920238_rp, -0.518489821791_rp, &
+                                 -6.432848975252e-3_rp, -0.340127852882_rp, &
+                                 3.066460316955e-3_rp, 0.765095650196_rp])) - 1.0_rp) &
+            > tol) then
+            write (stderr, *) "test_stability_check failed: Stability check does "// &
+                "not return correct direction for saddle point when reduced space "// &
+                "grows to dimension of full parameter space."
             test_stability_check = .false.
         end if
 
@@ -1928,7 +1991,8 @@ contains
                                    trust_radius_shrink_factor, &
                                    trust_radius_expand_factor
 
-        real(rp) :: func, grad_norm, trust_radius, mu, ratio, solution_norm
+        real(rp) :: func, grad_norm, trust_radius, mu, ratio, solution_norm, &
+                    input_trust_radius, overflow_residual_tol
         real(rp), dimension(n_param) :: grad, h_diag, solution
         integer(ip) :: i, imicro, imicro_jacobi_davidson, error
         procedure(obj_func_type), pointer :: obj_func_funptr
@@ -2085,6 +2149,53 @@ contains
             write (stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not lie at trust region boundary near saddle point with "// &
                 "Jacobi-Davidson solver."
+            test_level_shifted_davidson = .false.
+        end if
+
+        ! force the reduced space to grow until it spans the full parameter space, a 
+        ! vanishing reduction factor prevents natural convergence, and one large 
+        ! diagonal entry ensures that even the exact full-rank solution's residual 
+        ! carries enough floating-point noise to stay above the solver's fixed 
+        ! convergence floor
+        call setup_settings(settings)
+        settings%local_red_factor = 0.0_rp
+        settings%global_red_factor = 0.0_rp
+        overflow_hess = 0.0_rp
+        do i = 1, n_param
+            overflow_hess(i, i) = 1.0_rp
+        end do
+        overflow_hess(1, 1) = 1e8_rp
+        overflow_grad = 1.0_rp
+        overflow_residual_tol = 1e2_rp * epsilon(1.0_rp) * overflow_hess(1, 1)
+        h_diag = [(overflow_hess(i, i), i = 1, n_param)]
+        grad_norm = norm2(overflow_grad)
+        func = 0.0_rp
+        input_trust_radius = 1.0_rp
+        trust_radius = input_trust_radius
+        obj_func_funptr => overflow_obj_func
+        hess_x_funptr => overflow_hess_x
+
+        call level_shifted_davidson(func, overflow_grad, grad_norm, h_diag, n_param, &
+                                    obj_func_funptr, hess_x_funptr, settings, &
+                                    trust_radius, solution, mu, imicro, &
+                                    imicro_jacobi_davidson, jacobi_davidson_started, &
+                                    max_precision_reached, error)
+        if (error /= 0) then
+            write (stderr, *) "test_level_shifted_davidson failed: Produced error "// &
+                "when reduced space grows to dimension of full parameter space."
+            test_level_shifted_davidson = .false.
+        end if
+        if (abs(norm2(solution) - input_trust_radius) > overflow_residual_tol) then
+            write (stderr, *) "test_level_shifted_davidson failed: Solution does "// &
+                "not lie at trust region boundary when reduced space grows to "// &
+                "dimension of full parameter space."
+            test_level_shifted_davidson = .false.
+        end if
+        if (sum(abs(overflow_grad + matmul(overflow_hess, solution) - mu * solution)) &
+            > overflow_residual_tol) then
+            write (stderr, *) "test_level_shifted_davidson failed: Solution does "// &
+                "not describe level-shifted Newton step when reduced space grows "// &
+                "to dimension of full parameter space."
             test_level_shifted_davidson = .false.
         end if
 
