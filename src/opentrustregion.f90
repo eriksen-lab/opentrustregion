@@ -29,7 +29,11 @@ module opentrustregion
                            trust_radius_expand_factor = 1.2_rp
 
     ! define error codes
-    integer(ip), parameter :: error_solver = 100, error_stability_check = 200, &
+    integer(ip), parameter :: error_solver = 100, &
+                              error_solver_max_iter = error_solver + 2, &
+                              error_stability_check = 200, &
+                              error_stability_check_max_iter = error_stability_check + &
+                                                               2, &
                               error_obj_func = 1100, error_update_orbs = 1200, &
                               error_hess_x = 1300, error_precond = 1400, &
                               error_conv_check = 1500, error_project = 1600
@@ -438,7 +442,7 @@ contains
         if (.not. macro_converged) then
             call settings%log("Orbital optimization has not converged!", &
                               verbosity_error, .true.)
-            error = error_solver + 1
+            error = error_solver_max_iter
             return
         end if
 
@@ -627,9 +631,12 @@ contains
         end do
 
         ! check if stability check has converged
-        if (stability_rms >= settings%conv_tol) &
+        if (stability_rms >= settings%conv_tol) then
             call settings%log("Stability check has not converged in the given "// &
                               "number of iterations.", verbosity_error, .true.)
+            error = error_stability_check_max_iter
+            return
+        end if
 
         ! determine if saddle point
         stable = eigval > stability_thresh

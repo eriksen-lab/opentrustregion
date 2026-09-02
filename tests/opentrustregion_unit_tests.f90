@@ -253,7 +253,8 @@ contains
         !
         use opentrustregion, only: update_orbs_type, obj_func_type, &
                                    solver_settings_type, solver, &
-                                   default_settings => default_solver_settings
+                                   default_settings => default_solver_settings, &
+                                   error_solver_max_iter
 
         real(rp), parameter :: var_thres = 1e-6_rp
         integer(ip) :: error
@@ -345,6 +346,21 @@ contains
             test_solver = .false.
         end if
 
+        ! force non-convergence by allowing only a single macro iteration from a
+        ! generic starting point and check that the specific maximum iteration error 
+        ! code is returned
+        curr_vars = [0.9_rp, 0.1_rp, 0.7_rp, 0.2_rp, 0.6_rp, 0.4_rp]
+        update_orbs_funptr => update_orbs
+        obj_func_funptr => obj_func
+        call settings%init(error)
+        settings%n_macro = 1
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= error_solver_max_iter) then
+            write (stderr, *) "test_solver failed: Did not return maximum "// &
+                "iteration error code when exceeding n_macro."
+            test_solver = .false.
+        end if
+
         ! deallocate space for the gradient
         deallocate(final_grad)
 
@@ -354,7 +370,8 @@ contains
         !
         ! this function tests the stability check subroutine
         !
-        use opentrustregion, only: hess_x_type, stability_settings_type, stability_check
+        use opentrustregion, only: hess_x_type, stability_settings_type, &
+                                   stability_check, error_stability_check_max_iter
 
         real(rp) :: vars(6), h_diag(6), direction(6)
         procedure(hess_x_type), pointer :: hess_x_funptr
@@ -419,6 +436,17 @@ contains
             > tol) then
             write (stderr, *) "test_stability_check failed: Stability check does "// &
                 "not return correct direction for saddle point."
+            test_stability_check = .false.
+        end if
+
+        ! force non-convergence by allowing only a single iteration and check that the 
+        ! specific maximum iteration error code is returned
+        call settings%init(error)
+        settings%n_iter = 1
+        call stability_check(h_diag, hess_x_funptr, stable, error, settings)
+        if (error /= error_stability_check_max_iter) then
+            write (stderr, *) "test_stability_check failed: Did not return maximum "// &
+                "iteration error code when exceeding n_iter."
             test_stability_check = .false.
         end if
 
