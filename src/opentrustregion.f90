@@ -571,6 +571,9 @@ contains
 
                 ! orthonormalize to current orbital space to get new basis vector
                 call gram_schmidt(basis_vec, red_space_basis, settings, error)
+                ! check if new vector is linearly dependent and the reduced space 
+                ! cannot be usefully expanded further due to degeneracy and stop here
+                if (error == 2) exit
                 call add_error_origin(error, error_stability_check, settings)
                 if (error /= 0) return
 
@@ -590,10 +593,12 @@ contains
                 call add_error_origin(error, error_stability_check, settings)
                 if (error /= 0) return
 
-                ! orthonormalize to current orbital space to get new basis 
-                ! vector
+                ! orthonormalize to current orbital space to get new basis vector
                 call gram_schmidt(basis_vec, red_space_basis, settings, error, &
                                   lin_trans_vector=h_basis_vec, lin_trans_space=h_basis)
+                ! check if new vector is linearly dependent and the reduced space 
+                ! cannot be usefully expanded further due to degeneracy and stop here
+                if (error == 2) exit
                 call add_error_origin(error, error_stability_check, settings)
                 if (error /= 0) return
 
@@ -2051,7 +2056,16 @@ contains
 
                     ! orthonormalize to current orbital space to get new basis vector
                     call gram_schmidt(basis_vec, red_space_basis, settings, error)
-                    if (error /= 0) return
+                    if (error == 2) then
+                        ! new vector is linearly dependent and the reduced space cannot
+                        ! be usefully expanded further due to degeneracy, so stop here 
+                        ! and flag maximum precision
+                        micro_converged = .true.
+                        max_precision_reached = .true.
+                        exit
+                    else if (error /= 0) then
+                        return
+                    end if
 
                     ! add linear transformation of new basis vector
                     call hess_x_funptr(basis_vec, h_basis_vec, error)
@@ -2072,7 +2086,16 @@ contains
                     call gram_schmidt(basis_vec, red_space_basis, settings, error, &
                                       lin_trans_vector=h_basis_vec, &
                                       lin_trans_space=h_basis)
-                    if (error /= 0) return
+                    if (error == 2) then
+                        ! new vector is linearly dependent and the reduced space cannot
+                        ! be usefully expanded further due to degeneracy, so stop here 
+                        ! and flag maximum precision
+                        micro_converged = .true.
+                        max_precision_reached = .true.
+                        exit
+                    else if (error /= 0) then
+                        return
+                    end if
 
                     ! check if resulting linear transformation still respects Hessian 
                     ! symmetry which can happen due to numerical noise accumulation
