@@ -91,8 +91,9 @@ else()
         )
     elseif(${otr}_HOST_PROVIDES_BLAS)
         message(FATAL_ERROR
-            "OpenTrustRegion_HOST_PROVIDES_BLAS requires INTEGER_SIZE to be set "
-            "Please set INTEGER_SIZE to 4 (LP64) or 8 (ILP64) to match the host's BLAS/LAPACK integer width.")
+            "OpenTrustRegion_HOST_PROVIDES_BLAS requires INTEGER_SIZE to be set. "
+            "Please set INTEGER_SIZE to 4 (LP64) or 8 (ILP64) to match the host's BLAS/LAPACK integer width."
+        )
     else()
         # autodetect BLAS and LAPACK, try 32-bit first, then 64-bit
         set(BLA_SIZEOF_INTEGER 4 CACHE INTERNAL "BLAS/LAPACK integer size")
