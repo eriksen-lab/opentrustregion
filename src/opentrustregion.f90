@@ -136,9 +136,9 @@ module opentrustregion
         logical :: initialized = .false.
         real(rp) :: conv_tol
         integer(ip) :: n_random_trial_vectors, jacobi_davidson_start, seed, verbose
-        procedure(precond_type), pointer, nopass :: precond
-        procedure(project_type), pointer, nopass :: project
-        procedure(logger_type), pointer, nopass :: logger
+        procedure(precond_type), pointer, nopass :: precond => null()
+        procedure(project_type), pointer, nopass :: project => null()
+        procedure(logger_type), pointer, nopass :: logger => null()
     contains
         procedure :: log => print_message
         procedure(init_type), deferred :: init
@@ -158,7 +158,7 @@ module opentrustregion
         real(rp) :: start_trust_radius, global_red_factor, local_red_factor
         integer(ip) :: n_macro, n_micro
         character(kw_len) :: subsystem_solver
-        procedure(conv_check_type), pointer, nopass :: conv_check
+        procedure(conv_check_type), pointer, nopass :: conv_check => null()
     contains
         procedure :: init => init_solver_settings, print_results
     end type
@@ -558,6 +558,9 @@ contains
             stability_rms = dnrm2(n_param, residual, 1_ip) / &
                 sqrt(real(n_param, kind=rp))
             if (stability_rms < settings%conv_tol) exit
+
+            ! stop when reduced space grows larger than full space
+            if (n_trial >= n_param) exit
 
             if (settings%diag_solver == "davidson" .or. iter <= &
                 settings%jacobi_davidson_start) then
@@ -2029,6 +2032,16 @@ contains
 
                 ! save current solution
                 last_solution_normalized = solution_normalized
+
+                ! the reduced space is not reset when a trust region step is rejected, 
+                ! so after enough rejected steps it grows past the dimension of the 
+                ! full parameter space, so in that case stop here and flag maximum
+                ! precision to keep the caller from shrinking the trust radius further
+                if (n_trial >= n_param) then
+                    micro_converged = .true.
+                    max_precision_reached = .true.
+                    exit
+                end if
 
                 if (.not. jacobi_davidson_started) then
                     ! precondition residual
