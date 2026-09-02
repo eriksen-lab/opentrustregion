@@ -2029,12 +2029,10 @@ contains
                 ! save current solution
                 last_solution_normalized = solution_normalized
 
-                ! the reduced space is not reset when a trust region step is rejected, so
-                ! after enough rejected steps it grows past the dimension of the full
-                ! parameter space and gram_schmidt fails. once it spans that space the
-                ! reduced space solution is already exact, so stop here; flagging max
-                ! precision keeps the caller from shrinking the trust radius against a
-                ! reduced space that can no longer grow
+                ! the reduced space is not reset when a trust region step is rejected, 
+                ! so after enough rejected steps it grows past the dimension of the 
+                ! full parameter space, so in that case stop here and flag max 
+                ! precision to keep the caller from shrinking the trust radius further
                 if (n_trial >= n_param) then
                     micro_converged = .true.
                     max_precision_reached = .true.
