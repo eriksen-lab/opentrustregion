@@ -556,6 +556,9 @@ contains
                 sqrt(real(n_param, kind=rp))
             if (stability_rms < settings%conv_tol) exit
 
+            ! stop when reduced space grows larger than full space
+            if (n_trial >= n_param) exit
+
             if (settings%diag_solver == "davidson" .or. iter <= &
                 settings%jacobi_davidson_start) then
                 ! precondition residual
@@ -2031,7 +2034,7 @@ contains
 
                 ! the reduced space is not reset when a trust region step is rejected, 
                 ! so after enough rejected steps it grows past the dimension of the 
-                ! full parameter space, so in that case stop here and flag max 
+                ! full parameter space, so in that case stop here and flag maximum
                 ! precision to keep the caller from shrinking the trust radius further
                 if (n_trial >= n_param) then
                     micro_converged = .true.
