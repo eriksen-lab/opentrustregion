@@ -484,7 +484,9 @@ class PyInterfaceTests(unittest.TestCase):
         def dummy_precond():
             return dummy_error_code
 
-        settings.set_optional_callback("precond", CFUNCTYPE(c_int)(dummy_precond))
+        settings.set_optional_callback(
+            "precond", dummy_precond, lambda x: x, CFUNCTYPE(c_int)
+        )
 
         c_ptr = getattr(settings.settings_c, "precond")
         c_interface = getattr(settings.settings_c, "precond_interface", None)
