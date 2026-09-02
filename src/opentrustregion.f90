@@ -481,6 +481,7 @@ contains
         real(rp), parameter :: stability_thresh = -1e-2_rp
         real(rp), external :: dnrm2, ddot
         external :: dgemm, dgemv
+        logical :: stability_converged
 
         ! initialize error flag
         error = 0
@@ -536,6 +537,9 @@ contains
         allocate(red_space_solution(n_trial), solution(n_param), h_solution(n_param), &
                  residual(n_param), basis_vec(n_param), h_basis_vec(n_param))
 
+        ! assume not converged
+        stability_converged = .false.
+
         ! loop over iterations
         do iter = 1, settings%n_iter
             ! solve reduced space problem
@@ -558,10 +562,16 @@ contains
             ! check convergence
             stability_rms = dnrm2(n_param, residual, 1_ip) / &
                 sqrt(real(n_param, kind=rp))
-            if (stability_rms < settings%conv_tol) exit
+            if (stability_rms < settings%conv_tol) then
+                stability_converged = .true.
+                exit
+            end if
 
             ! stop when reduced space grows larger than full space
-            if (n_trial >= n_param) exit
+            if (n_trial >= n_param) then
+                stability_converged = .true.
+                exit
+            end if
 
             if (settings%diag_solver == "davidson" .or. iter <= &
                 settings%jacobi_davidson_start) then
@@ -634,7 +644,7 @@ contains
         end do
 
         ! check if stability check has converged
-        if (stability_rms >= settings%conv_tol) then
+        if (.not. stability_converged) then
             call settings%log("Stability check has not converged in the given "// &
                               "number of iterations.", verbosity_error, .true.)
             error = error_stability_check_max_iter
