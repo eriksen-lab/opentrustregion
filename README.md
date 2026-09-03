@@ -360,12 +360,21 @@ The library uses structured integer return codes to indicate whether a function 
 
 ### Error Codes (`EE`)
 
-The error field (`EE`) is currently always set to `01`. Future versions may define more specific codes for different failure modes.
+The error field (`EE`) is `01` for a general, unspecified error. Some origins define additional, more specific codes where the host program can plausibly react differently to them (e.g. by adjusting a setting and retrying):
+
+| Error Code | Meaning                                                                |
+|------------|------------------------------------------------------------------------|
+| `0101`     | General error in `solver` |
+| `0102`     | Orbital optimization did not converge within the maximum number of macro iterations (`n_macro`) |
+| `0201`     | General error in `stability_check` |
+| `0202`     | Stability check did not converge within the maximum number of iterations (`n_iter`) |
+
+Future versions may define more specific codes for other actionable failure modes.
 
 ### Example Error Codes
 
-| Error Code | Meaning                |
-|------------|------------------------|
-| `0101`     | Error in `solver`      |
-| `1201`     | Error in `update_orbs` |
+| Error Code | Meaning                   |
+|------------|---------------------------|
+| `0101`     | General error in `solver` |
+| `1201`     | Error in `update_orbs`    |
 
