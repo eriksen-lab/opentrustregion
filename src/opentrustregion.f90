@@ -588,6 +588,7 @@ contains
                 ! check if new vector is linearly dependent and the reduced space 
                 ! cannot be usefully expanded further due to degeneracy and stop here
                 if (error == 2) then
+                    error = 0
                     stability_converged = .true.
                     exit
                 end if
@@ -616,6 +617,7 @@ contains
                 ! check if new vector is linearly dependent and the reduced space 
                 ! cannot be usefully expanded further due to degeneracy and stop here
                 if (error == 2) then
+                    error = 0
                     stability_converged = .true.
                     exit
                 end if
@@ -1403,7 +1405,7 @@ contains
         logical, intent(in), optional :: silent_on_error
 
         real(rp), allocatable :: orth(:)
-        real(rp) :: dot, norm
+        real(rp) :: norm
         integer(ip) :: n_param, n_vectors, iter, i
         real(rp), parameter :: zero_thres = 1e-16_rp, orth_thres = 1e-14_rp
         real(rp), external :: ddot, dnrm2
@@ -1436,10 +1438,12 @@ contains
         iter = 0
         do while (.true.)
             do i = 1, n_vectors
-                dot = ddot(n_param, vector, 1_ip, space(:, i), 1_ip)
-                vector = vector - dot*space(:, i)
-                if (present(lin_trans_vector) .and. present(lin_trans_space)) &
-                    lin_trans_vector = lin_trans_vector - dot*lin_trans_space(:, i)
+                if (present(lin_trans_vector) .and. present(lin_trans_space)) then
+                    lin_trans_vector = lin_trans_vector - &
+                                       ddot(n_param, vector, 1_ip, space(:, i), 1_ip) &
+                                       * lin_trans_space(:, i)
+                end if
+                vector = orthogonal_projection(vector, space(:, i))
             end do
             norm = dnrm2(n_param, vector, 1_ip)
             if (norm < numerical_zero) then
@@ -2012,7 +2016,7 @@ contains
                                  solution_normalized(:), last_solution_normalized(:), &
                                  red_space_hess_eigvals(:), red_space_hess_eigvecs(:, :)
         integer(ip) :: n_trial, i, initial_imicro, min_idx
-        logical :: accept_step, micro_converged, newton
+        logical :: accept_step, micro_converged, newton, reduced_space_full_rank
         real(rp) :: residual_norm, red_factor, &
                     initial_residual_norm, new_func, ratio, minres_tol
         real(rp), parameter :: newton_eigval_thresh = -1e-5_rp, &
@@ -2061,6 +2065,7 @@ contains
         accept_step = .false.
         do while (.not. accept_step)
             micro_converged = .false.
+            reduced_space_full_rank = .false.
 
             jacobi_davidson_started = .false.
             do imicro = 1, settings%n_micro
@@ -2146,13 +2151,13 @@ contains
                 ! save current solution
                 last_solution_normalized = solution_normalized
 
-                ! the reduced space is not reset when a trust region step is rejected, 
-                ! so after enough rejected steps it grows past the dimension of the 
-                ! full parameter space, so in that case stop here and flag maximum
-                ! precision to keep the caller from shrinking the trust radius further
+                ! the reduced space is not reset when a trust region step is rejected,
+                ! so after enough rejected steps it grows past the dimension of the
+                ! full parameter space, so in that case stop here since the reduced
+                ! space has reached full rank and cannot be expanded further
                 if (n_trial >= n_param) then
                     micro_converged = .true.
-                    max_precision_reached = .true.
+                    reduced_space_full_rank = .true.
                     exit
                 end if
 
@@ -2165,11 +2170,10 @@ contains
                     ! orthonormalize to current orbital space to get new basis vector
                     call gram_schmidt(basis_vec, red_space_basis, settings, error)
                     if (error == 2) then
-                        ! new vector is linearly dependent and the reduced space cannot
-                        ! be usefully expanded further due to degeneracy, so stop here 
-                        ! and flag maximum precision
+                        ! new vector is linearly dependent, so the reduced space has
+                        ! reached full rank and cannot be expanded further
                         micro_converged = .true.
-                        max_precision_reached = .true.
+                        reduced_space_full_rank = .true.
                         exit
                     else if (error /= 0) then
                         return
@@ -2195,11 +2199,10 @@ contains
                                       lin_trans_vector=h_basis_vec, &
                                       lin_trans_space=h_basis)
                     if (error == 2) then
-                        ! new vector is linearly dependent and the reduced space cannot
-                        ! be usefully expanded further due to degeneracy, so stop here 
-                        ! and flag maximum precision
+                        ! new vector is linearly dependent, so the reduced space has
+                        ! reached full rank and cannot be expanded further
                         micro_converged = .true.
-                        max_precision_reached = .true.
+                        reduced_space_full_rank = .true.
                         exit
                     else if (error /= 0) then
                         return
@@ -2253,7 +2256,7 @@ contains
             accept_step = accept_trust_region_step(solution, ratio, micro_converged, &
                                                    settings, trust_radius, &
                                                    max_precision_reached)
-            if (max_precision_reached) exit
+            if (max_precision_reached .or. reduced_space_full_rank) exit
         end do
 
         ! deallocate quantities from microiterations
