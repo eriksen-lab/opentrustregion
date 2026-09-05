@@ -282,6 +282,36 @@ contains
 
     end subroutine setup_settings
 
+    subroutine diagonalize_test_matrix(matrix, eigvals, eigvecs, info)
+        !
+        ! this subroutine diagonalizes a symmetric matrix for use in tests
+        !
+        real(rp), intent(in) :: matrix(:, :)
+        real(rp), intent(out) :: eigvals(:), eigvecs(:, :)
+        integer(ip), intent(out) :: info
+
+        integer(ip) :: n, lwork
+        real(rp), allocatable :: work(:)
+
+        external :: dsyev
+
+        n = size(matrix, 1)
+        eigvecs = matrix
+
+        ! query optimal workspace size
+        lwork = -1
+        allocate(work(1))
+        call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
+        lwork = int(work(1), kind=ip)
+        deallocate(work)
+        allocate(work(lwork))
+
+        ! perform eigendecomposition
+        call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
+        deallocate(work)
+
+    end subroutine diagonalize_test_matrix
+
     logical(c_bool) function test_solver() bind(C)
         !
         ! this function tests the solver subroutine
@@ -591,10 +621,12 @@ contains
         type(solver_settings_type) :: settings
         integer(ip), parameter :: n_trial = 3
         real(rp) :: red_space_basis(n_param, n_trial), vars(n_param), grad(n_param), &
-                    grad_norm, aug_hess(n_trial + 1, n_trial + 1), solution(n_param), &
-                    red_space_solution(n_trial), trust_radius, mu
-        integer(ip) :: i, j, error
-        logical :: bracketed
+                    grad_norm, aug_hess(n_trial + 1, n_trial + 1), &
+                    red_space_hess_eigvals(n_trial), &
+                    red_space_hess_eigvecs(n_trial, n_trial), solution(n_param), &
+                    red_space_solution(n_trial), trust_radius, mu, &
+                    grad_coupled_component
+        integer(ip) :: i, j, error, info
 
         ! assume tests pass
         test_bisection = .true.
@@ -629,17 +661,18 @@ contains
             end do
         end do
 
-        ! perform bisection, check whether error has occured, whether the correct trust 
-        ! region was bracketed, determine whether resulting solution is correct in 
-        ! reduced and full space and respects target trust radius
-        call bisection(aug_hess, grad_norm, red_space_basis, trust_radius, solution, &
-                       red_space_solution, mu, bracketed, settings, error)
+        ! diagonalize Hessian
+        call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                     red_space_hess_eigvecs, info)
+
+        ! perform bisection, check whether error has occured and determine whether 
+        ! resulting solution is correct in reduced and full space and respects target 
+        ! trust radius
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
         if (error /= 0) then
             write (stderr, *) "test_bisection failed: Produced error."
-            test_bisection = .false.
-        end if
-        if (.not. bracketed) then
-            write (stderr, *) "test_bisection failed: Unable to bracket trust region."
             test_bisection = .false.
         end if
         if (abs(norm2(solution) - trust_radius) > tol) then
@@ -675,17 +708,123 @@ contains
             end do
         end do
 
+        ! diagonalize Hessian
+        call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                     red_space_hess_eigvecs, info)
+
         ! perform bisection and determine whether routine correctly throws error since
         ! minimum is closer than target trust radius and no level shift is necessary
-        call bisection(aug_hess, grad_norm, red_space_basis, trust_radius, solution, &
-                       red_space_solution, mu, bracketed, settings, error)
-        if (error /= 0) then
-            write (stderr, *) "test_bisection failed: Produced error."
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
+        if (error == 0) then
+            write (stderr, *) "test_bisection failed: Failed to produce error."
             test_bisection = .false.
         end if
-        if (bracketed) then
-            write (stderr, *) "test_bisection failed: Bisection should fail if "// &
-                "minimum is closer than trust radius."
+
+        ! set up hard case by using an orthonormal basis as this is what the hard case 
+        ! step assumes
+        red_space_basis = 0.0_rp
+        red_space_basis(1, 1) = 1.0_rp
+        red_space_basis(2, 2) = 1.0_rp
+        red_space_basis(3, 3) = 1.0_rp
+        grad_norm = 1.0_rp
+        trust_radius = 0.6_rp
+        aug_hess = 0.0_rp
+        aug_hess(2, 2) = 5.0_rp
+        aug_hess(3, 3) = -2.0_rp
+        aug_hess(4, 4) = 3.0_rp
+
+        ! diagonalize Hessian
+        call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                     red_space_hess_eigvecs, info)
+
+        ! test hard case: lowest reduced space Hessian eigenvalue is negative and its
+        ! eigenvector has no component along the gradient direction, so no level shift 
+        ! can reproduce the trust region solution and it must be constructed directly 
+        ! from the eigendecomposition
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
+        if (error /= 0) then
+            write (stderr, *) "test_bisection failed: Produced error for hard case."
+            test_bisection = .false.
+        end if
+        if (abs(norm2(solution) - trust_radius) > tol) then
+            write (stderr, *) "test_bisection failed: Hard case solution does not "// &
+                "respect trust radius."
+            test_bisection = .false.
+        end if
+        if (abs(mu - minval(red_space_hess_eigvals)) > tol) then
+            write (stderr, *) "test_bisection failed: Hard case level shift not "// &
+                "equal to lowest reduced space Hessian eigenvalue."
+            test_bisection = .false.
+        end if
+        grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals) - &
+                                              maxval(red_space_hess_eigvals))
+        if (any(abs(red_space_solution - &
+                    [grad_coupled_component, &
+                     sqrt(trust_radius**2 - grad_coupled_component**2), 0.0_rp]) > &
+                    tol)) then
+            write (stderr, *) "test_bisection failed: Hard case reduced space "// &
+                "solution not correct."
+            test_bisection = .false.
+        end if
+        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+            write (stderr, *) "test_bisection failed: Hard case full space "// &
+                "solution not correct."
+            test_bisection = .false.
+        end if
+
+        ! set up hard case with degenerate lowest eigenvalues
+        trust_radius = 0.5_rp
+        aug_hess = 0.0_rp
+        aug_hess(2, 2) = 5.0_rp
+        aug_hess(3, 3) = -2.0_rp
+        aug_hess(4, 4) = -2.0_rp
+
+        ! diagonalize Hessian
+        call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                     red_space_hess_eigvecs, info)
+
+        ! test hard case with a degenerate lowest eigenvalue: the eigenvector spanning
+        ! the degenerate subspace used to fill the trust radius is not uniquely 
+        ! defined,so only invariant properties of the solution are checked rather than 
+        ! exact reduced space solution components
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
+        if (error /= 0) then
+            write (stderr, *) "test_bisection failed: Produced error for "// &
+                "degenerate hard case."
+            test_bisection = .false.
+        end if
+        if (abs(norm2(solution) - trust_radius) > tol) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case "// &
+                "solution does not respect trust radius."
+            test_bisection = .false.
+        end if
+        if (abs(mu - minval(red_space_hess_eigvals)) > tol) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case level "// &
+                "shift not equal to lowest reduced space Hessian eigenvalue."
+            test_bisection = .false.
+        end if
+        grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals) - &
+                                              maxval(red_space_hess_eigvals))
+        if (abs(red_space_solution(1) - grad_coupled_component) > tol) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case "// &
+                "component along non-degenerate eigenvector not correct."
+            test_bisection = .false.
+        end if
+        if (abs(norm2(red_space_solution(2:3)) - &
+                sqrt(trust_radius**2 - grad_coupled_component**2)) > tol) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case fill "// &
+                "magnitude within degenerate eigenspace not correct."
+            test_bisection = .false.
+        end if
+        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case full "// &
+                "space solution not correct."
             test_bisection = .false.
         end if
 
@@ -872,19 +1011,19 @@ contains
 
     end function test_symm_mat_min_eig
 
-    logical(c_bool) function test_min_eigval() bind(C)
+    logical(c_bool) function test_symm_mat_diag() bind(C)
         !
-        ! this function tests the function for determining the minimum eigenvalue for
-        ! a symmetric matrix
+        ! this function tests the function for determining the eigenvalues and 
+        ! eigenvectors for a symmetric matrix
         !
-        use opentrustregion, only: solver_settings_type, min_eigval
+        use opentrustregion, only: solver_settings_type, symm_mat_diag
 
         type(solver_settings_type) :: settings
-        real(rp) :: matrix(3, 3), matrix_min_eigval
+        real(rp) :: matrix(3, 3), eigvals(3), eigvecs(3, 3)
         integer(ip) :: error
 
         ! assume tests pass
-        test_min_eigval = .true.
+        test_symm_mat_diag = .true.
 
         ! setup settings object
         call setup_settings(settings)
@@ -895,18 +1034,19 @@ contains
                           1.0_rp, 2.0_rp, 5.0_rp], [3, 3])
 
         ! call function and determine if lowest eigenvalue is found
-        matrix_min_eigval = min_eigval(matrix, settings, error)
+        call symm_mat_diag(matrix, eigvals, eigvecs, settings, error)
         if (error /= 0) then
-            write (stderr, *) "test_min_eigval failed: Produced error."
-            test_min_eigval = .false.
+            write (stderr, *) "test_symm_mat_diag failed: Produced error."
+            test_symm_mat_diag = .false.
         end if
-        if (abs(matrix_min_eigval - 2.30797852837_rp) > tol) then
-            write (stderr, *) "test_min_eigval failed: Incorrect minimum "// &
-                "eigenvalue for matrix."
-            test_min_eigval = .false.
+        if (norm2(matmul(matrix, eigvecs) - eigvecs * spread(eigvals, dim=1, &
+            ncopies=size(eigvecs, 1))) > tol) then
+            write (stderr, *) "test_symm_mat_diag failed: Incorrect eigenvectors "// &
+                "and eigenvalues for matrix."
+            test_symm_mat_diag = .false.
         end if
 
-    end function test_min_eigval
+    end function test_symm_mat_diag
 
     logical(c_bool) function test_init_rng() bind(C)
         !
