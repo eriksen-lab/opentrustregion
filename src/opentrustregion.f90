@@ -29,7 +29,12 @@ module opentrustregion
                            trust_radius_expand_factor = 1.2_rp
 
     ! define error codes
-    integer(ip), parameter :: error_solver = 100, error_stability_check = 200, &
+    integer(ip), parameter :: error_solver = 100, &
+                              error_solver_max_iter = error_solver + 2, &
+                              error_stability_check = 200, &
+                              error_stability_check_max_iter = error_stability_check + &
+                                                               2, &
+                              error_gram_schmidt_lin_dep = 51, &
                               error_obj_func = 1100, error_update_orbs = 1200, &
                               error_hess_x = 1300, error_precond = 1400, &
                               error_conv_check = 1500, error_project = 1600
@@ -53,6 +58,9 @@ module opentrustregion
         gram_schmidt_too_many_vectors_error_msg = &
             "Number of vectors in Gram-Schmidt procedure larger than dimension of "// &
             "vector space.", &
+        gram_schmidt_lin_dep_error_msg = &
+            "Vector passed to Gram-Schmidt procedure is linearly dependent on "// &
+            "previously orthonormalized vectors.", &
         project_warning_msg = &
             "Custom projection is provided. To optimize performance, OTR assumes "// &
             "that all other provided routines (update_orbs, hess_x, precond) are "// &
@@ -438,7 +446,7 @@ contains
         if (.not. macro_converged) then
             call settings%log("Orbital optimization has not converged!", &
                               verbosity_error, .true.)
-            error = error_solver + 1
+            error = error_solver_max_iter
             return
         end if
 
@@ -477,9 +485,13 @@ contains
         real(rp), parameter :: stability_thresh = -1e-2_rp
         real(rp), external :: dnrm2, ddot
         external :: dgemm, dgemv
+        logical :: stability_converged
 
         ! initialize error flag
         error = 0
+
+        ! initialize stable
+        stable = .false.
 
         ! initialize settings
         if (.not. settings%initialized) then
@@ -532,6 +544,9 @@ contains
         allocate(red_space_solution(n_trial), solution(n_param), h_solution(n_param), &
                  residual(n_param), basis_vec(n_param), h_basis_vec(n_param))
 
+        ! assume not converged
+        stability_converged = .false.
+
         ! loop over iterations
         do iter = 1, settings%n_iter
             ! solve reduced space problem
@@ -554,10 +569,16 @@ contains
             ! check convergence
             stability_rms = dnrm2(n_param, residual, 1_ip) / &
                 sqrt(real(n_param, kind=rp))
-            if (stability_rms < settings%conv_tol) exit
+            if (stability_rms < settings%conv_tol) then
+                stability_converged = .true.
+                exit
+            end if
 
             ! stop when reduced space grows larger than full space
-            if (n_trial >= n_param) exit
+            if (n_trial >= n_param) then
+                stability_converged = .true.
+                exit
+            end if
 
             if (settings%diag_solver == "davidson" .or. iter <= &
                 settings%jacobi_davidson_start) then
@@ -568,6 +589,13 @@ contains
 
                 ! orthonormalize to current orbital space to get new basis vector
                 call gram_schmidt(basis_vec, red_space_basis, settings, error)
+                ! check if new vector is linearly dependent and the reduced space 
+                ! cannot be usefully expanded further due to degeneracy and stop here
+                if (error == error_gram_schmidt_lin_dep) then
+                    error = 0
+                    stability_converged = .true.
+                    exit
+                end if
                 call add_error_origin(error, error_stability_check, settings)
                 if (error /= 0) return
 
@@ -587,10 +615,16 @@ contains
                 call add_error_origin(error, error_stability_check, settings)
                 if (error /= 0) return
 
-                ! orthonormalize to current orbital space to get new basis 
-                ! vector
+                ! orthonormalize to current orbital space to get new basis vector
                 call gram_schmidt(basis_vec, red_space_basis, settings, error, &
                                   lin_trans_vector=h_basis_vec, lin_trans_space=h_basis)
+                ! check if new vector is linearly dependent and the reduced space 
+                ! cannot be usefully expanded further due to degeneracy and stop here
+                if (error == error_gram_schmidt_lin_dep) then
+                    error = 0
+                    stability_converged = .true.
+                    exit
+                end if
                 call add_error_origin(error, error_stability_check, settings)
                 if (error /= 0) return
 
@@ -630,9 +664,12 @@ contains
         end do
 
         ! check if stability check has converged
-        if (stability_rms >= settings%conv_tol) &
+        if (.not. stability_converged) then
             call settings%log("Stability check has not converged in the given "// &
                               "number of iterations.", verbosity_error, .true.)
+            error = error_stability_check_max_iter
+            return
+        end if
 
         ! determine if saddle point
         stable = eigval > stability_thresh
@@ -719,32 +756,35 @@ contains
 
     end subroutine newton_step
 
-    subroutine bisection(aug_hess, grad_norm, red_space_basis, trust_radius, solution, &
-                         red_space_solution, mu, bracketed, settings, error)
+    subroutine bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                         red_space_hess_eigvecs, trust_radius, solution, &
+                         red_space_solution, mu, settings, error)
         !
         ! this subroutine performs bisection to find the parameter alpha that matches
         ! the desired trust radius
         !
         real(rp), intent(inout) :: aug_hess(:, :)
-        real(rp), intent(in) :: grad_norm, red_space_basis(:, :), trust_radius
+        real(rp), intent(in) :: grad_norm, red_space_basis(:, :), &
+                                red_space_hess_eigvals(:), &
+                                red_space_hess_eigvecs(:, :), trust_radius
         type(solver_settings_type), intent(in) :: settings
         real(rp), intent(out) :: solution(:), red_space_solution(:), mu
-        logical, intent(out) :: bracketed
         integer(ip), intent(out) :: error
 
+        real(rp), allocatable :: eigspace_solution(:)
+        logical, allocatable :: non_degenerate_mask(:)
         real(rp) :: lower_alpha, middle_alpha, upper_alpha, lower_trust_dist, &
-                    middle_trust_dist, upper_trust_dist
-        integer(ip) :: n_param, n_red, iter
-        real(rp), parameter :: lower_alpha_bound = 1e-4_rp, &
-                               upper_alpha_bound = 1e6_rp, &
-                               alpha_conv_factor = 1e-12_rp
+                    middle_trust_dist, upper_trust_dist, current_norm
+        integer(ip) :: n_param, n_red, iter, min_idx
+        real(rp), parameter :: lower_alpha_bound = 1e-30_rp, &
+                               upper_alpha_bound = 1e30_rp, &
+                               alpha_conv_factor = 1e-12_rp, &
+                               orthogonality_thres = 1e-12_rp
         real(rp), external :: dnrm2
+        external :: dgemv
 
         ! initialize error flag
         error = 0
-
-        ! initialize bracketing flag
-        bracketed = .false.
 
         ! number of parameters
         n_param = size(solution)
@@ -756,24 +796,118 @@ contains
         lower_alpha = lower_alpha_bound
         upper_alpha = upper_alpha_bound
 
-        ! solve reduced space problem with scaled gradient
-        call get_ah_lowest_eigenvec(lower_alpha)
-        if (error /= 0) return
-        lower_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
-        call get_ah_lowest_eigenvec(upper_alpha)
-        if (error /= 0) return
-        upper_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
+        ! check if lowest reduced space Hessian eigenvalue is negative and its
+        ! (possibly degenerate) eigenspace has no gradient component, i.e. whether 
+        ! this is the hard case
+        min_idx = minloc(red_space_hess_eigvals, dim=1)
+        non_degenerate_mask = abs(red_space_hess_eigvals - &
+                                  red_space_hess_eigvals(min_idx)) > numerical_zero
+        if (red_space_hess_eigvals(min_idx) < 0.0_rp .and. &
+            sqrt(sum(red_space_hess_eigvecs(1, :)**2, mask=.not. non_degenerate_mask)) &
+                <= orthogonality_thres) then
+            ! get crossover point between lowest reduced space Hessian eigenvalue and
+            ! second lowest Hessian eigenvalue in augmented Hessian to get lower
+            ! boundary for alpha which ensures that the solution has a gradient
+            ! component, excluding eigenvalues degenerate with the lowest one to avoid
+            ! dividing by zero
+            lower_alpha = sqrt(red_space_hess_eigvals(min_idx) / &
+                               sum(red_space_hess_eigvecs(1, :)**2 / &
+                                   (red_space_hess_eigvals(min_idx) - &
+                                    red_space_hess_eigvals), &
+                                   mask=non_degenerate_mask)) / grad_norm
 
-        ! check if trust region is within bracketing range
-        if ((lower_trust_dist*upper_trust_dist) > 0.0_rp) then
-            solution = 0.0_rp
-            red_space_solution = 0.0_rp
-            mu = 0.0_rp
-            return
+            ! construct solution at crossover point in eigenvector basis while avoiding 
+            ! contributions of lowest Hessian eigenvalue as the gradient component is 
+            ! vanishing anyways
+            eigspace_solution = merge(grad_norm * red_space_hess_eigvecs(1, :) / &
+                                      (red_space_hess_eigvals(min_idx) - &
+                                       red_space_hess_eigvals), 0.0_rp, &
+                                      non_degenerate_mask)
+
+            ! transform from eigenvector basis to reduced step basis
+            call dgemv("N", n_red, n_red, 1.0_rp, red_space_hess_eigvecs, n_red, &
+                       eigspace_solution, 1_ip, 0.0_rp, red_space_solution, 1_ip)
+            deallocate(eigspace_solution, non_degenerate_mask)
+
+            ! get solution in full space
+            call dgemv("N", n_param, n_red, 1.0_rp, red_space_basis, n_param, &
+                       red_space_solution, 1_ip, 0.0_rp, solution, 1_ip)
+            current_norm = dnrm2(n_param, solution, 1_ip)
+            lower_trust_dist = current_norm - trust_radius
+
+            ! check if step lies inside trust region at lower boundary
+            if (current_norm < trust_radius) then
+                ! fill the rest of the trust radius with the lowest eigenvector
+                red_space_solution = red_space_solution + &
+                                     sqrt(max(0.0_rp, trust_radius**2 - &
+                                              current_norm**2)) * &
+                                     red_space_hess_eigvecs(:, min_idx)
+
+                ! construct full space solution
+                call dgemv("N", n_param, n_red, 1.0_rp, red_space_basis, n_param, &
+                        red_space_solution, 1_ip, 0.0_rp, solution, 1_ip)
+
+                ! set level shift
+                mu = red_space_hess_eigvals(min_idx)
+                return
+            end if
+        else
+            ! start at Cauchy point to get bracket
+            middle_alpha = grad_norm / trust_radius
+            call get_ah_lowest_eigenvec(middle_alpha)
+            if (error /= 0) return
+            current_norm = dnrm2(n_param, solution, 1_ip)
+            middle_trust_dist = current_norm - trust_radius
+            lower_alpha = middle_alpha
+            lower_trust_dist = middle_trust_dist
+        end if
+
+        ! start bracketing
+        upper_alpha = lower_alpha
+        upper_trust_dist = lower_trust_dist
+
+        ! step is too long: alpha is lower bound
+        if (current_norm > trust_radius) then
+            ! larger alpha is necessary to find upper bound
+            do while (current_norm > trust_radius)
+                lower_alpha = upper_alpha
+                lower_trust_dist = upper_trust_dist
+                upper_alpha = upper_alpha * 10.0_rp
+                call get_ah_lowest_eigenvec(upper_alpha)
+                if (error /= 0) return
+                current_norm = dnrm2(n_param, solution, 1_ip)
+                upper_trust_dist = current_norm - trust_radius
+                if (upper_alpha > upper_alpha_bound) then
+                    call settings%log("Unable to find upper bound for alpha in "// &
+                                      "bisection.", verbosity_error, .true.)
+                    error = 1
+                    return
+                end if
+            end do
+        ! step is too short: alpha is upper bound
+        else
+            ! smaller alpha is necessary to find lower bound
+            do while (current_norm < trust_radius)
+                upper_alpha = lower_alpha
+                upper_trust_dist = lower_trust_dist
+                lower_alpha = lower_alpha / 10.0_rp
+                call get_ah_lowest_eigenvec(lower_alpha)
+                if (error /= 0) return
+                current_norm = dnrm2(n_param, solution, 1_ip)
+                lower_trust_dist = current_norm - trust_radius
+                if (lower_alpha < lower_alpha_bound) then
+                    call settings%log("Unable to find lower bound for alpha in "// &
+                                      "bisection. Interior solution should be "// &
+                                      "found with Newton step.", verbosity_error, &
+                                      .true.)
+                    error = 1
+                    return
+                end if
+            end do
         end if
 
         ! get middle alpha
-        middle_alpha = sqrt(upper_alpha*lower_alpha)
+        middle_alpha = sqrt(upper_alpha * lower_alpha)
         call get_ah_lowest_eigenvec(middle_alpha)
         if (error /= 0) return
         middle_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
@@ -783,16 +917,16 @@ contains
         iter = 0
         do while (upper_alpha - lower_alpha > alpha_conv_factor * upper_alpha)
             ! targeted trust radius is in upper bracket
-            if (lower_trust_dist*middle_trust_dist > 0.0_rp) then
+            if (lower_trust_dist * middle_trust_dist > 0.0_rp) then
                 lower_alpha = middle_alpha
                 lower_trust_dist = middle_trust_dist
-                ! targeted trust radius is in lower bracket
+            ! targeted trust radius is in lower bracket
             else
                 upper_alpha = middle_alpha
                 upper_trust_dist = middle_trust_dist
             end if
             ! get new middle alpha
-            middle_alpha = sqrt(upper_alpha*lower_alpha)
+            middle_alpha = sqrt(upper_alpha * lower_alpha)
             call get_ah_lowest_eigenvec(middle_alpha)
             if (error /= 0) return
             middle_trust_dist = dnrm2(n_param, solution, 1_ip) - trust_radius
@@ -805,8 +939,6 @@ contains
                 return
             end if
         end do
-
-        bracketed = .true.
 
     contains
 
@@ -832,16 +964,17 @@ contains
             if (error /= 0) return
 
             ! check if eigenvector has level-shift component
-            if (abs(eigvec(1)) <= numerical_zero) then
-                call settings%log("Trial subspace too small. Increase "// &
-                                  "n_random_trial_vectors.", verbosity_error, .true.)
+            if (abs(eigvec(1)) <= tiny(1.0_rp)) then
+                call settings%log("Lowest augmented Hessian eigenvector does not "// &
+                                  "have level-shift component.", verbosity_error, &
+                                  .true.)
                 error = 1
                 return
             end if
 
             ! scale eigenvector such that first element is equal to one and divide by
             ! alpha to get solution in reduced space
-            red_space_solution = eigvec(2:)/eigvec(1)/alpha
+            red_space_solution = eigvec(2:) / eigvec(1) / alpha
             deallocate(eigvec)
 
             ! get solution in full space
@@ -1063,8 +1196,37 @@ contains
         real(rp), intent(out) :: lowest_eigval, lowest_eigvec(:)
         integer(ip), intent(out) :: error
 
+        integer(ip) :: n
+        real(rp), allocatable :: eigvals(:), eigvecs(:, :)
+
+        ! size of matrix
+        n = size(symm_matrix, 1)
+
+        ! perform eigendecomposition
+        allocate(eigvals(n), eigvecs(n, n))
+        call symm_mat_diag(symm_matrix, eigvals, eigvecs, settings, error)
+        if (error /= 0) return
+
+        ! get lowest eigenvalue and corresponding eigenvector
+        lowest_eigval = eigvals(1)
+        lowest_eigvec = eigvecs(:, 1)
+
+        ! deallocate eigenvalues and eigenvectors
+        deallocate(eigvals, eigvecs)
+
+    end subroutine symm_mat_min_eig
+
+    subroutine symm_mat_diag(symm_matrix, eigvals, eigvecs, settings, error)
+        !
+        ! this subroutine returns eigenvalues and eigenvectors of a symmetric matrix
+        !
+        real(rp), intent(in) :: symm_matrix(:, :)
+        class(settings_type), intent(in) :: settings
+        real(rp), intent(out) :: eigvals(:), eigvecs(:, :)
+        integer(ip), intent(out) :: error
+
         integer(ip) :: n, lwork, info
-        real(rp), allocatable :: work(:), eigvals(:), eigvecs(:, :)
+        real(rp), allocatable :: work(:)
         character(300) :: msg
         external :: dsyev
 
@@ -1079,7 +1241,7 @@ contains
 
         ! query optimal workspace size
         lwork = -1
-        allocate(eigvals(n), work(1))
+        allocate(work(1))
         call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
         lwork = int(work(1), kind=ip)
         deallocate(work)
@@ -1100,67 +1262,7 @@ contains
             return
         end if
 
-        ! get lowest eigenvalue and corresponding eigenvector
-        lowest_eigval = eigvals(1)
-        lowest_eigvec = eigvecs(:, 1)
-
-        ! deallocate eigenvalues and eigenvectors
-        deallocate(eigvals, eigvecs)
-
-    end subroutine symm_mat_min_eig
-
-    real(rp) function min_eigval(matrix, settings, error)
-        !
-        ! this function calculates the lowest eigenvalue of a symmetric matrix
-        !
-        real(rp), intent(in) :: matrix(:, :)
-        class(settings_type), intent(in) :: settings
-        integer(ip), intent(out) :: error
-
-        real(rp), allocatable :: eigvals(:), temp(:, :), work(:)
-        integer(ip) :: n, lwork, info
-        character(300) :: msg
-        external :: dsyev
-
-        ! initialize error flag
-        error = 0
-
-        ! size of matrix
-        n = size(matrix, 1)
-
-        ! copy matrix to avoid modification of original matrix
-        temp = matrix
-
-        ! query optimal workspace size
-        lwork = -1
-        allocate(eigvals(n), work(1))
-        call dsyev("N", "U", n, temp, n, eigvals, work, lwork, info)
-        lwork = int(work(1), kind=ip)
-        deallocate(work)
-        allocate(work(lwork))
-
-        ! compute eigenvalues
-        call dsyev("N", "U", n, temp, n, eigvals, work, lwork, info)
-
-        ! deallocate temporary and work array
-        deallocate(temp, work)
-
-        ! check for successful execution
-        if (info /= 0) then
-            write (msg, '(A, I0)') "Eigendecomposition failed: Error in DSYEV, "// &
-                "info = ", info
-            call settings%log(msg, verbosity_error, .true.)
-            error = 1
-            return
-        end if
-
-        ! get lowest eigenvalue
-        min_eigval = eigvals(1)
-
-        ! deallocate eigenvalues
-        deallocate(eigvals)
-
-    end function min_eigval
+    end subroutine symm_mat_diag
 
     subroutine init_rng(seed)
         !
@@ -1190,6 +1292,7 @@ contains
 
         real(rp), allocatable :: red_space_basis(:, :)
 
+        real(rp), allocatable :: neg_curv_vec(:)
         integer(ip) :: min_idx, n_vectors
         real(rp), external :: dnrm2
 
@@ -1200,29 +1303,35 @@ contains
         min_idx = minloc(h_diag, dim=1)
 
         ! add direction if minimum Hessian diagonal element is negative
+        n_vectors = 1
         if (h_diag(min_idx) < 0.0_rp .and. size(grad) > 2) then
-            n_vectors = 2
-            allocate(red_space_basis(size(grad), n_vectors + &
-                     settings%n_random_trial_vectors))
-            red_space_basis(:, 1) = grad/grad_norm
-            red_space_basis(:, 2) = 0.0_rp
-            red_space_basis(min_idx, 2) = 1.0_rp
+            allocate(neg_curv_vec(size(grad)))
+            neg_curv_vec = 0.0_rp
+            neg_curv_vec(min_idx) = 1.0_rp
             if (associated(settings%project)) then
-                call settings%project(red_space_basis(:, 2), error)
+                call settings%project(neg_curv_vec, error)
                 call add_error_origin(error, error_project, settings)
                 if (error /= 0) return
             end if
-            call gram_schmidt(red_space_basis(:, 2), &
-                              reshape(red_space_basis(:, 1), &
-                                      [size(red_space_basis, 1), 1]), &
+            call gram_schmidt(neg_curv_vec, &
+                              reshape(grad / grad_norm, [size(grad), 1]), &
                               settings, error)
-            if (error /= 0) return
-        else
-            n_vectors = 1
-            allocate(red_space_basis(size(grad), n_vectors + &
-                     settings%n_random_trial_vectors))
-            red_space_basis(:, 1) = grad/grad_norm
+            ! if the negative curvature direction is linearly dependent on the
+            ! gradient direction it cannot usefully be added as a separate trial
+            ! vector, so fall back to using only the gradient direction
+            if (error == error_gram_schmidt_lin_dep) then
+                error = 0
+            else if (error /= 0) then
+                return
+            else
+                n_vectors = 2
+            end if
         end if
+
+        allocate(red_space_basis(size(grad), n_vectors + &
+                 settings%n_random_trial_vectors))
+        red_space_basis(:, 1) = grad / grad_norm
+        if (n_vectors == 2) red_space_basis(:, 2) = neg_curv_vec
 
         call generate_random_trial_vectors(red_space_basis, settings, error)
 
@@ -1236,7 +1345,8 @@ contains
         class(settings_type), intent(in) :: settings
         integer(ip), intent(out) :: error
 
-        integer(ip) :: n_param, n_trial, i
+        integer(ip) :: n_param, n_trial, i, n_attempts
+        integer(ip), parameter :: max_rnd_trial_attempts = 100
         real(rp), parameter :: rnd_vector_min_norm = 1e-3_rp
         real(rp), external :: dnrm2
 
@@ -1250,26 +1360,40 @@ contains
         n_trial = size(red_space_basis, 2)
 
         do i = n_trial - settings%n_random_trial_vectors + 1, n_trial
-            call random_number(red_space_basis(:, i))
-            red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
-            do while (dnrm2(n_param, red_space_basis(:, i), 1_ip) < rnd_vector_min_norm)
+            error = error_gram_schmidt_lin_dep
+            n_attempts = 0
+            do while (error == error_gram_schmidt_lin_dep)
+                n_attempts = n_attempts + 1
+                if (n_attempts > max_rnd_trial_attempts) then
+                    call settings%log("Maximum number of attempts to generate a "// &
+                                      "random trial vector linearly independent of "// &
+                                      "the existing trial space reached.", &
+                                      verbosity_error, .true.)
+                    error = 1
+                    return
+                end if
                 call random_number(red_space_basis(:, i))
                 red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
+                do while (dnrm2(n_param, red_space_basis(:, i), 1_ip) < &
+                          rnd_vector_min_norm)
+                    call random_number(red_space_basis(:, i))
+                    red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
+                end do
+                if (associated(settings%project)) then
+                    call settings%project(red_space_basis(:, i), error)
+                    call add_error_origin(error, error_project, settings)
+                    if (error /= 0) return
+                end if
+                call gram_schmidt(red_space_basis(:, i), red_space_basis(:, :i - 1), &
+                                  settings, error, silent_on_error=.true.)
             end do
-            if (associated(settings%project)) then
-                call settings%project(red_space_basis(:, i), error)
-                call add_error_origin(error, error_project, settings)
-                if (error /= 0) return
-            end if
-            call gram_schmidt(red_space_basis(:, i), red_space_basis(:, :i - 1), &
-                              settings, error)
             if (error /= 0) return
         end do
 
     end subroutine generate_random_trial_vectors
 
     subroutine gram_schmidt(vector, space, settings, error, lin_trans_vector, &
-                            lin_trans_space)
+                            lin_trans_space, silent_on_error)
         !
         ! this function orthonormalizes a vector with respect to a vector space
         ! this function can additionally also return a linear transformation of the 
@@ -1282,9 +1406,10 @@ contains
         integer(ip), intent(out) :: error
         real(rp), intent(inout), optional :: lin_trans_vector(:)
         real(rp), intent(in), optional :: lin_trans_space(:, :)
+        logical, intent(in), optional :: silent_on_error
 
         real(rp), allocatable :: orth(:)
-        real(rp) :: dot, norm
+        real(rp) :: norm
         integer(ip) :: n_param, n_vectors, iter, i
         real(rp), parameter :: zero_thres = 1e-16_rp, orth_thres = 1e-14_rp
         real(rp), external :: ddot, dnrm2
@@ -1315,47 +1440,38 @@ contains
         allocate(orth(size(space, 2)))
 
         iter = 0
-        if (.not. (present(lin_trans_vector) .and. present(lin_trans_space))) then
-            do while (.true.)
-                do i = 1, n_vectors
-                    vector = orthogonal_projection(vector, space(:, i))
-                end do
-                vector = vector / dnrm2(n_param, vector, 1_ip)
-
-                call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, &
-                           vector, 1_ip, 0.0_rp, orth, 1_ip)
-                if (maxval(abs(orth)) < orth_thres) exit
-                iter = iter + 1
-                if (iter > 100) then
-                    call settings%log("Maximum number of Gram-Schmidt iterations "// &
-                                      "reached.", verbosity_error, .true.)
-                    error = 1
-                    return
+        do while (.true.)
+            do i = 1, n_vectors
+                if (present(lin_trans_vector) .and. present(lin_trans_space)) then
+                    lin_trans_vector = lin_trans_vector - &
+                                       ddot(n_param, vector, 1_ip, space(:, i), 1_ip) &
+                                       * lin_trans_space(:, i)
                 end if
+                vector = orthogonal_projection(vector, space(:, i))
             end do
-        else
-            do while (.true.)
-                do i = 1, n_vectors
-                    dot = ddot(n_param, vector, 1_ip, space(:, i), 1_ip)
-                    vector = vector - dot * space(:, i)
-                    lin_trans_vector = lin_trans_vector - dot * lin_trans_space(:, i)
-                end do
-                norm = dnrm2(n_param, vector, 1_ip)
-                vector = vector / norm
+            norm = dnrm2(n_param, vector, 1_ip)
+            if (norm < numerical_zero) then
+                error = error_gram_schmidt_lin_dep
+                if (.not. present(silent_on_error) .or. .not. silent_on_error) &
+                    call settings%log(gram_schmidt_lin_dep_error_msg, verbosity_error, &
+                                      .true.)
+                return
+            end if
+            vector = vector / norm
+            if (present(lin_trans_vector) .and. present(lin_trans_space)) &
                 lin_trans_vector = lin_trans_vector / norm
 
-                call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, vector, &
-                           1_ip, 0.0_rp, orth, 1_ip)
-                if (maxval(abs(orth)) < orth_thres) exit
-                iter = iter + 1
-                if (iter > 100) then
-                    call settings%log("Maximum number of Gram-Schmidt iterations "// &
-                                      "reached.", verbosity_error, .true.)
-                    error = 1
-                    return
-                end if
-            end do
-        end if
+            call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, vector, &
+                        1_ip, 0.0_rp, orth, 1_ip)
+            if (maxval(abs(orth)) < orth_thres) exit
+            iter = iter + 1
+            if (iter > 100) then
+                call settings%log("Maximum number of Gram-Schmidt iterations "// &
+                                  "reached.", verbosity_error, .true.)
+                error = 1
+                return
+            end if
+        end do
 
         ! allocate array for orthogonalities
         deallocate(orth)
@@ -1901,10 +2017,11 @@ contains
         real(rp), allocatable :: red_space_basis(:, :), h_basis(:, :), aug_hess(:, :), &
                                  red_space_solution(:), red_hess_vec(:), basis_vec(:), &
                                  h_basis_vec(:), h_solution(:), residual(:), &
-                                 solution_normalized(:), last_solution_normalized(:)
-        integer(ip) :: n_trial, i, initial_imicro                          
-        logical :: accept_step, micro_converged, newton, bracketed
-        real(rp) :: aug_hess_min_eigval, residual_norm, red_factor, &
+                                 solution_normalized(:), last_solution_normalized(:), &
+                                 red_space_hess_eigvals(:), red_space_hess_eigvecs(:, :)
+        integer(ip) :: n_trial, i, initial_imicro, min_idx
+        logical :: accept_step, micro_converged, newton
+        real(rp) :: residual_norm, red_factor, &
                     initial_residual_norm, new_func, ratio, minres_tol
         real(rp), parameter :: newton_eigval_thresh = -1e-5_rp, &
                                level_shift_local_thres = 1e-12_rp, &
@@ -1958,9 +2075,13 @@ contains
                 ! do a Newton step if the model is positive definite and the step is 
                 ! within the trust region
                 newton = .false.
-                aug_hess_min_eigval = min_eigval(aug_hess(2:, 2:), settings, error)
+                allocate(red_space_hess_eigvals(n_trial), &
+                         red_space_hess_eigvecs(n_trial, n_trial))
+                call symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                   red_space_hess_eigvecs, settings, error)
                 if (error /= 0) return
-                if (aug_hess_min_eigval > newton_eigval_thresh) then
+                min_idx = minloc(red_space_hess_eigvals, dim=1)
+                if (red_space_hess_eigvals(min_idx) > newton_eigval_thresh) then
                     call newton_step(aug_hess, grad_norm, red_space_basis, &
                                      solution, red_space_solution, settings, error)
                     if (error /= 0) return
@@ -1970,12 +2091,13 @@ contains
 
                 ! otherwise perform bisection to find the level shift
                 if (.not. newton) then
-                    call bisection(aug_hess, grad_norm, red_space_basis, trust_radius, &
-                                   solution, red_space_solution, mu, bracketed, &
+                    call bisection(aug_hess, grad_norm, red_space_basis, &
+                                   red_space_hess_eigvals, red_space_hess_eigvecs, &
+                                   trust_radius, solution, red_space_solution, mu, &
                                    settings, error)
                     if (error /= 0) return
-                    if (.not. bracketed) exit
                 end if
+                deallocate(red_space_hess_eigvals, red_space_hess_eigvecs)
 
                 ! calculate Hessian linear transformation of solution
                 call dgemv("N", n_param, n_trial, 1.0_rp, h_basis, n_param, &
@@ -2032,13 +2154,12 @@ contains
                 ! save current solution
                 last_solution_normalized = solution_normalized
 
-                ! the reduced space is not reset when a trust region step is rejected, 
-                ! so after enough rejected steps it grows past the dimension of the 
-                ! full parameter space, so in that case stop here and flag maximum
-                ! precision to keep the caller from shrinking the trust radius further
+                ! the reduced space is not reset when a trust region step is rejected,
+                ! so after enough rejected steps it grows past the dimension of the
+                ! full parameter space, so in that case stop here since the reduced
+                ! space has reached full rank and cannot be expanded further
                 if (n_trial >= n_param) then
                     micro_converged = .true.
-                    max_precision_reached = .true.
                     exit
                 end if
 
@@ -2050,7 +2171,14 @@ contains
 
                     ! orthonormalize to current orbital space to get new basis vector
                     call gram_schmidt(basis_vec, red_space_basis, settings, error)
-                    if (error /= 0) return
+                    if (error == error_gram_schmidt_lin_dep) then
+                        ! new vector is linearly dependent, so the reduced space has
+                        ! reached full rank and cannot be expanded further
+                        micro_converged = .true.
+                        exit
+                    else if (error /= 0) then
+                        return
+                    end if
 
                     ! add linear transformation of new basis vector
                     call hess_x_funptr(basis_vec, h_basis_vec, error)
@@ -2071,7 +2199,14 @@ contains
                     call gram_schmidt(basis_vec, red_space_basis, settings, error, &
                                       lin_trans_vector=h_basis_vec, &
                                       lin_trans_space=h_basis)
-                    if (error /= 0) return
+                    if (error == error_gram_schmidt_lin_dep) then
+                        ! new vector is linearly dependent, so the reduced space has
+                        ! reached full rank and cannot be expanded further
+                        micro_converged = .true.
+                        exit
+                    else if (error /= 0) then
+                        return
+                    end if
 
                     ! check if resulting linear transformation still respects Hessian 
                     ! symmetry which can happen due to numerical noise accumulation
