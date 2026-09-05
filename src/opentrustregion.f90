@@ -1310,7 +1310,7 @@ contains
                 if (error /= 0) return
             end if
             call gram_schmidt(neg_curv_vec, &
-                              reshape(grad/grad_norm, [size(grad), 1]), &
+                              reshape(grad / grad_norm, [size(grad), 1]), &
                               settings, error)
             ! if the negative curvature direction is linearly dependent on the
             ! gradient direction it cannot usefully be added as a separate trial
@@ -1326,7 +1326,7 @@ contains
 
         allocate(red_space_basis(size(grad), n_vectors + &
                  settings%n_random_trial_vectors))
-        red_space_basis(:, 1) = grad/grad_norm
+        red_space_basis(:, 1) = grad / grad_norm
         if (n_vectors == 2) red_space_basis(:, 2) = neg_curv_vec
 
         call generate_random_trial_vectors(red_space_basis, settings, error)
