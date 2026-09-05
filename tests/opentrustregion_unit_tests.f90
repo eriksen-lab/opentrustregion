@@ -594,7 +594,8 @@ contains
                     grad_norm, aug_hess(n_trial + 1, n_trial + 1), &
                     red_space_hess_eigvals(n_trial), &
                     red_space_hess_eigvecs(n_trial, n_trial), solution(n_param), &
-                    red_space_solution(n_trial), trust_radius, mu, work(9)
+                    red_space_solution(n_trial), trust_radius, mu, work(9), &
+                    grad_coupled_component
         integer(ip) :: i, j, error, info
 
         external :: dsyev
@@ -692,6 +693,114 @@ contains
                        red_space_solution, mu, settings, error)
         if (error == 0) then
             write (stderr, *) "test_bisection failed: Failed to produce error."
+            test_bisection = .false.
+        end if
+
+        ! set up hard case by using an orthonormal basis as this is what the hard case 
+        ! step assumes
+        red_space_basis = 0.0_rp
+        red_space_basis(1, 1) = 1.0_rp
+        red_space_basis(2, 2) = 1.0_rp
+        red_space_basis(3, 3) = 1.0_rp
+        grad_norm = 1.0_rp
+        trust_radius = 0.6_rp
+        aug_hess = 0.0_rp
+        aug_hess(2, 2) = 5.0_rp
+        aug_hess(3, 3) = -2.0_rp
+        aug_hess(4, 4) = 3.0_rp
+
+        ! diagonalize Hessian
+        red_space_hess_eigvecs = aug_hess(2:, 2:)
+        call dsyev("V", "U", n_trial, red_space_hess_eigvecs, n_trial, &
+                   red_space_hess_eigvals, work, 9_ip, info)
+
+        ! test hard case: lowest reduced space Hessian eigenvalue is negative and its
+        ! eigenvector has no component along the gradient direction, so no level shift 
+        ! can reproduce the trust region solution and it must be constructed directly 
+        ! from the eigendecomposition
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
+        if (error /= 0) then
+            write (stderr, *) "test_bisection failed: Produced error for hard case."
+            test_bisection = .false.
+        end if
+        if (abs(norm2(solution) - trust_radius) > tol) then
+            write (stderr, *) "test_bisection failed: Hard case solution does not "// &
+                "respect trust radius."
+            test_bisection = .false.
+        end if
+        if (abs(mu - minval(red_space_hess_eigvals)) > tol) then
+            write (stderr, *) "test_bisection failed: Hard case level shift not "// &
+                "equal to lowest reduced space Hessian eigenvalue."
+            test_bisection = .false.
+        end if
+        grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals) - &
+                                              maxval(red_space_hess_eigvals))
+        if (any(abs(red_space_solution - &
+                    [grad_coupled_component, &
+                     sqrt(trust_radius**2 - grad_coupled_component**2), 0.0_rp]) > &
+                    tol)) then
+            write (stderr, *) "test_bisection failed: Hard case reduced space "// &
+                "solution not correct."
+            test_bisection = .false.
+        end if
+        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+            write (stderr, *) "test_bisection failed: Hard case full space "// &
+                "solution not correct."
+            test_bisection = .false.
+        end if
+
+        ! set up hard case with degenerate lowest eigenvalues
+        trust_radius = 0.5_rp
+        aug_hess = 0.0_rp
+        aug_hess(2, 2) = 5.0_rp
+        aug_hess(3, 3) = -2.0_rp
+        aug_hess(4, 4) = -2.0_rp
+
+        ! diagonalize Hessian
+        red_space_hess_eigvecs = aug_hess(2:, 2:)
+        call dsyev("V", "U", n_trial, red_space_hess_eigvecs, n_trial, &
+                   red_space_hess_eigvals, work, 9_ip, info)
+
+        ! test hard case with a degenerate lowest eigenvalue: the eigenvector spanning 
+        ! the degenerate subspace used to fill the trust radius is not uniquely 
+        ! defined,so only invariant properties of the solution are checked rather than 
+        ! exact reduced space solution components
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
+        if (error /= 0) then
+            write (stderr, *) "test_bisection failed: Produced error for "// &
+                "degenerate hard case."
+            test_bisection = .false.
+        end if
+        if (abs(norm2(solution) - trust_radius) > tol) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case "// &
+                "solution does not respect trust radius."
+            test_bisection = .false.
+        end if
+        if (abs(mu - minval(red_space_hess_eigvals)) > tol) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case level "// &
+                "shift not equal to lowest reduced space Hessian eigenvalue."
+            test_bisection = .false.
+        end if
+        grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals) - &
+                                              maxval(red_space_hess_eigvals))
+        if (abs(red_space_solution(1) - grad_coupled_component) > tol) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case "// &
+                "component along non-degenerate eigenvector not correct."
+            test_bisection = .false.
+        end if
+        if (abs(norm2(red_space_solution(2:3)) - &
+                sqrt(trust_radius**2 - grad_coupled_component**2)) > tol) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case fill "// &
+                "magnitude within degenerate eigenspace not correct."
+            test_bisection = .false.
+        end if
+        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+            write (stderr, *) "test_bisection failed: Degenerate hard case full "// &
+                "space solution not correct."
             test_bisection = .false.
         end if
 

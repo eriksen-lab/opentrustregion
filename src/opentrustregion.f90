@@ -752,9 +752,10 @@ contains
         integer(ip), intent(out) :: error
 
         real(rp), allocatable :: eigspace_solution(:)
+        logical, allocatable :: non_degenerate_mask(:)
         real(rp) :: lower_alpha, middle_alpha, upper_alpha, lower_trust_dist, &
                     middle_trust_dist, upper_trust_dist, current_norm
-        integer(ip) :: n_param, n_red, iter, min_idx, i
+        integer(ip) :: n_param, n_red, iter, min_idx
         real(rp), parameter :: lower_alpha_bound = 1e-30_rp, &
                                upper_alpha_bound = 1e30_rp, &
                                alpha_conv_factor = 1e-12_rp, &
@@ -775,18 +776,23 @@ contains
         lower_alpha = lower_alpha_bound
         upper_alpha = upper_alpha_bound
 
-        ! check if lowest eigenvector of reduced space Hessian has gradient component
+        ! check if lowest reduced space Hessian eigenvalue is negative and its
+        ! eigenvector has no gradient component, i.e. whether this is the hard case
         min_idx = minloc(red_space_hess_eigvals, dim=1)
-        if (abs(red_space_hess_eigvecs(1, min_idx)) <= orthogonality_thres) then
-            ! get crossover point between lowest reduced space Hessian eigenvalue and 
-            ! second lowest Hessian eigenvalue in augmented Hessian to get lower 
-            ! boundary for alpha which ensures that the solution has a gradient 
-            ! component
+        if (red_space_hess_eigvals(min_idx) < 0.0_rp .and. &
+            abs(red_space_hess_eigvecs(1, min_idx)) <= orthogonality_thres) then
+            ! get crossover point between lowest reduced space Hessian eigenvalue and
+            ! second lowest Hessian eigenvalue in augmented Hessian to get lower
+            ! boundary for alpha which ensures that the solution has a gradient
+            ! component, excluding eigenvalues degenerate with the lowest one to avoid
+            ! dividing by zero
+            non_degenerate_mask = abs(red_space_hess_eigvals - &
+                                      red_space_hess_eigvals(min_idx)) > numerical_zero
             lower_alpha = sqrt(red_space_hess_eigvals(min_idx) / &
                                sum(red_space_hess_eigvecs(1, :)**2 / &
                                    (red_space_hess_eigvals(min_idx) - &
                                     red_space_hess_eigvals), &
-                                    mask=[(i, i=1, n_red)] /= min_idx)) / grad_norm
+                                   mask=non_degenerate_mask)) / grad_norm
 
             ! construct solution at crossover point in eigenvector basis while avoiding 
             ! contributions of lowest Hessian eigenvalue as the gradient component is 
@@ -794,12 +800,12 @@ contains
             eigspace_solution = merge(grad_norm * red_space_hess_eigvecs(1, :) / &
                                       (red_space_hess_eigvals(min_idx) - &
                                        red_space_hess_eigvals), 0.0_rp, &
-                                      [(i, i=1, n_red)] /= min_idx)
+                                      non_degenerate_mask)
 
             ! transform from eigenvector basis to reduced step basis
             call dgemv("N", n_red, n_red, 1.0_rp, red_space_hess_eigvecs, n_red, &
                        eigspace_solution, 1_ip, 0.0_rp, red_space_solution, 1_ip)
-            deallocate(eigspace_solution)
+            deallocate(eigspace_solution, non_degenerate_mask)
 
             ! get solution in full space
             call dgemv("N", n_param, n_red, 1.0_rp, red_space_basis, n_param, &
@@ -812,7 +818,7 @@ contains
                 ! fill the rest of the trust radius with the lowest eigenvector
                 red_space_solution = red_space_solution + &
                                      sqrt(max(0.0_rp, trust_radius**2 - &
-                                              dnrm2(n_param, solution, 1_ip)**2)) * &
+                                              current_norm**2)) * &
                                      red_space_hess_eigvecs(:, min_idx)
 
                 ! construct full space solution
@@ -1168,42 +1174,16 @@ contains
         real(rp), intent(out) :: lowest_eigval, lowest_eigvec(:)
         integer(ip), intent(out) :: error
 
-        integer(ip) :: n, lwork, info
-        real(rp), allocatable :: work(:), eigvals(:), eigvecs(:, :)
-        character(300) :: msg
-        external :: dsyev
-
-        ! initialize error flag
-        error = 0
+        integer(ip) :: n
+        real(rp), allocatable :: eigvals(:), eigvecs(:, :)
 
         ! size of matrix
         n = size(symm_matrix, 1)
 
-        ! copy matrix
-        eigvecs = symm_matrix
-
-        ! query optimal workspace size
-        lwork = -1
-        allocate(eigvals(n), work(1))
-        call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
-        lwork = int(work(1), kind=ip)
-        deallocate(work)
-        allocate(work(lwork))
-
         ! perform eigendecomposition
-        call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
-
-        ! deallocate work array
-        deallocate(work)
-
-        ! check for successful execution
-        if (info /= 0) then
-            write (msg, '(A, I0)') "Eigendecomposition failed: Error in DSYEV, "// &
-                "info = ", info
-            call settings%log(msg, verbosity_error, .true.)
-            error = 1
-            return
-        end if
+        allocate(eigvals(n), eigvecs(n, n))
+        call symm_mat_diag(symm_matrix, eigvals, eigvecs, settings, error)
+        if (error /= 0) return
 
         ! get lowest eigenvalue and corresponding eigenvector
         lowest_eigval = eigvals(1)
