@@ -282,6 +282,36 @@ contains
 
     end subroutine setup_settings
 
+    subroutine diagonalize_test_matrix(matrix, eigvals, eigvecs, info)
+        !
+        ! this subroutine diagonalizes a symmetric matrix for use in tests
+        !
+        real(rp), intent(in) :: matrix(:, :)
+        real(rp), intent(out) :: eigvals(:), eigvecs(:, :)
+        integer(ip), intent(out) :: info
+
+        integer(ip) :: n, lwork
+        real(rp), allocatable :: work(:)
+
+        external :: dsyev
+
+        n = size(matrix, 1)
+        eigvecs = matrix
+
+        ! query optimal workspace size
+        lwork = -1
+        allocate(work(1))
+        call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
+        lwork = int(work(1), kind=ip)
+        deallocate(work)
+        allocate(work(lwork))
+
+        ! perform eigendecomposition
+        call dsyev("V", "U", n, eigvecs, n, eigvals, work, lwork, info)
+        deallocate(work)
+
+    end subroutine diagonalize_test_matrix
+
     logical(c_bool) function test_solver() bind(C)
         !
         ! this function tests the solver subroutine
@@ -594,11 +624,9 @@ contains
                     grad_norm, aug_hess(n_trial + 1, n_trial + 1), &
                     red_space_hess_eigvals(n_trial), &
                     red_space_hess_eigvecs(n_trial, n_trial), solution(n_param), &
-                    red_space_solution(n_trial), trust_radius, mu, work(9), &
+                    red_space_solution(n_trial), trust_radius, mu, &
                     grad_coupled_component
         integer(ip) :: i, j, error, info
-
-        external :: dsyev
 
         ! assume tests pass
         test_bisection = .true.
@@ -634,9 +662,8 @@ contains
         end do
 
         ! diagonalize Hessian
-        red_space_hess_eigvecs = aug_hess(2:, 2:)
-        call dsyev("V", "U", n_trial, red_space_hess_eigvecs, n_trial, &
-                   red_space_hess_eigvals, work, 9_ip, info)
+        call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                     red_space_hess_eigvecs, info)
 
         ! perform bisection, check whether error has occured and determine whether 
         ! resulting solution is correct in reduced and full space and respects target 
@@ -682,9 +709,8 @@ contains
         end do
 
         ! diagonalize Hessian
-        red_space_hess_eigvecs = aug_hess(2:, 2:)
-        call dsyev("V", "U", n_trial, red_space_hess_eigvecs, n_trial, &
-                   red_space_hess_eigvals, work, 9_ip, info)
+        call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                     red_space_hess_eigvecs, info)
 
         ! perform bisection and determine whether routine correctly throws error since
         ! minimum is closer than target trust radius and no level shift is necessary
@@ -710,9 +736,8 @@ contains
         aug_hess(4, 4) = 3.0_rp
 
         ! diagonalize Hessian
-        red_space_hess_eigvecs = aug_hess(2:, 2:)
-        call dsyev("V", "U", n_trial, red_space_hess_eigvecs, n_trial, &
-                   red_space_hess_eigvals, work, 9_ip, info)
+        call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                     red_space_hess_eigvecs, info)
 
         ! test hard case: lowest reduced space Hessian eigenvalue is negative and its
         ! eigenvector has no component along the gradient direction, so no level shift 
@@ -759,11 +784,10 @@ contains
         aug_hess(4, 4) = -2.0_rp
 
         ! diagonalize Hessian
-        red_space_hess_eigvecs = aug_hess(2:, 2:)
-        call dsyev("V", "U", n_trial, red_space_hess_eigvecs, n_trial, &
-                   red_space_hess_eigvals, work, 9_ip, info)
+        call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                     red_space_hess_eigvecs, info)
 
-        ! test hard case with a degenerate lowest eigenvalue: the eigenvector spanning 
+        ! test hard case with a degenerate lowest eigenvalue: the eigenvector spanning
         ! the degenerate subspace used to fill the trust radius is not uniquely 
         ! defined,so only invariant properties of the solution are checked rather than 
         ! exact reduced space solution components

@@ -777,17 +777,19 @@ contains
         upper_alpha = upper_alpha_bound
 
         ! check if lowest reduced space Hessian eigenvalue is negative and its
-        ! eigenvector has no gradient component, i.e. whether this is the hard case
+        ! (possibly degenerate) eigenspace has no gradient component, i.e. whether 
+        ! this is the hard case
         min_idx = minloc(red_space_hess_eigvals, dim=1)
+        non_degenerate_mask = abs(red_space_hess_eigvals - &
+                                  red_space_hess_eigvals(min_idx)) > numerical_zero
         if (red_space_hess_eigvals(min_idx) < 0.0_rp .and. &
-            abs(red_space_hess_eigvecs(1, min_idx)) <= orthogonality_thres) then
+            sqrt(sum(red_space_hess_eigvecs(1, :)**2, mask=.not. non_degenerate_mask)) &
+                <= orthogonality_thres) then
             ! get crossover point between lowest reduced space Hessian eigenvalue and
             ! second lowest Hessian eigenvalue in augmented Hessian to get lower
             ! boundary for alpha which ensures that the solution has a gradient
             ! component, excluding eigenvalues degenerate with the lowest one to avoid
             ! dividing by zero
-            non_degenerate_mask = abs(red_space_hess_eigvals - &
-                                      red_space_hess_eigvals(min_idx)) > numerical_zero
             lower_alpha = sqrt(red_space_hess_eigvals(min_idx) / &
                                sum(red_space_hess_eigvecs(1, :)**2 / &
                                    (red_space_hess_eigvals(min_idx) - &
