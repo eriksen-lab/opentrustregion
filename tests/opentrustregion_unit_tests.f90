@@ -1354,6 +1354,21 @@ contains
             test_gram_schmidt = .false.
         end if
 
+        ! define linearly dependent vector
+        vector = space(:, 1)
+
+        ! reset log message
+        log_message = ""
+
+        ! perform Gram-Schmidt orthogonalization that stays silent on error and 
+        ! determine that the error is still returned but no message is logged
+        call gram_schmidt(vector, space, settings, error, silent_on_error=.true.)
+        if ((error /= 2) .or. (adjustl(log_message) /= "")) then
+            write (stderr, *) "test_gram_schmidt failed: Error message logged "// &
+                "despite being asked to stay silent on error."
+            test_gram_schmidt = .false.
+        end if
+
         ! define vector in space that is already complete
         vector_small = [1.0_rp, 2.0_rp]
         space_small(:, 1) = [1.0_rp, 0.0_rp]

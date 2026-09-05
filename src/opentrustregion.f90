@@ -587,7 +587,10 @@ contains
                 call gram_schmidt(basis_vec, red_space_basis, settings, error)
                 ! check if new vector is linearly dependent and the reduced space 
                 ! cannot be usefully expanded further due to degeneracy and stop here
-                if (error == 2) exit
+                if (error == 2) then
+                    stability_converged = .true.
+                    exit
+                end if
                 call add_error_origin(error, error_stability_check, settings)
                 if (error /= 0) return
 
@@ -612,7 +615,10 @@ contains
                                   lin_trans_vector=h_basis_vec, lin_trans_space=h_basis)
                 ! check if new vector is linearly dependent and the reduced space 
                 ! cannot be usefully expanded further due to degeneracy and stop here
-                if (error == 2) exit
+                if (error == 2) then
+                    stability_converged = .true.
+                    exit
+                end if
                 call add_error_origin(error, error_stability_check, settings)
                 if (error /= 0) return
 
@@ -1280,6 +1286,7 @@ contains
 
         real(rp), allocatable :: red_space_basis(:, :)
 
+        real(rp), allocatable :: neg_curv_vec(:)
         integer(ip) :: min_idx, n_vectors
         real(rp), external :: dnrm2
 
@@ -1290,29 +1297,35 @@ contains
         min_idx = minloc(h_diag, dim=1)
 
         ! add direction if minimum Hessian diagonal element is negative
+        n_vectors = 1
         if (h_diag(min_idx) < 0.0_rp .and. size(grad) > 2) then
-            n_vectors = 2
-            allocate(red_space_basis(size(grad), n_vectors + &
-                     settings%n_random_trial_vectors))
-            red_space_basis(:, 1) = grad/grad_norm
-            red_space_basis(:, 2) = 0.0_rp
-            red_space_basis(min_idx, 2) = 1.0_rp
+            allocate(neg_curv_vec(size(grad)))
+            neg_curv_vec = 0.0_rp
+            neg_curv_vec(min_idx) = 1.0_rp
             if (associated(settings%project)) then
-                call settings%project(red_space_basis(:, 2), error)
+                call settings%project(neg_curv_vec, error)
                 call add_error_origin(error, error_project, settings)
                 if (error /= 0) return
             end if
-            call gram_schmidt(red_space_basis(:, 2), &
-                              reshape(red_space_basis(:, 1), &
-                                      [size(red_space_basis, 1), 1]), &
+            call gram_schmidt(neg_curv_vec, &
+                              reshape(grad/grad_norm, [size(grad), 1]), &
                               settings, error)
-            if (error /= 0) return
-        else
-            n_vectors = 1
-            allocate(red_space_basis(size(grad), n_vectors + &
-                     settings%n_random_trial_vectors))
-            red_space_basis(:, 1) = grad/grad_norm
+            ! if the negative curvature direction is linearly dependent on the
+            ! gradient direction it cannot usefully be added as a separate trial
+            ! vector, so fall back to using only the gradient direction
+            if (error == 2) then
+                error = 0
+            else if (error /= 0) then
+                return
+            else
+                n_vectors = 2
+            end if
         end if
+
+        allocate(red_space_basis(size(grad), n_vectors + &
+                 settings%n_random_trial_vectors))
+        red_space_basis(:, 1) = grad/grad_norm
+        if (n_vectors == 2) red_space_basis(:, 2) = neg_curv_vec
 
         call generate_random_trial_vectors(red_space_basis, settings, error)
 
@@ -1326,7 +1339,8 @@ contains
         class(settings_type), intent(in) :: settings
         integer(ip), intent(out) :: error
 
-        integer(ip) :: n_param, n_trial, i
+        integer(ip) :: n_param, n_trial, i, n_attempts
+        integer(ip), parameter :: max_rnd_trial_attempts = 100
         real(rp), parameter :: rnd_vector_min_norm = 1e-3_rp
         real(rp), external :: dnrm2
 
@@ -1341,7 +1355,17 @@ contains
 
         do i = n_trial - settings%n_random_trial_vectors + 1, n_trial
             error = 2
+            n_attempts = 0
             do while (error == 2)
+                n_attempts = n_attempts + 1
+                if (n_attempts > max_rnd_trial_attempts) then
+                    call settings%log("Maximum number of attempts to generate a "// &
+                                      "random trial vector linearly independent of "// &
+                                      "the existing trial space reached.", &
+                                      verbosity_error, .true.)
+                    error = 1
+                    return
+                end if
                 call random_number(red_space_basis(:, i))
                 red_space_basis(:, i) = 2*red_space_basis(:, i) - 1
                 do while (dnrm2(n_param, red_space_basis(:, i), 1_ip) < &
@@ -1420,18 +1444,14 @@ contains
             norm = dnrm2(n_param, vector, 1_ip)
             if (norm < numerical_zero) then
                 error = 2
-                if (.not. present(silent_on_error)) then
+                if (.not. present(silent_on_error) .or. .not. silent_on_error) &
                     call settings%log(gram_schmidt_lin_dep_error_msg, verbosity_error, &
                                       .true.)
-                else
-                    if (.not. silent_on_error) &
-                        call settings%log(gram_schmidt_lin_dep_error_msg, &
-                                          verbosity_error, .true.)
-                end if
                 return
             end if
             vector = vector / norm
-            if (present(lin_trans_vector)) lin_trans_vector = lin_trans_vector / norm
+            if (present(lin_trans_vector) .and. present(lin_trans_space)) &
+                lin_trans_vector = lin_trans_vector / norm
 
             call dgemv("T", n_param, n_vectors, 1.0_rp, space, n_param, vector, &
                         1_ip, 0.0_rp, orth, 1_ip)
