@@ -1253,7 +1253,8 @@ contains
         use opentrustregion, only: solver_settings_type, gram_schmidt, &
                                    gram_schmidt_zero_vector_error_msg, &
                                    gram_schmidt_lin_dep_error_msg, &
-                                   gram_schmidt_too_many_vectors_error_msg
+                                   gram_schmidt_too_many_vectors_error_msg, &
+                                   error_gram_schmidt_lin_dep
 
         type(solver_settings_type) :: settings
         real(rp) :: vector(4), lin_trans_vector(4), vector_small(2), space(4, 2), &
@@ -1347,7 +1348,7 @@ contains
         ! perform Gram-Schmidt orthogonalization and determine if function correctly
         ! throws error
         call gram_schmidt(vector, space, settings, error)
-        if ((error /= 2) .or. &
+        if ((error /= error_gram_schmidt_lin_dep) .or. &
             (adjustl(log_message) /= gram_schmidt_lin_dep_error_msg)) then
             write (stderr, *) "test_gram_schmidt failed: No error returned during "// &
                 "orthogonalization for linearly dependent vector."
@@ -1363,7 +1364,8 @@ contains
         ! perform Gram-Schmidt orthogonalization that stays silent on error and 
         ! determine that the error is still returned but no message is logged
         call gram_schmidt(vector, space, settings, error, silent_on_error=.true.)
-        if ((error /= 2) .or. (adjustl(log_message) /= "")) then
+        if ((error /= error_gram_schmidt_lin_dep) .or. (adjustl(log_message) /= "")) &
+            then
             write (stderr, *) "test_gram_schmidt failed: Error message logged "// &
                 "despite being asked to stay silent on error."
             test_gram_schmidt = .false.

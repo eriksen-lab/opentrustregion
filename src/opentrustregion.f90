@@ -34,6 +34,7 @@ module opentrustregion
                               error_stability_check = 200, &
                               error_stability_check_max_iter = error_stability_check + &
                                                                2, &
+                              error_gram_schmidt_lin_dep = 51, &
                               error_obj_func = 1100, error_update_orbs = 1200, &
                               error_hess_x = 1300, error_precond = 1400, &
                               error_conv_check = 1500, error_project = 1600
@@ -489,6 +490,9 @@ contains
         ! initialize error flag
         error = 0
 
+        ! initialize stable
+        stable = .false.
+
         ! initialize settings
         if (.not. settings%initialized) then
             call settings%init(error)
@@ -587,7 +591,7 @@ contains
                 call gram_schmidt(basis_vec, red_space_basis, settings, error)
                 ! check if new vector is linearly dependent and the reduced space 
                 ! cannot be usefully expanded further due to degeneracy and stop here
-                if (error == 2) then
+                if (error == error_gram_schmidt_lin_dep) then
                     error = 0
                     stability_converged = .true.
                     exit
@@ -616,7 +620,7 @@ contains
                                   lin_trans_vector=h_basis_vec, lin_trans_space=h_basis)
                 ! check if new vector is linearly dependent and the reduced space 
                 ! cannot be usefully expanded further due to degeneracy and stop here
-                if (error == 2) then
+                if (error == error_gram_schmidt_lin_dep) then
                     error = 0
                     stability_converged = .true.
                     exit
@@ -1315,7 +1319,7 @@ contains
             ! if the negative curvature direction is linearly dependent on the
             ! gradient direction it cannot usefully be added as a separate trial
             ! vector, so fall back to using only the gradient direction
-            if (error == 2) then
+            if (error == error_gram_schmidt_lin_dep) then
                 error = 0
             else if (error /= 0) then
                 return
@@ -1356,9 +1360,9 @@ contains
         n_trial = size(red_space_basis, 2)
 
         do i = n_trial - settings%n_random_trial_vectors + 1, n_trial
-            error = 2
+            error = error_gram_schmidt_lin_dep
             n_attempts = 0
-            do while (error == 2)
+            do while (error == error_gram_schmidt_lin_dep)
                 n_attempts = n_attempts + 1
                 if (n_attempts > max_rnd_trial_attempts) then
                     call settings%log("Maximum number of attempts to generate a "// &
@@ -1447,7 +1451,7 @@ contains
             end do
             norm = dnrm2(n_param, vector, 1_ip)
             if (norm < numerical_zero) then
-                error = 2
+                error = error_gram_schmidt_lin_dep
                 if (.not. present(silent_on_error) .or. .not. silent_on_error) &
                     call settings%log(gram_schmidt_lin_dep_error_msg, verbosity_error, &
                                       .true.)
@@ -2016,7 +2020,7 @@ contains
                                  solution_normalized(:), last_solution_normalized(:), &
                                  red_space_hess_eigvals(:), red_space_hess_eigvecs(:, :)
         integer(ip) :: n_trial, i, initial_imicro, min_idx
-        logical :: accept_step, micro_converged, newton, reduced_space_full_rank
+        logical :: accept_step, micro_converged, newton
         real(rp) :: residual_norm, red_factor, &
                     initial_residual_norm, new_func, ratio, minres_tol
         real(rp), parameter :: newton_eigval_thresh = -1e-5_rp, &
@@ -2065,7 +2069,6 @@ contains
         accept_step = .false.
         do while (.not. accept_step)
             micro_converged = .false.
-            reduced_space_full_rank = .false.
 
             jacobi_davidson_started = .false.
             do imicro = 1, settings%n_micro
@@ -2157,7 +2160,6 @@ contains
                 ! space has reached full rank and cannot be expanded further
                 if (n_trial >= n_param) then
                     micro_converged = .true.
-                    reduced_space_full_rank = .true.
                     exit
                 end if
 
@@ -2169,11 +2171,10 @@ contains
 
                     ! orthonormalize to current orbital space to get new basis vector
                     call gram_schmidt(basis_vec, red_space_basis, settings, error)
-                    if (error == 2) then
+                    if (error == error_gram_schmidt_lin_dep) then
                         ! new vector is linearly dependent, so the reduced space has
                         ! reached full rank and cannot be expanded further
                         micro_converged = .true.
-                        reduced_space_full_rank = .true.
                         exit
                     else if (error /= 0) then
                         return
@@ -2198,11 +2199,10 @@ contains
                     call gram_schmidt(basis_vec, red_space_basis, settings, error, &
                                       lin_trans_vector=h_basis_vec, &
                                       lin_trans_space=h_basis)
-                    if (error == 2) then
+                    if (error == error_gram_schmidt_lin_dep) then
                         ! new vector is linearly dependent, so the reduced space has
                         ! reached full rank and cannot be expanded further
                         micro_converged = .true.
-                        reduced_space_full_rank = .true.
                         exit
                     else if (error /= 0) then
                         return
@@ -2256,7 +2256,7 @@ contains
             accept_step = accept_trust_region_step(solution, ratio, micro_converged, &
                                                    settings, trust_radius, &
                                                    max_precision_reached)
-            if (max_precision_reached .or. reduced_space_full_rank) exit
+            if (max_precision_reached) exit
         end do
 
         ! deallocate quantities from microiterations
