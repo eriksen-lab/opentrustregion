@@ -721,6 +721,18 @@ class PySystemTests(unittest.TestCase):
         if not state["logger_called"]:
             print(" test_solver_py failed: Logger was not called.")
             test_passed = False
+        if settings.n_update_orbs <= 0:
+            print(
+                " test_solver_py failed: Orbital update transformation counters were "
+                "not populated."
+            )
+            test_passed = False
+        if settings.n_hess_x <= 0:
+            print(
+                " test_solver_py failed: Hessian linear transformation counters were "
+                "not populated."
+            )
+            test_passed = False
 
         # restart near the saddle - solver must still reach a known minimum
         state["curr"] = np.array([0.35, 0.59, 0.48, 0.40, 0.31, 0.32])
@@ -758,6 +770,12 @@ class PySystemTests(unittest.TestCase):
             print(
                 " test_stability_check_py failed: Stability incorrectly classifies "
                 "stability of minimum."
+            )
+            test_passed = False
+        if settings.n_hess_x <= 0:
+            print(
+                " test_stability_check_py failed: Hessian linear transformation "
+                "counter was not populated."
             )
             test_passed = False
 

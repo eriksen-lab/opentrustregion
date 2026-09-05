@@ -360,6 +360,16 @@ contains
             write (stderr, *) "test_solver failed: Solver did not find correct minimum."
             test_solver = .false.
         end if
+        if (settings%n_update_orbs <= 0) then
+            write (stderr, *) "test_solver failed: Orbital update transformation "// &
+                "counters were not populated."
+            test_solver = .false.
+        end if
+        if (settings%n_hess_x <= 0) then
+            write (stderr, *) "test_solver failed: Hessian linear transformation "// &
+                "counters were not populated."
+            test_solver = .false.
+        end if
 
         ! start near saddle point
         curr_vars = [0.35_rp, 0.59_rp, 0.48_rp, 0.40_rp, 0.31_rp, 0.32_rp]
@@ -426,6 +436,29 @@ contains
             test_solver = .false.
         end if
 
+        ! force the maximum precision heuristic to trigger by requesting a convergence
+        ! tolerance that floating-point noise in the gradient can never satisfy
+        curr_vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        update_orbs_funptr => update_orbs
+        obj_func_funptr => obj_func
+        call settings%init(error)
+        settings%conv_tol = 0.0_rp
+        settings%subsystem_solver = "tcg"
+
+        ! run solver, check that it still returns without error while flagging this in 
+        ! the settings object
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= 0) then
+            write (stderr, *) "test_solver failed: Produced error when forcing "// &
+                "maximum precision heuristic."
+            test_solver = .false.
+        end if
+        if (.not. settings%max_precision_reached) then
+            write (stderr, *) "test_solver failed: Did not flag that maximum "// &
+                "precision was reached when convergence tolerance could not be met."
+            test_solver = .false.
+        end if
+
         ! deallocate space for the gradient
         deallocate(final_grad)
 
@@ -472,6 +505,11 @@ contains
         if (all(abs(direction) > tol)) then
             write (stderr, *) "test_stability_check failed: Stability check does "// &
                 "not return zero vector for minimum"
+            test_stability_check = .false.
+        end if
+        if (settings%n_hess_x <= 0) then
+            write (stderr, *) "test_stability_check failed: Hessian linear "// &
+                "transformation counter was not populated."
             test_stability_check = .false.
         end if
 
