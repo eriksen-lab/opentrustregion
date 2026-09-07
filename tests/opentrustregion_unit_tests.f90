@@ -625,7 +625,8 @@ contains
                     red_space_hess_eigvals(n_trial), &
                     red_space_hess_eigvecs(n_trial, n_trial), solution(n_param), &
                     red_space_solution(n_trial), trust_radius, mu, &
-                    grad_coupled_component
+                    grad_coupled_component, newton_solution(n_param), &
+                    newton_red_space_solution(n_trial)
         integer(ip) :: i, j, error, info
 
         ! assume tests pass
@@ -712,13 +713,34 @@ contains
         call diagonalize_test_matrix(aug_hess(2:, 2:), red_space_hess_eigvals, &
                                      red_space_hess_eigvecs, info)
 
-        ! perform bisection and determine whether routine correctly throws error since
-        ! minimum is closer than target trust radius and no level shift is necessary
+        ! perform bisection and determine whether routine correctly falls back to the
+        ! Newton step since the minimum is closer than the target trust radius and no
+        ! level shift is necessary
         call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
                        red_space_hess_eigvecs, trust_radius, solution, &
                        red_space_solution, mu, settings, error)
-        if (error == 0) then
-            write (stderr, *) "test_bisection failed: Failed to produce error."
+        if (error /= 0) then
+            write (stderr, *) "test_bisection failed: Produced error instead of "// &
+                "falling back to Newton step."
+            test_bisection = .false.
+        end if
+        if (abs(mu) > tol) then
+            write (stderr, *) "test_bisection failed: Level shift not zero for "// &
+                "Newton step fallback."
+            test_bisection = .false.
+        end if
+        newton_red_space_solution = -grad_norm * matmul(red_space_hess_eigvecs, &
+                                                        red_space_hess_eigvecs(1, :) / &
+                                                        red_space_hess_eigvals)
+        newton_solution = matmul(red_space_basis, newton_red_space_solution)
+        if (any(abs(red_space_solution - newton_red_space_solution) > tol)) then
+            write (stderr, *) "test_bisection failed: Newton step fallback reduced "// &
+                "space solution not correct."
+            test_bisection = .false.
+        end if
+        if (any(abs(solution - newton_solution) > tol)) then
+            write (stderr, *) "test_bisection failed: Newton step fallback full "// &
+                "space solution not correct."
             test_bisection = .false.
         end if
 
