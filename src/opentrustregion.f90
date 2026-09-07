@@ -896,11 +896,13 @@ contains
                 current_norm = dnrm2(n_param, solution, 1_ip)
                 lower_trust_dist = current_norm - trust_radius
                 if (lower_alpha < lower_alpha_bound) then
-                    call settings%log("Unable to find lower bound for alpha in "// &
-                                      "bisection. Interior solution should be "// &
-                                      "found with Newton step.", verbosity_error, &
-                                      .true.)
-                    error = 1
+                    ! the step norm plateaus below the trust radius as alpha approaches 
+                    ! zero, which means the unconstrained Newton step already lies 
+                    ! within the trust region
+                    call newton_step(aug_hess, grad_norm, red_space_basis, solution, &
+                                     red_space_solution, settings, error)
+                    if (error /= 0) return
+                    mu = 0.0_rp
                     return
                 end if
             end do
@@ -1452,9 +1454,14 @@ contains
             norm = dnrm2(n_param, vector, 1_ip)
             if (norm < numerical_zero) then
                 error = error_gram_schmidt_lin_dep
-                if (.not. present(silent_on_error) .or. .not. silent_on_error) &
+                if (present(silent_on_error)) then
+                    if (.not. silent_on_error) &
+                        call settings%log(gram_schmidt_lin_dep_error_msg, &
+                                          verbosity_error, .true.)
+                else
                     call settings%log(gram_schmidt_lin_dep_error_msg, verbosity_error, &
                                       .true.)
+                end if
                 return
             end if
             vector = vector / norm

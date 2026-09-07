@@ -253,7 +253,7 @@ jobs:
     - name: Build & Install OpenTrustRegion with Coverage Flags
       if: ${{ matrix.build-type == 'coverage' }}
       run: |
-        CMAKE_FLAGS="-DCMAKE_Fortran_FLAGS='--coverage -g'" pip install ${{github.workspace}}
+        CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DCMAKE_Fortran_FLAGS='--coverage -g'" pip install ${{github.workspace}}
 
     - name: Testing OpenTrustRegion with Coverage
       if: ${{ matrix.build-type == 'coverage' }}
@@ -263,7 +263,7 @@ jobs:
       if: ${{ matrix.build-type == 'coverage' }}
       run: |
         coverage xml -o python_coverage.xml
-        gcovr -r . --exclude 'tests/*' --xml -o fortran_coverage.xml
+        gcovr -r . --exclude 'build/.*' --exclude 'tests/.*' --xml -o fortran_coverage.xml
 
     - name: Upload to Codecov
       if: ${{ matrix.build-type == 'coverage' }}
