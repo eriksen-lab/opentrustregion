@@ -1452,9 +1452,14 @@ contains
             norm = dnrm2(n_param, vector, 1_ip)
             if (norm < numerical_zero) then
                 error = error_gram_schmidt_lin_dep
-                if (.not. present(silent_on_error) .or. .not. silent_on_error) &
+                if (present(silent_on_error)) then
+                    if (.not. silent_on_error) &
+                        call settings%log(gram_schmidt_lin_dep_error_msg, &
+                                          verbosity_error, .true.)
+                else
                     call settings%log(gram_schmidt_lin_dep_error_msg, verbosity_error, &
                                       .true.)
+                end if
                 return
             end if
             vector = vector / norm
