@@ -118,18 +118,23 @@ settings%subsystem_solver = "tcg"
 
 ! run solver
 call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+
+! read back output fields
+print *, "Number of orbital updates:", settings%n_update_orbs
 ```
 
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized using the `init()` method of the derived type, and default settings can be overridden (here, `conv_tol` and `n_macro`).
 - Finally, the `solver` is called with the initialized settings and callback functions.
+- After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other component.
 
 ---
 
 The following C snippet demonstrates the equivalent usage through the C interface:
 
 ```c
+#include <stdio.h>
 #include <string.h>
 #include "opentrustregion.h"
 
@@ -148,13 +153,17 @@ settings.n_macro = 100;
 strcpy(settings.subsystem_solver, "tcg");
 
 // run solver
-c_int error = solver(update_orbs_funptr, obj_func_funptr, n_param, settings);
+c_int error = solver(update_orbs_funptr, obj_func_funptr, n_param, &settings);
+
+// read back output fields
+printf("Number of orbital updates: %d\n", settings.n_update_orbs);
 ```
 
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized via a small helper function `solver_settings_init()`, which returns a struct with default values. Individual settings (here, `conv_tol` and `n_macro`) can then be overridden.
-- Finally, the `solver` is called with the initialized settings and callback functions and directly returns an error code in typical C fashion.
+- Finally, the `solver` is called with a pointer to the initialized settings and callback functions and directly returns an error code in typical C fashion.
+- After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other attribute.
 
 ---
 
@@ -173,12 +182,16 @@ settings.subsystem_solver = "tcg"
 
 # run solver
 solver(update_orbs, obj_func, n_param, settings)
+
+# read back output fields
+print(f"Number of orbital updates: {settings.n_update_orbs}")
 ```
 
 - Callback functions (`update_orbs`, `obj_func`) are defined elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized via the `SolverSettings` class, which returns an object with default values; individual settings (here, `conv_tol`, and `n_macro`) can then be overridden.
 - Finally, the `solver` is called with the initialized settings and callback functions and errors can be caught in pythonic fashion in the form of a `RuntimeException`.
+- After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other attribute.
 
 ### Optional Settings
 The optimization process can be fine-tuned using the following settings:
@@ -203,6 +216,13 @@ The optimization process can be fine-tuned using the following settings:
 - **`verbose`** (integer): Controls the verbosity of output during optimization.
 - **`seed`** (integer): Seed value for generating random trial vectors.
 - **`logger`** (subroutine): Accepts a log message. Logging is otherwise routed to stdout.
+
+### Output
+After `solver` returns, the following fields on the settings object have been populated and can be read by the caller:
+
+- **`n_update_orbs`** (integer): Total number of orbital update calls (`update_orbs`) performed by this `solver` call.
+- **`n_hess_x`** (integer): Total number of Hessian linear transformations (`hess_x`) performed by this `solver` call.
+- **`max_precision_reached`** (boolean): `true` if the solver stopped because the objective function stopped changing, or the trust radius collapsed, at the limit of floating-point precision, rather than because the RMS gradient dropped below `conv_tol` or a custom `conv_check` reported convergence. `error` is still `0` and the returned point is still the best one found; this flag lets the host program decide whether to accept it as-is, warn, or retighten and retry with a different starting point or subsystem solver.
 
 ## Stability Check
 A separate `stability_check` subroutine is available to verify whether the current solution corresponds to a minimum. If not, it returns a boolean indicating instability and optionally, writes the eigenvector corresponding to the negative eigenvalue in-place to the provided memory.
@@ -244,6 +264,9 @@ settings%diag_solver = "jacobi-davidson"
 
 ! run stability check
 call stability_check(h_diag, hess_x_funptr, n_param, stable, error, settings, kappa=kappa)
+
+! read back output fields
+print *, "Number of Hessian linear transformations:", settings%n_hess_x
 ```
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
@@ -251,12 +274,14 @@ call stability_check(h_diag, hess_x_funptr, n_param, stable, error, settings, ka
 - Stability settings are initialized via the `init()` method of the derived type and can be overridden (here, `conv_tol` and `n_iter`).
 - The `stable` logical output receives the result of the stability check.
 - The descent direction `kappa` is optional and is only returned if provided.
+- After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other component.
 
 ---
 
 The following C snippet demonstrates the equivalent usage through the C interface:
 
 ```c
+#include <stdio.h>
 #include <string.h>
 #include "opentrustregion.h"
 
@@ -279,7 +304,10 @@ double* h_diag;
 double* kappa;
 
 // run stability check
-c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, settings, kappa);
+c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, &settings, kappa);
+
+// read back output fields
+printf("Number of Hessian linear transformations: %d\n", settings.n_hess_x);
 ```
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
@@ -287,6 +315,7 @@ c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, settings,
 - Stability settings are initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol` and `n_iter`) can then be overridden.
 - The `stable` output receives the result of the stability check which directly returns an error code in typical C fashion.
 - The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `nullptr`.
+- After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other component.
 
 ---
 
@@ -309,6 +338,9 @@ kappa = np.empty(n_param, dtype=np.float64)
 
 # run stability check
 stable = stability_check(h_diag, hess_x, n_param, settings, kappa=kappa)
+
+# read back output fields
+print(f"Number of Hessian linear transformations: {settings.n_hess_x}")
 ```
 
 - `hess_x` is an existing Hessian-vector product implementation elsewhere in the program.
@@ -316,6 +348,7 @@ stable = stability_check(h_diag, hess_x, n_param, settings, kappa=kappa)
 - Stability settings are initialized via the `StabilitySettings` class, which returns an object with default values; individual settings (here, `conv_tol`) can then be overridden.
 - The `stable` output receives the result of the stability check and errors can be caught in pythonic fashion in the form of a `RuntimeException`.
 - The descent direction `kappa` is optional and is only returned if provided.
+- After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other attribute.
 
 ### Optional Settings
 The stability check can be fine-tuned using the following settings:
@@ -332,6 +365,11 @@ The stability check can be fine-tuned using the following settings:
 - **`verbose`** (integer): Controls the verbosity of output during the stability check.
 - **`seed`** (integer): Seed value for generating random trial vectors.
 - **`logger`** (function): Accepts a log message. Logging is otherwise routed to stdout.
+
+### Output
+After `stability_check` returns, the following field on the settings object has been populated and can be read by the caller:
+
+- **`n_hess_x`** (integer): Total number of Hessian linear transformations (`hess_x`) performed by this `stability_check` call.
 
 ## Error Code Structure
 

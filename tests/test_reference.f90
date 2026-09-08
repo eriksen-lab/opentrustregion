@@ -22,29 +22,32 @@ module test_reference
 
     ! derived types for solver settings
     type ref_settings_type
-        logical :: stability, line_search
+        logical :: stability, line_search, max_precision_reached
         real(rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(ip) :: n_random_trial_vectors, n_macro, n_micro, &
-                       jacobi_davidson_start, seed, verbose, n_iter
+                       jacobi_davidson_start, seed, verbose, n_update_orbs, n_hess_x, &
+                       n_iter
         character(kw_len, c_char) :: subsystem_solver, diag_solver
     end type
 
     type, bind(C) :: ref_settings_type_c
-        logical(c_bool) :: stability, line_search
+        logical(c_bool) :: stability, line_search, max_precision_reached
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
-                         jacobi_davidson_start, seed, verbose, n_iter
+                         jacobi_davidson_start, seed, verbose, n_update_orbs, &
+                         n_hess_x, n_iter
         character(c_char) :: subsystem_solver(kw_len + 1), diag_solver(kw_len + 1)
     end type
 
     ! general reference parameters
     type(ref_settings_type) :: ref_settings = &
         ref_settings_type(stability = .true., line_search = .true., &
-                          conv_tol = 1e-3_rp, start_trust_radius = 0.2_rp, &
-                          global_red_factor = 1e-2_rp, local_red_factor = 1e-3_rp, &
-                          n_random_trial_vectors = 5, n_macro = 300, n_micro = 200, &
-                          jacobi_davidson_start = 10, seed = 33, verbose = 3, &
-                          n_iter = 50, subsystem_solver = "tcg", &
+                          max_precision_reached = .true., conv_tol = 1e-3_rp, &
+                          start_trust_radius = 0.2_rp, global_red_factor = 1e-2_rp, &
+                          local_red_factor = 1e-3_rp, n_random_trial_vectors = 5, &
+                          n_macro = 300, n_micro = 200, jacobi_davidson_start = 10, &
+                          seed = 33, verbose = 3, n_iter = 50, n_update_orbs = 7, &
+                          n_hess_x = 11, subsystem_solver = "tcg", &
                           diag_solver = "jacobi-davidson")
 
     interface assignment(=)
@@ -723,6 +726,7 @@ contains
         ! set reference values
         lhs%stability = rhs%stability
         lhs%line_search = rhs%line_search
+        lhs%max_precision_reached = rhs%max_precision_reached
         lhs%conv_tol = rhs%conv_tol
         lhs%start_trust_radius = rhs%start_trust_radius
         lhs%global_red_factor = rhs%global_red_factor
@@ -733,6 +737,8 @@ contains
         lhs%jacobi_davidson_start = rhs%jacobi_davidson_start
         lhs%seed = rhs%seed
         lhs%verbose = rhs%verbose
+        lhs%n_update_orbs = rhs%n_update_orbs
+        lhs%n_hess_x = rhs%n_hess_x
         lhs%subsystem_solver = rhs%subsystem_solver
 
         ! set initialization logical
@@ -762,6 +768,7 @@ contains
         lhs%jacobi_davidson_start = rhs%jacobi_davidson_start
         lhs%seed = rhs%seed
         lhs%verbose = rhs%verbose
+        lhs%n_hess_x = rhs%n_hess_x
         lhs%diag_solver = rhs%diag_solver
 
         ! set initialization logical
@@ -817,6 +824,7 @@ contains
 
         lhs%stability = logical(rhs%stability, kind=c_bool)
         lhs%line_search = logical(rhs%line_search, kind=c_bool)
+        lhs%max_precision_reached = logical(rhs%max_precision_reached, kind=c_bool)
         lhs%conv_tol = real(rhs%conv_tol, kind=c_rp)
         lhs%start_trust_radius = real(rhs%start_trust_radius, kind=c_rp)
         lhs%global_red_factor = real(rhs%global_red_factor, kind=c_rp)
@@ -828,6 +836,8 @@ contains
         lhs%seed = int(rhs%seed, kind=c_ip)
         lhs%verbose = int(rhs%verbose, kind=c_ip)
         lhs%n_iter = int(rhs%n_iter, kind=c_ip)
+        lhs%n_update_orbs = int(rhs%n_update_orbs, kind=c_ip)
+        lhs%n_hess_x = int(rhs%n_hess_x, kind=c_ip)
         lhs%subsystem_solver = character_to_c(rhs%subsystem_solver)
         lhs%diag_solver = character_to_c(rhs%diag_solver)
 
@@ -845,6 +855,7 @@ contains
 
         equal_solver_to_ref = (lhs%stability .eqv. rhs%stability) .and. &
             (lhs%line_search .eqv. rhs%line_search) .and. &
+            (lhs%max_precision_reached .eqv. rhs%max_precision_reached) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
             abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
@@ -853,6 +864,8 @@ contains
             lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
+            lhs%n_update_orbs == rhs%n_update_orbs .and. &
+            lhs%n_hess_x == rhs%n_hess_x .and. &
             lhs%subsystem_solver == rhs%subsystem_solver
 
     end function equal_solver_to_ref
@@ -886,7 +899,7 @@ contains
             lhs%n_iter == rhs%n_iter .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%diag_solver == rhs%diag_solver
+            lhs%n_hess_x == rhs%n_hess_x .and. lhs%diag_solver == rhs%diag_solver
 
     end function equal_stability_to_ref
 
@@ -980,6 +993,7 @@ contains
         equal_solver = (lhs%stability .eqv. rhs%stability) .and. &
             (lhs%line_search .eqv. rhs%line_search) .and. &
             (lhs%initialized .eqv. rhs%initialized) .and. &
+            (lhs%max_precision_reached .eqv. rhs%max_precision_reached) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
             abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
@@ -988,6 +1002,8 @@ contains
             lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
+            lhs%n_update_orbs == rhs%n_update_orbs .and. &
+            lhs%n_hess_x == rhs%n_hess_x .and. &
             lhs%subsystem_solver == rhs%subsystem_solver
 
     end function equal_solver
@@ -1019,7 +1035,7 @@ contains
             lhs%n_iter == rhs%n_iter .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%diag_solver == rhs%diag_solver
+            lhs%n_hess_x == rhs%n_hess_x .and. lhs%diag_solver == rhs%diag_solver
 
     end function equal_stability
 

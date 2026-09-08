@@ -113,10 +113,10 @@ module c_interface
     ! derived type for solver settings
     type, bind(C) :: solver_settings_type_c
         type(c_funptr) :: precond, project, conv_check, logger
-        logical(c_bool) :: stability, line_search, initialized
+        logical(c_bool) :: stability, line_search, initialized, max_precision_reached
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
-                         jacobi_davidson_start, seed, verbose
+                         jacobi_davidson_start, seed, verbose, n_update_orbs, n_hess_x
         character(c_char) :: subsystem_solver(kw_len + 1)
     end type
 
@@ -125,7 +125,7 @@ module c_interface
         logical(c_bool) :: initialized
         real(c_rp) :: conv_tol
         integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
-                         verbose
+                         verbose, n_hess_x
         character(c_char) :: diag_solver(kw_len + 1)
     end type
 
@@ -163,7 +163,7 @@ contains
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
-        type(solver_settings_type_c), intent(in), value :: settings_c
+        type(solver_settings_type_c), intent(inout) :: settings_c
         integer(c_ip) :: error_c
 
         procedure(update_orbs_f_wrapper), pointer :: update_orbs
@@ -190,6 +190,12 @@ contains
         ! call solver
         call solver(update_orbs, obj_func, n_param, error, settings)
 
+        ! write output fields back into the C settings object directly
+        settings_c%max_precision_reached = logical(settings%max_precision_reached, &
+                                                   kind=c_bool)
+        settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
+        settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
+
         ! convert return arguments to C kind
         error_c = int(error, kind=c_ip)
 
@@ -207,7 +213,7 @@ contains
         integer(c_ip), intent(in), value :: n_param_c
         type(c_funptr), intent(in), value :: hess_x_c_funptr
         logical(c_bool), intent(out) :: stable_c
-        type(stability_settings_type_c), intent(in), value :: settings_c
+        type(stability_settings_type_c), intent(inout) :: settings_c
         type(c_ptr), intent(in), value :: kappa_c_ptr
         integer(c_ip) :: error_c
 
@@ -256,6 +262,9 @@ contains
             call stability_check(h_diag_ptr, hess_x, stable, error, settings)
         end if
         if (rp /= c_rp) deallocate(h_diag_ptr)
+
+        ! write output fields back into the C settings object directly
+        settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
 
         ! convert return arguments to C kind
         stable_c = logical(stable, kind=c_bool)
@@ -558,6 +567,7 @@ contains
             ! convert logicals
             settings%stability = logical(settings_c%stability)
             settings%line_search = logical(settings_c%line_search)
+            settings%max_precision_reached = logical(settings_c%max_precision_reached)
 
             ! convert reals
             settings%conv_tol = real(settings_c%conv_tol, kind=rp)
@@ -574,6 +584,8 @@ contains
                                                  kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
+            settings%n_update_orbs = int(settings_c%n_update_orbs, kind=ip)
+            settings%n_hess_x = int(settings_c%n_hess_x, kind=ip)
 
             ! convert characters
             settings%subsystem_solver = character_from_c(settings_c%subsystem_solver)
@@ -628,6 +640,7 @@ contains
                                                  kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
+            settings%n_hess_x = int(settings_c%n_hess_x, kind=ip)
 
             ! convert characters
             settings%diag_solver = character_from_c(settings_c%diag_solver)
@@ -657,6 +670,8 @@ contains
             ! convert logicals
             settings_c%stability = logical(settings%stability, kind=c_bool)
             settings_c%line_search = logical(settings%line_search, kind=c_bool)
+            settings_c%max_precision_reached = logical(settings%max_precision_reached, &
+                                                       kind=c_bool)
 
             ! convert reals
             settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
@@ -673,6 +688,8 @@ contains
                                                    kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
+            settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
+            settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
 
             ! convert characters
             settings_c%subsystem_solver = character_to_c(settings%subsystem_solver)
@@ -709,6 +726,7 @@ contains
                                                    kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
+            settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
 
             ! convert characters
             settings_c%diag_solver = character_to_c(settings%diag_solver)
