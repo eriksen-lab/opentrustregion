@@ -301,6 +301,22 @@ class LoggerInterface:
 
 
 # define classes corresponding to C structs for settings
+class StabilitySettingsC(Structure):
+    _fields_ = [
+        ("precond", c_void_p),
+        ("project", c_void_p),
+        ("logger", c_void_p),
+        ("initialized", c_bool),
+        ("conv_tol", c_real),
+        ("n_random_trial_vectors", c_int),
+        ("n_iter", c_int),
+        ("jacobi_davidson_start", c_int),
+        ("seed", c_int),
+        ("verbose", c_int),
+        ("diag_solver", c_char * (kw_len + 1)),
+    ]
+
+
 class SolverSettingsC(Structure):
     _fields_ = [
         ("precond", c_void_p),
@@ -321,22 +337,7 @@ class SolverSettingsC(Structure):
         ("seed", c_int),
         ("verbose", c_int),
         ("subsystem_solver", c_char * (kw_len + 1)),
-    ]
-
-
-class StabilitySettingsC(Structure):
-    _fields_ = [
-        ("precond", c_void_p),
-        ("project", c_void_p),
-        ("logger", c_void_p),
-        ("initialized", c_bool),
-        ("conv_tol", c_real),
-        ("n_random_trial_vectors", c_int),
-        ("n_iter", c_int),
-        ("jacobi_davidson_start", c_int),
-        ("seed", c_int),
-        ("verbose", c_int),
-        ("diag_solver", c_char * (kw_len + 1)),
+        ("stability_settings", StabilitySettingsC),
     ]
 
 
@@ -346,7 +347,7 @@ class Settings:
     c_struct: type[Structure]
     init_c_struct: Any
 
-    def __init__(self):
+    def __init__(self, settings_c: Optional[Structure] = None):
         """
         this function initializes the settings class
         """
@@ -354,9 +355,13 @@ class Settings:
         self.init_c_struct.argtypes = [POINTER(self.c_struct)]
         self.init_c_struct.restype = None
 
-        # call C-side initialization to populate defaults
-        self.settings_c = self.c_struct()
-        self.init_c_struct(byref(self.settings_c))
+        # call C-side initialization to populate defaults, use passed settings if
+        # provided
+        if settings_c is None:
+            self.settings_c = self.c_struct()
+            self.init_c_struct(byref(self.settings_c))
+        else:
+            self.settings_c = settings_c
 
         # initializes all optional function pointers to None
         for field_info in self.settings_c._fields_:
@@ -399,6 +404,16 @@ class SolverSettings(Settings):
     conv_check_interface: Any
     logger_interface: Any
 
+    def __init__(self):
+        super().__init__()
+        self._stability_settings = StabilitySettings(
+            settings_c=self.settings_c.stability_settings
+        )
+
+    @property
+    def stability_settings(self) -> "StabilitySettings":
+        return self._stability_settings
+
     def set_optional_callbacks(self, n_param: int, exception: Dict[str, Exception]):
         """
         this function sets the interfaces for the optional callback functions
@@ -429,6 +444,7 @@ class SolverSettings(Settings):
         self.set_optional_callback(
             "logger", self.logger, LoggerInterface, logger_interface_type
         )
+        self.stability_settings.set_optional_callbacks(n_param, exception)
 
 
 class StabilitySettings(Settings):
@@ -476,8 +492,11 @@ def auto_bind_fields(cls: type[Settings]):
     for field_info in cls.c_struct._fields_:
         field_name, field_type = field_info[:2]
 
-        # skip if function pointer, these will be initialized separately
-        if field_type is c_void_p:
+        # skip if function pointer (these will be initialized separately) or nested
+        # structures
+        if field_type is c_void_p or (
+            isinstance(field_type, type) and issubclass(field_type, Structure)
+        ):
             continue
 
         # character arrays need to be handled separately

@@ -110,6 +110,16 @@ module c_interface
         end subroutine logger_c_type
     end interface
 
+    ! derived type for stability check settings
+    type, bind(C) :: stability_settings_type_c
+        type(c_funptr) :: precond, project, logger
+        logical(c_bool) :: initialized
+        real(c_rp) :: conv_tol
+        integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
+                         verbose
+        character(c_char) :: diag_solver(kw_len + 1)
+    end type
+
     ! derived type for solver settings
     type, bind(C) :: solver_settings_type_c
         type(c_funptr) :: precond, project, conv_check, logger
@@ -118,15 +128,7 @@ module c_interface
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
                          jacobi_davidson_start, seed, verbose
         character(c_char) :: subsystem_solver(kw_len + 1)
-    end type
-
-    type, bind(C) :: stability_settings_type_c
-        type(c_funptr) :: precond, project, logger
-        logical(c_bool) :: initialized
-        real(c_rp) :: conv_tol
-        integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
-                         verbose
-        character(c_char) :: diag_solver(kw_len + 1)
+        type(stability_settings_type_c) :: stability_settings
     end type
 
     procedure(standard_solver), pointer :: solver => standard_solver
@@ -578,6 +580,9 @@ contains
             ! convert characters
             settings%subsystem_solver = character_from_c(settings_c%subsystem_solver)
 
+            ! convert objects
+            settings%stability_settings = settings_c%stability_settings
+
             ! set settings to initialized
             settings%initialized = .true.
         end if
@@ -676,6 +681,9 @@ contains
 
             ! convert characters
             settings_c%subsystem_solver = character_to_c(settings%subsystem_solver)
+
+            ! convert objects
+            settings_c%stability_settings = settings%stability_settings
 
             ! set settings to initialized
             settings_c%initialized = .true._c_bool

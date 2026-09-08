@@ -332,9 +332,24 @@ class PyInterfaceTests(unittest.TestCase):
         settings.logger = mock_logger
         for field_info in settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
-            if field_type == c_void_p or field_name == "initialized":
+            if (
+                field_type == c_void_p
+                or field_name == "initialized"
+                or (isinstance(field_type, type) and issubclass(field_type, Structure))
+            ):
                 continue
             setattr(settings, field_name, getattr(self, field_name + "_ref"))
+
+        # set reference values for nested stability check settings
+        for field_info in settings.stability_settings.c_struct._fields_:
+            field_name, field_type = field_info[:2]
+            if field_type == c_void_p or field_name == "initialized":
+                continue
+            setattr(
+                settings.stability_settings,
+                field_name,
+                getattr(self, field_name + "_ref"),
+            )
 
         # initialize logging boolean
         test_logger = False
@@ -465,6 +480,8 @@ class PyInterfaceTests(unittest.TestCase):
                         "initialized correctly."
                     )
                     test_passed = False
+            elif isinstance(field_type, type) and issubclass(field_type, Structure):
+                continue
             else:
                 ref_value = getattr(self, field_name + "_ref")
                 if field_type == c_real:
@@ -476,6 +493,43 @@ class PyInterfaceTests(unittest.TestCase):
                     print(
                         f" test_solver_settings failed: Field {field_name} not "
                         "initialized correctly."
+                    )
+                    test_passed = False
+
+        # check nested stability check settings
+        stability_settings = settings.stability_settings
+        for field_info in stability_settings.c_struct._fields_:
+            field_name, field_type = field_info[:2]
+            if field_type == c_void_p:
+                if (
+                    getattr(stability_settings, field_name) is not None
+                    or getattr(stability_settings.settings_c, field_name) is not None
+                ):
+                    print(
+                        " test_solver_settings failed: Optional function pointer "
+                        f"{field_name} not initialized correctly for nested "
+                        "stability settings."
+                    )
+                    test_passed = False
+            elif field_name == "initialized":
+                if not getattr(stability_settings, field_name):
+                    print(
+                        " test_solver_settings failed: Field initialized not "
+                        "initialized correctly for nested stability settings."
+                    )
+                    test_passed = False
+            else:
+                ref_value = getattr(self, field_name + "_ref")
+                if field_type == c_real:
+                    match = np.isclose(
+                        getattr(stability_settings, field_name), ref_value
+                    )
+                else:
+                    match = getattr(stability_settings, field_name) == ref_value
+                if not match:
+                    print(
+                        f" test_solver_settings failed: Field {field_name} not "
+                        "initialized correctly for nested stability settings."
                     )
                     test_passed = False
 

@@ -158,16 +158,6 @@ module opentrustregion
         end subroutine init_type
     end interface
 
-    type, extends(settings_type) :: solver_settings_type
-        logical :: stability, line_search
-        real(rp) :: start_trust_radius, global_red_factor, local_red_factor
-        integer(ip) :: n_macro, n_micro
-        character(kw_len) :: subsystem_solver
-        procedure(conv_check_type), pointer, nopass :: conv_check => null()
-    contains
-        procedure :: init => init_solver_settings, print_results
-    end type
-
     type, extends(settings_type) :: stability_settings_type
         integer(ip) :: n_iter
         character(kw_len) :: diag_solver
@@ -175,7 +165,24 @@ module opentrustregion
         procedure :: init => init_stability_settings
     end type
 
+    type, extends(settings_type) :: solver_settings_type
+        logical :: stability, line_search
+        real(rp) :: start_trust_radius, global_red_factor, local_red_factor
+        integer(ip) :: n_macro, n_micro
+        character(kw_len) :: subsystem_solver
+        type(stability_settings_type) :: stability_settings
+        procedure(conv_check_type), pointer, nopass :: conv_check => null()
+    contains
+        procedure :: init => init_solver_settings, print_results
+    end type
+
     ! default settings
+    type(stability_settings_type), parameter :: default_stability_settings = &
+        stability_settings_type(precond = null(), project = null(), logger = null(), &
+                                initialized = .true., conv_tol = 1e-8_rp, &
+                                n_random_trial_vectors = 20, n_iter = 100, &
+                                jacobi_davidson_start = 50, seed = 42, verbose = 0, &
+                                diag_solver = "davidson")
     type(solver_settings_type), parameter :: default_solver_settings = &
         solver_settings_type(precond = null(), project = null(), conv_check = null(), &
                              logger = null(), stability = .false., &
@@ -184,13 +191,8 @@ module opentrustregion
                              global_red_factor = 1e-3_rp, local_red_factor = 1e-4_rp, &
                              n_random_trial_vectors = 1, n_macro = 150, n_micro = 50, &
                              jacobi_davidson_start = 30, seed = 42, verbose = 0, &
-                             subsystem_solver = "davidson")
-    type(stability_settings_type), parameter :: default_stability_settings = &
-        stability_settings_type(precond = null(), project = null(), logger = null(), &
-                                initialized = .true., conv_tol = 1e-8_rp, &
-                                n_random_trial_vectors = 20, n_iter = 100, &
-                                jacobi_davidson_start = 50, seed = 42, verbose = 0, &
-                                diag_solver = "davidson")
+                             subsystem_solver = "davidson", &
+                             stability_settings = default_stability_settings)
 
     ! define global variables
     integer(ip) :: tot_orb_update = 0, tot_hess_x = 0
@@ -207,7 +209,6 @@ contains
         integer(ip), intent(out) :: error
         type(solver_settings_type), intent(inout) :: settings
 
-        type(stability_settings_type) :: stability_settings
         real(rp) :: trust_radius, func, grad_norm, grad_rms, mu, new_func, n_kappa, &
                     kappa_norm
         real(rp), allocatable :: kappa(:), grad(:), h_diag(:), solution(:), &
@@ -337,14 +338,16 @@ contains
                 conv_check_passed) then
                 ! always perform stability check if starting at stationary point
                 if (settings%stability .or. imacro == 1) then
-                    call stability_settings%init(error)
-                    call add_error_origin(error, error_solver, settings)
-                    if (error /= 0) return
-                    stability_settings%precond => settings%precond
-                    stability_settings%verbose = settings%verbose
-                    stability_settings%logger => settings%logger
+                    ! inherit preconditioning, projection and logging functions from
+                    ! solver if not provided for stability check
+                    if (.not. associated(settings%stability_settings%precond)) &
+                        settings%stability_settings%precond => settings%precond
+                    if (.not. associated(settings%stability_settings%project)) &
+                        settings%stability_settings%project => settings%project
+                    if (.not. associated(settings%stability_settings%logger)) &
+                        settings%stability_settings%logger => settings%logger
                     call stability_check(h_diag, hess_x_funptr, stable, error, &
-                                         stability_settings, kappa=kappa)
+                                         settings%stability_settings, kappa=kappa)
                     call add_error_origin(error, error_stability_check, settings)
                     if (error /= 0) return
                     if (.not. stable) then

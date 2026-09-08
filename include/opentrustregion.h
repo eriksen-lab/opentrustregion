@@ -74,6 +74,28 @@ typedef logger_fn* logger_fp;
  * Structs corresponding to Fortran settings
  * ------------------------------------------------------------------ */
 
+// Struct corresponding to Fortran type(stability_settings_type_c)
+typedef struct {
+    precond_fp precond;
+    project_fp project;
+    logger_fp logger;
+
+    c_bool initialized;
+
+    c_real conv_tol;
+
+    c_int n_random_trial_vectors;
+    c_int n_iter;
+    c_int jacobi_davidson_start;
+    c_int seed;
+    c_int verbose;
+
+    char diag_solver[OTR_KW_LEN + 1];
+} stability_settings_type;
+
+// Fortran-callable init subroutine for stability check settings
+void init_stability_settings(stability_settings_type* settings);
+
 // Struct corresponding to Fortran type(solver_settings_type_c)
 typedef struct {
     precond_fp precond;
@@ -98,32 +120,12 @@ typedef struct {
     c_int verbose;
 
     char subsystem_solver[OTR_KW_LEN + 1];
+
+    stability_settings_type stability_settings;
 } solver_settings_type;
 
 // Fortran-callable init subroutine for solver settings
 void init_solver_settings(solver_settings_type* settings);
-
-// Struct corresponding to Fortran type(stability_settings_type_c)
-typedef struct {
-    precond_fp precond;
-    project_fp project;
-    logger_fp logger;
-
-    c_bool initialized;
-
-    c_real conv_tol;
-
-    c_int n_random_trial_vectors;
-    c_int n_iter;
-    c_int jacobi_davidson_start;
-    c_int seed;
-    c_int verbose;
-
-    char diag_solver[OTR_KW_LEN + 1];
-} stability_settings_type;
-
-// Fortran-callable init subroutine for stability check settings
-void init_stability_settings(stability_settings_type* settings);
 
 /* ------------------------------------------------------------------
  * Fortran wrappers

@@ -735,6 +735,9 @@ contains
         lhs%verbose = rhs%verbose
         lhs%subsystem_solver = rhs%subsystem_solver
 
+        ! set nested stability check settings
+        lhs%stability_settings = rhs
+
         ! set initialization logical
         lhs%initialized = .true.
 
@@ -853,7 +856,8 @@ contains
             lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%subsystem_solver == rhs%subsystem_solver
+            lhs%subsystem_solver == rhs%subsystem_solver .and. &
+            lhs%stability_settings == rhs
 
     end function equal_solver_to_ref
 
@@ -988,7 +992,8 @@ contains
             lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%subsystem_solver == rhs%subsystem_solver
+            lhs%subsystem_solver == rhs%subsystem_solver .and. &
+            lhs%stability_settings == rhs%stability_settings
 
     end function equal_solver
 
