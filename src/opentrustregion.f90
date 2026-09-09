@@ -346,6 +346,8 @@ contains
                         settings%stability_settings%project => settings%project
                     if (.not. associated(settings%stability_settings%logger)) &
                         settings%stability_settings%logger => settings%logger
+                    settings%stability_settings%verbose = &
+                        max(settings%stability_settings%verbose, settings%verbose)
                     call stability_check(h_diag, hess_x_funptr, stable, error, &
                                          settings%stability_settings, kappa=kappa)
                     call add_error_origin(error, error_stability_check, settings)

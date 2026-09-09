@@ -281,6 +281,64 @@ bool test_solver_settings_init(void)
         ok = false;
     }
 
+    // compare nested stability check values
+    stability_settings_type stability_defaults = defaults.stability_settings;
+    stability_settings_type ss = s.stability_settings;
+    if (!ss.initialized) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability settings not "
+                "initialized.\n");
+        ok = false;
+    }
+    if (fabs(ss.conv_tol - stability_defaults.conv_tol) > 1e-20) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability convergence "
+                "tolerance parameter wrong.\n");
+        ok = false;
+    }
+    if (ss.n_random_trial_vectors != stability_defaults.n_random_trial_vectors) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability number of random "
+                "trial vectors parameter wrong.\n");
+        ok = false;
+    }
+    if (ss.n_iter != stability_defaults.n_iter) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability number of "
+                "parameter wrong.\n");
+        ok = false;
+    }
+    if (ss.jacobi_davidson_start != stability_defaults.jacobi_davidson_start) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability "
+                "Jacobi-Davidson starting parameter wrong.\n");
+        ok = false;
+    }
+    if (ss.seed != stability_defaults.seed) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability seed parameter "
+                "wrong.\n");
+        ok = false;
+    }
+    if (ss.verbose != stability_defaults.verbose) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability verbosity "
+                "parameter wrong.\n");
+        ok = false;
+    }
+    if (strcmp(ss.diag_solver, stability_defaults.diag_solver) != 0) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability diagonal solver "
+                "parameter wrong.\n");
+        ok = false;
+    }
+    if (ss.precond || ss.project || ss.logger) {
+        fprintf(stderr,
+                "test_solver_settings_init failed: Nested stability callback pointers "
+                "should be NULL.\n");
+        ok = false;
+    }
+
     return ok;
 }
 

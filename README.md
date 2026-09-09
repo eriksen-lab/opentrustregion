@@ -203,6 +203,7 @@ The optimization process can be fine-tuned using the following settings:
 - **`verbose`** (integer): Controls the verbosity of output during optimization.
 - **`seed`** (integer): Seed value for generating random trial vectors.
 - **`logger`** (subroutine): Accepts a log message. Logging is otherwise routed to stdout.
+- **`stability_settings`** (stability_settings_type): Settings object controlling the internal stability check that is automatically performed upon convergence when `stability` is `True` or when starting at a stationary point (see the Stability Check section below). If `stability_settings%precond`, `stability_settings%project`, or `stability_settings%logger` are left unset, they default to the corresponding `precond`, `project`, and `logger` supplied to `solver`. `stability_settings%verbose` is raised to at least the solver's own `verbose` level.
 
 ## Stability Check
 A separate `stability_check` subroutine is available to verify whether the current solution corresponds to a minimum. If not, it returns a boolean indicating instability and optionally, writes the eigenvector corresponding to the negative eigenvalue in-place to the provided memory.

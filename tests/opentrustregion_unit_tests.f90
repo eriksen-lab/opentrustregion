@@ -396,6 +396,10 @@ contains
         ! exactly at a stationary point always triggers it on the first iteration
         settings%stability_settings%logger => logger
 
+        ! raise the solver verbosity above the nested stability check settings'
+        ! default verbosity and check that it gets propagated to the nested settings
+        settings%verbose = 2_ip
+
         ! run solver, check if error has occured and check whether gradient is zero and
         ! agrees with correct minimum
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
@@ -406,6 +410,11 @@ contains
         if (.not. associated(settings%stability_settings%logger, logger)) then
             write (stderr, *) "test_solver failed: Custom logger set on nested "// &
                 "stability check settings was overwritten."
+            test_solver = .false.
+        end if
+        if (settings%stability_settings%verbose < settings%verbose) then
+            write (stderr, *) "test_solver failed: Solver verbosity was not "// &
+                "propagated to nested stability check settings."
             test_solver = .false.
         end if
         call hartmann6d_gradient(curr_vars, final_grad)
