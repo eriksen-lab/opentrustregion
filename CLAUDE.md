@@ -12,6 +12,8 @@ OpenTrustRegion is a Fortran library implementing a second-order trust-region op
 
 **Python formatting.** All Python (`pyopentrustregion/`, `setup.py`) is `black`-formatted, default settings. Run `black pyopentrustregion setup.py` before considering Python changes done.
 
+**C formatting.** All C headers and test sources (`include/`, `tests/*.c`) are `clang-format`-formatted per the repo-root `.clang-format` (LLVM style, 88-column limit to match the Fortran convention above). Run `clang-format -i` on touched C/H files before considering C changes done.
+
 **Clarity over performance.** The library is not on the hot path of a quantum-chemistry calculation — the host program's integral transforms and Hessian-vector products dominate. Prefer short, obviously-correct code over fast code. Don't propose performance refactors (buffer growth, pooling, micro-optimizations) without evidence the affected code is hot for a real workload.
 
 **Norms: BLAS in production, intrinsics in tests.** Production Fortran (`src/`) uses BLAS (`dnrm2`, `ddot`) for norms/dot products. Test code (`tests/`) uses intrinsics (`norm2`, `dot_product`, `matmul`, `sum`, `transpose`) instead. BLAS/LAPACK is allowed in tests only where no intrinsic exists (`dsyev`, `dgeev`, `zheev`) — don't hand-roll linear algebra to avoid the dependency.

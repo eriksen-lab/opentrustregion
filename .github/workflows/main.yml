@@ -8,6 +8,30 @@ on:
       - main
 
 jobs:
+  formatting:
+    name: "Formatting • black + clang-format"
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout OpenTrustRegion
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.x
+
+    - name: Install black
+      run: pip install black
+
+    - name: Check Python formatting
+      run: black --check --diff pyopentrustregion setup.py
+
+    - name: Install clang-format
+      run: sudo apt-get update && sudo apt-get install -y clang-format
+
+    - name: Check C formatting
+      run: git ls-files '*.c' '*.h' | xargs clang-format --dry-run --Werror
+
   build-test-repo:
     strategy:
       fail-fast: false

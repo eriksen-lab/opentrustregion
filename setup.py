@@ -59,7 +59,7 @@ class CMakeBuild(build_py):
                     libopentrustregion_path, target_dir / libopentrustregion_file
                 )
 
-            # copy testsuite only if it exists (i.e., built and not skipped due to not 
+            # copy testsuite only if it exists (i.e., built and not skipped due to not
             # building tests or host-provided BLAS/LAPACK)
             if libtestsuite_path.exists():
                 shutil.copy(libtestsuite_path, target_dir / libtestsuite_file)
