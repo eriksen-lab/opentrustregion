@@ -879,7 +879,7 @@ contains
 
         type(solver_settings_type) :: settings
         procedure(obj_func_type), pointer :: obj_func_funptr
-        real(rp) :: vars(6), lower, upper, n
+        real(rp) :: vars(n_param), lower, upper, n
         integer(ip) :: error
 
         ! assume tests pass
@@ -1692,7 +1692,7 @@ contains
 
         type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
-        real(rp), dimension(6) :: vars, vector, solution, corr_vector, hess_vector
+        real(rp), dimension(n_param) :: vars, vector, solution, corr_vector, hess_vector
         integer(ip) :: error
 
         ! assume tests pass
@@ -1745,7 +1745,8 @@ contains
 
         type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
-        real(rp), dimension(6) :: vars, rhs, solution, vector, hess_vector, corr_vector
+        real(rp), dimension(n_param) :: vars, rhs, solution, vector, hess_vector, &
+                                        corr_vector
         real(rp) :: mu
         real(rp), parameter :: rtol = 1e-14_rp
         integer(ip) :: error
@@ -2620,7 +2621,7 @@ contains
         ! assume tests pass
         test_string_to_lowercase = .true.
 
-        ! test transfoer to lowercase
+        ! test transfer to lowercase
         if (string_to_lowercase(input) /= expect) then
             write (stderr, *) "test_string_to_lowercase failed: String not "// &
                 "correctly transferred to lowercase."
