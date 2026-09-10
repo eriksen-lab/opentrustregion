@@ -3,9 +3,11 @@ on:
   push:
     branches:
       - main
+      - 'ci-debug/**'
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   formatting:
@@ -13,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout OpenTrustRegion
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Setup Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: 3.x
 
@@ -138,10 +140,10 @@ jobs:
 
     steps:
     - name: Checkout OpenTrustRegion
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Setup Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: 3.x
 
@@ -272,7 +274,7 @@ jobs:
 
     - name: Install Coverage Tools
       if: ${{ matrix.build-type == 'coverage' }}
-      run: pip install gcovr coverage
+      run: pip install coverage
 
     - name: Build & Install OpenTrustRegion with Coverage Flags
       if: ${{ matrix.build-type == 'coverage' }}
@@ -284,17 +286,39 @@ jobs:
       run: coverage run --omit="pyopentrustregion/testsuite.py" -m pyopentrustregion.testsuite
 
     - name: Generate Coverage Report
+      id: coverage
       if: ${{ matrix.build-type == 'coverage' }}
       run: |
+        set -e
         coverage xml -o python_coverage.xml
-        gcovr -r . --exclude 'build/.*' --exclude 'tests/.*' --xml -o fortran_coverage.xml
+        gcda=$(find build/CMakeFiles/opentrustregion.dir -name '*.gcda')
+        gcov -b $gcda
+        files=./python_coverage.xml
+        for g in $gcda; do
+          f=$(basename "$g" .gcda).gcov
+          if [ ! -s "$f" ]; then
+            echo "::error::gcov did not produce $f"
+            exit 1
+          fi
+          files="$files,./$f"
+        done
+        echo "files=$files" >> "$GITHUB_OUTPUT"
+
+    - name: Upload Coverage Reports as Artifacts
+      if: ${{ matrix.build-type == 'coverage' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-reports
+        path: |
+          python_coverage.xml
+          *.gcov
 
     - name: Upload to Codecov
       if: ${{ matrix.build-type == 'coverage' }}
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v7
       with:
-        file: |
-          fortran_coverage.xml
-          python_coverage.xml
-      env:
-        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        files: ${{ steps.coverage.outputs.files }}
+        disable_search: true
+        plugins: noop
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: true
