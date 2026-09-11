@@ -237,7 +237,8 @@ contains
                                           settings, kappa_c_ptr)
 
         ! check if test has passed
-        test_stability_check_c_wrapper = test_passed
+        test_stability_check_c_wrapper = test_stability_check_c_wrapper .and. &
+                                         test_passed
 
         ! check if logging subroutine was correctly called
         if (.not. test_logger) then

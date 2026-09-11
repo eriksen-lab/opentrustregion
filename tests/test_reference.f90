@@ -103,7 +103,7 @@ contains
         if (.not. associated(update_orbs_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Orbital updating "// &
-                "function not associated with value."
+                "function provided"//message//" not associated with value."
             return
         end if
 
@@ -147,10 +147,13 @@ contains
         ! deallocate arrays
         deallocate(kappa, grad, h_diag)
 
-        ! test returned Hessian linear transformation
-        test_passed = test_passed .and. &
-            test_hess_x_funptr(hess_x_funptr, test_name, " by Hessian linear "// &
-                               "transformation function returned"//message)
+        ! test returned Hessian linear transformation, the function pointer is only
+        ! defined if the orbital update did not produce an error
+        if (error == 0) then
+            test_passed = test_passed .and. &
+                test_hess_x_funptr(hess_x_funptr, test_name, " by Hessian linear "// &
+                                   "transformation function returned"//message)
+        end if
 
     end function test_update_orbs_funptr
 
@@ -178,7 +181,7 @@ contains
         if (.not. c_associated(update_orbs_c_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Orbital updating "// &
-                "function not associated with value."
+                "function provided"//message//" not associated with value."
             return
         end if
 
@@ -225,10 +228,14 @@ contains
         ! deallocate arrays
         deallocate(kappa, grad, h_diag)
 
-        ! test returned Hessian linear transformation
-        test_passed = test_passed .and. &
-            test_hess_x_c_funptr(hess_x_c_funptr, test_name, " by Hessian linear "// &
-                                 "transformation function returned"//message)
+        ! test returned Hessian linear transformation, the function pointer is only
+        ! defined if the orbital update did not produce an error
+        if (error == 0) then
+            test_passed = test_passed .and. &
+                test_hess_x_c_funptr(hess_x_c_funptr, test_name, " by Hessian "// &
+                                     "linear transformation function returned"// &
+                                     message)
+        end if
 
     end function test_update_orbs_c_funptr
 
@@ -252,7 +259,8 @@ contains
         if (.not. associated(hess_x_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Hessian linear "// &
-                "transformation function not associated with value."
+                "transformation function provided"//message//" not associated "// &
+                "with value."
             return
         end if
 
@@ -307,7 +315,8 @@ contains
         if (.not. c_associated(hess_x_c_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Hessian linear "// &
-                "transformation function not associated with value."
+                "transformation function provided"//message//" not associated "// &
+                "with value."
             return
         end if
 
@@ -363,8 +372,8 @@ contains
         ! check if function pointer is associated
         if (.not. associated(obj_func_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Objective function not "// &
-                "associated with value."
+            write (stderr, *) "test_"//test_name//" failed: Objective function "// &
+                "provided"//message//" not associated with value."
             return
         end if
 
@@ -418,8 +427,8 @@ contains
         ! check if function pointer is associated
         if (.not. c_associated(obj_func_c_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Objective function not "// &
-                "associated with value."
+            write (stderr, *) "test_"//test_name//" failed: Objective function "// &
+                "provided"//message//" not associated with value."
             return
         end if
 
@@ -475,7 +484,7 @@ contains
         if (.not. associated(precond_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Preconditioner "// &
-                "function not associated with value."
+                "function provided"//message//" not associated with value."
             return
         end if
 
@@ -529,7 +538,7 @@ contains
         if (.not. c_associated(precond_c_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Preconditioner "// &
-                "function not associated with value."
+                "function provided"//message//" not associated with value."
             return
         end if
 
@@ -584,7 +593,7 @@ contains
         if (.not. associated(project_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Project function "// &
-                "not associated with value."
+                "provided"//message//" not associated with value."
             return
         end if
 
@@ -638,7 +647,7 @@ contains
         if (.not. c_associated(project_c_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Project function "// &
-                "not associated with value."
+                "provided"//message//" not associated with value."
             return
         end if
 
@@ -694,7 +703,7 @@ contains
         if (.not. associated(conv_check_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Convergence check "// &
-                "function not associated with value."
+                "function provided"//message//" not associated with value."
             return
         end if
 
@@ -739,7 +748,7 @@ contains
         if (.not. c_associated(conv_check_c_funptr)) then
             test_passed = .false.
             write (stderr, *) "test_"//test_name//" failed: Convergence check "// &
-                "function not associated with value."
+                "function provided"//message//" not associated with value."
             return
         end if
 
