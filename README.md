@@ -29,7 +29,15 @@ cmake --build .
 The installation can be tested by running the ```testsuite.py``` file in the ```pyopentrustregion``` directory.
 
 ### Python Usage
-To install the library for use with Python:
+Released versions are available from PyPI:
+
+```sh
+pip install pyopentrustregion
+```
+
+The published wheels are a Python-only distribution: they bundle the solver library but not the C header or the CMake package files, so consumers that only call the solver from Python need nothing else. On Linux the wheels vendor OpenBLAS and the Fortran runtime; on macOS they link Apple's Accelerate framework and a static Fortran runtime instead, so they depend on nothing outside the system. Consumers that link OpenTrustRegion through `find_package(OpenTrustRegion)` should install from source as described under *Fortran or C Usage* above.
+
+To install from a source checkout instead:
 
 ```sh
 pip install .
@@ -40,6 +48,23 @@ The installation can be tested by running
 ```sh
 python3 -m pyopentrustregion.testsuite
 ```
+
+Note that the testsuite is only available for source and editable installs since the published wheels leave it out. To check one of those, run a short optimization through the public API instead:
+
+```sh
+python3 -m pyopentrustregion.verify_install
+```
+
+#### Integer Size
+
+The PyPI wheels are built with 32-bit integers (LP64), matching NumPy and PySCF. The Python interface reads the integer width out of the compiled library at import time, so no Python-side change is needed to use a 64-bit build; it only requires compiling the library accordingly. Since a wheel tag cannot express the BLAS integer width, a 64-bit (ILP64) build has to come from source and needs a Fortran compiler, CMake and an ILP64 BLAS/LAPACK:
+
+```sh
+pip install --no-binary=pyopentrustregion -C cmake.define.INTEGER_SIZE=8 pyopentrustregion
+```
+
+Any other CMake option from the table below can be passed the same way, as
+`-C cmake.define.<OPTION>=<VALUE>`.
 
 ### CMake Configuration Options
 

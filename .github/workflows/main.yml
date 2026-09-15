@@ -26,7 +26,7 @@ jobs:
       run: pip install black
 
     - name: Check Python formatting
-      run: black --check --diff pyopentrustregion setup.py
+      run: black --check --diff pyopentrustregion
 
     - name: Install clang-format
       run: sudo apt-get update && sudo apt-get install -y clang-format
@@ -45,7 +45,6 @@ jobs:
             runs-on: ubuntu-latest
             build-type: install
             scenario: installed
-            python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
@@ -55,7 +54,6 @@ jobs:
             runs-on: ubuntu-latest
             build-type: install
             scenario: editable
-            python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
@@ -65,7 +63,6 @@ jobs:
             runs-on: ubuntu-latest
             build-type: install
             scenario: dev-build
-            python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
@@ -74,7 +71,6 @@ jobs:
             compiler: gnu
             runs-on: ubuntu-latest
             build-type: test
-            python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
@@ -83,7 +79,6 @@ jobs:
             compiler: intel
             runs-on: ubuntu-latest
             build-type: test
-            python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
@@ -92,7 +87,6 @@ jobs:
             compiler: gnu
             runs-on: ubuntu-latest
             build-type: test
-            python-version: "3.10"
             integer-size: "64"
             cmargs: ""
 
@@ -101,7 +95,6 @@ jobs:
             compiler: intel
             runs-on: ubuntu-latest
             build-type: test
-            python-version: "3.10"
             integer-size: "64"
             cmargs: ""
 
@@ -110,7 +103,6 @@ jobs:
             compiler: clang
             runs-on: macos-latest
             build-type: test
-            python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
@@ -119,7 +111,6 @@ jobs:
             compiler: clang
             runs-on: macos-15-intel
             build-type: test
-            python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
@@ -128,11 +119,10 @@ jobs:
             compiler: gnu
             runs-on: ubuntu-latest
             build-type: coverage
-            python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
-    name: "Repo • 🐍 ${{ matrix.python-version }} • OS ${{ matrix.os }} • Compiler ${{ matrix.compiler }} • Build Type ${{ matrix.build-type }} • ${{ matrix.integer-size }}-bit integers"
+    name: "Repo • OS ${{ matrix.os }} • Compiler ${{ matrix.compiler }} • Build Type ${{ matrix.build-type }}${{ matrix.scenario && format(' ({0})', matrix.scenario) || '' }} • ${{ matrix.integer-size }}-bit integers"
     runs-on: ${{ matrix.runs-on }}
     defaults:
       run:
@@ -183,9 +173,10 @@ jobs:
       if: ${{ contains(matrix.os, 'macos') }}
       run: |
         brew install openblas
-        echo "PKG_CONFIG_PATH=/usr/local/opt/openblas/lib/pkgconfig" >> $GITHUB_ENV
-        echo "LDFLAGS=-L/opt/homebrew/opt/openblas/lib" >> $GITHUB_ENV
-        echo "CPPFLAGS=-I/opt/homebrew/opt/openblas/include" >> $GITHUB_ENV
+        BREW_PREFIX=$(brew --prefix)
+        echo "PKG_CONFIG_PATH=${BREW_PREFIX}/opt/openblas/lib/pkgconfig" >> $GITHUB_ENV
+        echo "LDFLAGS=-L${BREW_PREFIX}/opt/openblas/lib" >> $GITHUB_ENV
+        echo "CPPFLAGS=-I${BREW_PREFIX}/opt/openblas/include" >> $GITHUB_ENV
 
     - name: Install OpenBLAS (32-bit integers) on Linux
       if: ${{ matrix.compiler == 'gnu' && matrix.os == 'linux' && matrix.integer-size == '32' }}
@@ -197,25 +188,19 @@ jobs:
       run: |
         sudo apt install -y libopenblas64-dev
 
-    - name: Create and Activate Python Virtual Environment
-      run: |
-        python -m venv venv
-        source venv/bin/activate
-        python -m pip install --upgrade pip
-
     - name: Build & Install OpenTrustRegion (32-bit integers)
       if: ${{ matrix.integer-size == '32' && (matrix.build-type == 'test' || (matrix.build-type == 'install' && matrix.scenario == 'installed'))}}
-      run: CMAKE_FLAGS="-DINTEGER_SIZE=4" pip install ${{github.workspace}}
+      run: pip install -C cmake.define.INTEGER_SIZE=4 ${{github.workspace}}
 
     - name: Build & Install OpenTrustRegion (64-bit integers)
       if: ${{ matrix.integer-size == '64' && (matrix.build-type == 'test' || (matrix.build-type == 'install' && matrix.scenario == 'installed'))}}
-      run: CMAKE_FLAGS="-DINTEGER_SIZE=8" pip install ${{github.workspace}}
+      run: pip install -C cmake.define.INTEGER_SIZE=8 ${{github.workspace}}
 
-    - name: Build & Install OpenTrustRegion
+    - name: Build & Install OpenTrustRegion (editable)
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'editable' }}
       run: pip install -e ${{github.workspace}}
 
-    - name: Build & Install OpenTrustRegion
+    - name: Build & Install OpenTrustRegion (source)
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: |
         set -e
@@ -230,6 +215,7 @@ jobs:
 
     - name: Testing pip installation
       if: ${{ matrix.build-type == 'install' && (matrix.scenario == 'installed' || matrix.scenario == 'editable') }}
+      working-directory: ${{ runner.temp }}
       run: python -c "import pyopentrustregion.testsuite"
 
     - name: Testing dev installation
@@ -240,6 +226,7 @@ jobs:
 
     - name: Testing OpenTrustRegion
       if: ${{ matrix.build-type == 'test' }}
+      working-directory: ${{ runner.temp }}
       run: python -m pyopentrustregion.testsuite
 
     - name: Testing find_package Consumption
@@ -279,7 +266,9 @@ jobs:
     - name: Build & Install OpenTrustRegion with Coverage Flags
       if: ${{ matrix.build-type == 'coverage' }}
       run: |
-        CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DCMAKE_Fortran_FLAGS='--coverage -g'" pip install ${{github.workspace}}
+        pip install -C cmake.build-type=Debug \
+                    -C "cmake.define.CMAKE_Fortran_FLAGS=--coverage -g" \
+                    -C build-dir=build ${{github.workspace}}
 
     - name: Testing OpenTrustRegion with Coverage
       if: ${{ matrix.build-type == 'coverage' }}

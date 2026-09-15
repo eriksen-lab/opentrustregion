@@ -12,6 +12,7 @@ set(otr OpenTrustRegion)
 # set components
 set(runtime_component runtime)
 set(test_component testsuite)
+set(python_component python)
 
 # ====  Options  ================================================================
 
@@ -173,8 +174,9 @@ set_target_properties(
     POSITION_INDEPENDENT_CODE ON
 )
 
-# allow undefined symbols at link time on macOS for shared libraries
-if(${BUILD_SHARED_LIBS} AND APPLE)
+# allow undefined symbols at link time on macOS only when the host program supplies
+# BLAS/LAPACK at runtime
+if(${BUILD_SHARED_LIBS} AND APPLE AND ${otr}_HOST_PROVIDES_BLAS)
     set_target_properties(opentrustregion PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
 endif()
 
@@ -290,3 +292,31 @@ install(FILES
         DESTINATION ${${otr}_INSTALL_CMAKEDIR}
         COMPONENT ${runtime_component}
 )
+
+# ====  Python wheel  ==========================================================
+
+# when the build is driven by scikit-build-core, install the compiled libraries
+# directly into the Python package directory so that ctypes finds them next to
+# python_interface.py
+if(SKBUILD)
+    # a wheel stores plain files, so unset the version properties to drop the versioned 
+    # symlink chain and emit a single library named exactly as the ctypes loader expects
+    set_property(TARGET opentrustregion PROPERTY VERSION)
+    set_property(TARGET opentrustregion PROPERTY SOVERSION)
+
+    # install the solver library
+    install(TARGETS opentrustregion
+            RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # Windows (.dll)
+            LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # shared libraries (.so, .dylib)
+    )
+
+    # install the testsuite library whenever it was built, so that an editable or
+    # source install keeps "python -m pyopentrustregion.testsuite" working; release
+    # wheels switch the testsuite off instead of excluding it here
+    if(${otr}_BUILD_TESTING AND NOT ${otr}_HOST_PROVIDES_BLAS)
+        install(TARGETS otrtestsuite
+                RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # Windows (.dll)
+                LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # shared libraries (.so, .dylib)
+        )
+    endif()
+endif()

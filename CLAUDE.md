@@ -10,7 +10,7 @@ OpenTrustRegion is a Fortran library implementing a second-order trust-region op
 
 **Formatting.** Fortran lines max 88 columns, continued with a trailing `&` aligned to the opening parenthesis of the call. Every procedure opens with a `!`-delimited comment block describing what it does; each logical step inside gets a lowercase `!` comment. Unit tests: assume success (`test_<name> = .true.`), then one `if (...) then` / `write (stderr, *) "test_<name> failed: ..."` / `test_<name> = .false.` block per assertion, no early returns except where a later assertion would crash.
 
-**Python formatting.** All Python (`pyopentrustregion/`, `setup.py`) is `black`-formatted, default settings. Run `black pyopentrustregion setup.py` before considering Python changes done.
+**Python formatting.** All Python (`pyopentrustregion/`) is `black`-formatted, default settings. Run `black pyopentrustregion` before considering Python changes done.
 
 **C formatting.** All C headers and test sources (`include/`, `tests/*.c`) are `clang-format`-formatted per the repo-root `.clang-format` (LLVM style, 88-column limit to match the Fortran convention above). Run `clang-format -i` on touched C/H files before considering C changes done.
 
@@ -52,7 +52,7 @@ mkdir build && cd build
 cmake ..              # add -DBUILD_SHARED_LIBS=ON for shared
 cmake --build .
 
-# Python install (invokes CMake under the hood via setup.py)
+# Python install (scikit-build-core drives CMake; see pyproject.toml)
 pip install .
 pip install -e .       # editable
 ```
@@ -61,6 +61,10 @@ pip install -e .       # editable
 # full suite (Python driver calling into libotrtestsuite: Fortran unit + system tests)
 python3 -m pyopentrustregion.testsuite                  # from an installed/editable build
 python3 pyopentrustregion/testsuite.py                  # from the source tree against ./build
+
+# quick check that an installed library solves correctly (works against a published
+# wheel, which has no libotrtestsuite and therefore cannot run the testsuite above)
+python3 -m pyopentrustregion.verify_install
 
 # single test class or method (stdlib unittest)
 python3 -m unittest pyopentrustregion.testsuite.SystemTests
@@ -95,7 +99,8 @@ Because a routine's cases now live behind one entry, a silently-skipped case is 
 - `INTEGER_SIZE` (`4` or `8`): library integer width. Unset → CMake autodetects, trying 32-bit BLAS/LAPACK first. Output library named `libopentrustregion_32.*` / `_64.*`. `USE_ILP64` (auto-set when `INTEGER_SIZE=8`) switches Fortran `ip` and C `c_ip` to 64-bit and remaps BLAS/LAPACK symbols to `_64` variants when `check_fortran_function_exists` finds them.
 - `BLAS_LIBRARIES` / `LAPACK_LIBRARIES`: must be set together with `INTEGER_SIZE` if overriding autodetection — one without the other is a fatal error.
 - `OpenTrustRegion_BUILD_TESTING` (default `ON` when top-level): builds `libotrtestsuite`, which Python loads to drive the Fortran tests.
-- `CONDA_BUILD=1` env var: `setup.py` skips the embedded CMake invocation (the conda recipe builds the C library separately).
+- `CONDA_BUILD=1` env var (set automatically by conda-build): selects an override that sets `wheel.cmake = false`, so scikit-build-core skips CMake entirely and emits a pure-Python wheel. The conda-forge recipe builds the Fortran library as its own `opentrustregion` package and `python_interface.py` loads it from the conda prefix at run time, so `pyopentrustregion` must not compile or ship a second copy.
+- `OTR_RELEASE_WHEEL=1` env var: selects the release-wheel override in `pyproject.toml` — pins `INTEGER_SIZE=4`, sets `OpenTrustRegion_BUILD_TESTING=OFF` and excludes `testsuite.py`/`test_data` from the wheel. Every pip build without it keeps the testsuite so `python -m pyopentrustregion.testsuite` works from a source or editable install. Note that a scikit-build-core override *replaces* the whole `cmake.define` table rather than merging, so the override repeats every define.
 
 ### Preprocessing and integer kinds
 
@@ -123,7 +128,7 @@ A clean link proves nothing is left unmapped; it does **not** verify numerical b
 
 - **A `size()`/literal-kind mistake in a BLAS call passes the default build and only breaks under `INTEGER_SIZE=8`**, as `Error: Type mismatch between actual argument at (1) and actual argument at (2) (INTEGER(4)/INTEGER(8))` pointing at two unrelated call sites of the same routine — the two that disagree, not the one that's wrong. Fix by making every integer argument `ip`-kinded, not by changing the named site.
 - **`gfortran -fsyntax-only -I<moddir>` gives false confidence.** It checks only the pointed-to file against whatever `.mod` files already exist — it doesn't re-verify those `.mod`s. Editing a `type` whose fields are used across modules can leave a stale consumer `.mod` "passing" syntax-only checks while a real build breaks with `Fatal Error: Mismatch in components of derived type '...': expecting 'X', but got 'Y'`. Always confirm interface changes with `cmake --build`, not `-fsyntax-only`.
-- **A `build/` directory created by `pip install` can't be rebuilt directly later.** pip's ephemeral `cmake` path gets baked into `build/CMakeCache.txt` (`CMAKE_COMMAND`) and generated Makefile stamp rules. Once pip's temp env is gone, `cmake --build build` fails with `<temp-path>/cmake: No such file or directory`. Diagnose with `grep CMAKE_COMMAND build/CMakeCache.txt`. Fix: re-run `pip install -e .`, or maintain a separate manually-configured build directory with the system `cmake`.
+- **`pip install` does not write into the source tree.** scikit-build-core configures CMake in a temporary directory, so a `build/` left in the repo is always one you created yourself and stays rebuildable with the system `cmake`.
 - **The Python driver only looks for `../build`.** `python_interface.py` searches site-packages, then `pyopentrustregion/`, then `<repo>/../build` — a manually-configured `build_manual/` is invisible to it, and it silently loads whatever's in `build/` instead. To drive a custom build directory, run from a scratch directory with symlinks named `pyopentrustregion` and `build`:
 
   ```sh

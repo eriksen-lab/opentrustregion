@@ -3,6 +3,7 @@ __pycache__/
 
 # IDEs
 .vscode/
+.claude/
 
 # Libraries
 *.so
@@ -19,6 +20,8 @@ testsuite
 
 # Distribution / packaging
 build/
+dist/
+wheelhouse/
 *.egg-info/
 
 # Environment files
