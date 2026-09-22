@@ -313,6 +313,7 @@ class StabilitySettingsC(Structure):
         ("jacobi_davidson_start", c_int),
         ("seed", c_int),
         ("verbose", c_int),
+        ("n_hess_x", c_int),
         ("diag_solver", c_char * (kw_len + 1)),
     ]
 
@@ -326,6 +327,7 @@ class SolverSettingsC(Structure):
         ("stability", c_bool),
         ("line_search", c_bool),
         ("initialized", c_bool),
+        ("max_precision_reached", c_bool),
         ("conv_tol", c_real),
         ("start_trust_radius", c_real),
         ("global_red_factor", c_real),
@@ -336,6 +338,8 @@ class SolverSettingsC(Structure):
         ("jacobi_davidson_start", c_int),
         ("seed", c_int),
         ("verbose", c_int),
+        ("n_update_orbs", c_int),
+        ("n_hess_x", c_int),
         ("subsystem_solver", c_char * (kw_len + 1)),
         ("stability_settings", StabilitySettingsC),
     ]
@@ -580,12 +584,12 @@ def solver(
         update_orbs_interface_type,
         obj_func_interface_type,
         c_int,
-        SolverSettingsC,
+        POINTER(SolverSettingsC),
     ]
 
     # call Fortran function
     error = lib.solver(
-        update_orbs_interface, obj_func_interface, n_param, settings.settings_c
+        update_orbs_interface, obj_func_interface, n_param, byref(settings.settings_c)
     )
 
     if error:
@@ -622,7 +626,7 @@ def stability_check(
         hess_x_interface_type,
         c_int,
         POINTER(c_bool),
-        StabilitySettingsC,
+        POINTER(StabilitySettingsC),
         c_void_p,
     ]
 
@@ -635,7 +639,7 @@ def stability_check(
         hess_x_interface,
         n_param,
         byref(stable),
-        settings.settings_c,
+        byref(settings.settings_c),
         kappa.ctypes.data_as(POINTER(c_real)) if kappa is not None else kappa,
     )
 

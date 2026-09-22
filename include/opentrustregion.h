@@ -83,6 +83,7 @@ typedef struct {
   c_int jacobi_davidson_start;
   c_int seed;
   c_int verbose;
+  c_int n_hess_x;
 
   char diag_solver[OTR_KW_LEN + 1];
 } stability_settings_type;
@@ -100,6 +101,7 @@ typedef struct {
   c_bool stability;
   c_bool line_search;
   c_bool initialized;
+  c_bool max_precision_reached;
 
   c_real conv_tol;
   c_real start_trust_radius;
@@ -112,6 +114,8 @@ typedef struct {
   c_int jacobi_davidson_start;
   c_int seed;
   c_int verbose;
+  c_int n_update_orbs;
+  c_int n_hess_x;
 
   char subsystem_solver[OTR_KW_LEN + 1];
 
@@ -131,11 +135,11 @@ void init_solver_settings(solver_settings_type *settings);
  * @param update_orbs_ptr   Pointer to update_orbs callback
  * @param obj_func_ptr      Pointer to objective function callback
  * @param n_param           Number of parameters
- * @param settings          Struct of solver settings
+ * @param settings          Pointer to struct of solver settings
  * @return                  Integer error code from Fortran
  */
 c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_param,
-             solver_settings_type settings);
+             solver_settings_type *settings);
 
 /**
  * Fortran-callable stability check interface
@@ -144,12 +148,12 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  * @param hess_x_ptr        Pointer to Hessian–vector product callback
  * @param n_param           Number of parameters
  * @param stable            Pointer to bool that receives stability result
- * @param settings          Struct of stability solver settings
+ * @param settings          Pointer to struct of stability solver settings
  * @param kappa_ptr         Pointer to orbital rotation vector
  * @return                  Integer error code from Fortran
  */
 c_int stability_check(const void *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_param,
-                      c_bool *stable, stability_settings_type settings,
+                      c_bool *stable, stability_settings_type *settings,
                       const void *kappa_ptr);
 
 #ifdef __cplusplus

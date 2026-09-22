@@ -140,7 +140,8 @@ module opentrustregion
     type, abstract :: settings_type
         logical :: initialized = .false.
         real(rp) :: conv_tol
-        integer(ip) :: n_random_trial_vectors, jacobi_davidson_start, seed, verbose
+        integer(ip) :: n_random_trial_vectors, jacobi_davidson_start, seed, verbose, &
+                       n_hess_x = 0
         procedure(precond_type), pointer, nopass :: precond => null()
         procedure(project_type), pointer, nopass :: project => null()
         procedure(logger_type), pointer, nopass :: logger => null()
@@ -166,9 +167,9 @@ module opentrustregion
     end type
 
     type, extends(settings_type) :: solver_settings_type
-        logical :: stability, line_search
+        logical :: stability, line_search, max_precision_reached = .false.
         real(rp) :: start_trust_radius, global_red_factor, local_red_factor
-        integer(ip) :: n_macro, n_micro
+        integer(ip) :: n_macro, n_micro, n_update_orbs = 0
         character(kw_len) :: subsystem_solver
         type(stability_settings_type) :: stability_settings
         procedure(conv_check_type), pointer, nopass :: conv_check => null()
@@ -193,9 +194,6 @@ module opentrustregion
                              jacobi_davidson_start = 30, seed = 42, verbose = 0, &
                              subsystem_solver = "davidson", &
                              stability_settings = default_stability_settings)
-
-    ! define global variables
-    integer(ip) :: tot_orb_update = 0, tot_hess_x = 0
 
 contains
 
@@ -224,10 +222,11 @@ contains
         ! initialize error flag
         error = 0
 
-        ! reset global counter variables so they do not accumulate across calls if a
-        ! previous call returned early on error or non-convergence
-        tot_orb_update = 0
-        tot_hess_x = 0
+        ! reset output fields so they do not accumulate across calls if a previous call 
+        ! returned early on error or non-convergence
+        settings%max_precision_reached = .false.
+        settings%n_update_orbs = 0
+        settings%n_hess_x = 0
 
         ! initialize settings
         if (.not. settings%initialized) then
@@ -351,7 +350,10 @@ contains
                     call stability_check(h_diag, hess_x_funptr, stable, error, &
                                          settings%stability_settings, kappa=kappa)
                     call add_error_origin(error, error_stability_check, settings)
+                    settings%n_hess_x = settings%n_hess_x + &
+                                        settings%stability_settings%n_hess_x
                     if (error /= 0) return
+
                     if (.not. stable) then
                         ! logarithmic line search
                         do i = 1, stability_n_points
@@ -391,10 +393,12 @@ contains
                         max_precision_reached = .false.
                         cycle
                     else
+                        settings%max_precision_reached = max_precision_reached
                         macro_converged = .true.
                         exit
                     end if
                 else
+                    settings%max_precision_reached = max_precision_reached
                     macro_converged = .true.
                     exit
                 end if
@@ -445,7 +449,7 @@ contains
         deallocate(kappa, grad, h_diag, solution, precond_kappa)
 
         ! increment total number of orbital updates
-        tot_orb_update = tot_orb_update + imacro
+        settings%n_update_orbs = settings%n_update_orbs + imacro
 
         ! stop if no convergence
         if (.not. macro_converged) then
@@ -458,9 +462,10 @@ contains
         ! finish logging
         call settings%log(repeat("-", 109), verbosity_info)
         write (msg, '(A, I0)') "Total number of Hessian linear transformations: ", &
-            tot_hess_x
+            settings%n_hess_x
         call settings%log(msg, verbosity_info)
-        write (msg, '(A, I0)') "Total number of orbital updates: ", tot_orb_update
+        write (msg, '(A, I0)') "Total number of orbital updates: ", &
+            settings%n_update_orbs
         call settings%log(msg, verbosity_info)
 
         ! flush output
@@ -497,6 +502,10 @@ contains
 
         ! initialize stable
         stable = .false.
+
+        ! reset output fields so they do not accumulate across calls if a previous
+        ! call returned early on error or non-convergence
+        settings%n_hess_x = 0
 
         ! initialize settings
         if (.not. settings%initialized) then
@@ -538,7 +547,7 @@ contains
         end do
 
         ! increment number of Hessian linear transformations
-        tot_hess_x = tot_hess_x + n_trial
+        settings%n_hess_x = settings%n_hess_x + n_trial
 
         ! construct augmented Hessian in reduced space
         allocate(red_space_hess(n_trial, n_trial))
@@ -610,7 +619,7 @@ contains
                 if (error /= 0) return
 
                 ! increment Hessian linear transformations
-                tot_hess_x = tot_hess_x + 1
+                settings%n_hess_x = settings%n_hess_x + 1
 
             else
                 ! solve Jacobi-Davidson correction equations
@@ -1662,7 +1671,7 @@ contains
         real(rp), intent(in) :: rhs(:), r_tol, solution(:), eigval
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         real(rp), intent(out) :: vec(:), hvec(:)
-        class(settings_type), intent(in) :: settings
+        class(settings_type), intent(inout) :: settings
         integer(ip), intent(out) :: error
         real(rp), intent(in), optional :: guess(:)
         integer(ip), intent(in), optional :: max_iter
@@ -1696,7 +1705,7 @@ contains
             call jacobi_davidson_correction(hess_x_funptr, vec, solution, eigval, &
                                             matvec, hvec, settings, error)
             if (error /= 0) return
-            tot_hess_x = tot_hess_x + 1
+            settings%n_hess_x = settings%n_hess_x + 1
         else
             vec = 0.0_rp
             hvec = 0.0_rp
@@ -1752,7 +1761,7 @@ contains
             call jacobi_davidson_correction(hess_x_funptr, v, solution, eigval, y, hv, &
                                             settings, error)
             if (error /= 0) return
-            tot_hess_x = tot_hess_x + 1
+            settings%n_hess_x = settings%n_hess_x + 1
 
             ! get new trial vector
             if (iteration >= 2) y = y - (beta / old_beta) * r1
@@ -2020,7 +2029,7 @@ contains
         integer(ip), intent(in) :: n_param
         procedure(obj_func_type), pointer, intent(in) :: obj_func
         procedure(hess_x_type), pointer, intent(in) :: hess_x_funptr
-        type(solver_settings_type), intent(in) :: settings
+        type(solver_settings_type), intent(inout) :: settings
         real(rp), intent(inout) :: trust_radius
         real(rp), intent(out) :: solution(:), mu
         integer(ip), intent(out) :: imicro, imicro_jacobi_davidson, error
@@ -2055,7 +2064,7 @@ contains
         n_trial = size(red_space_basis, 2)
 
         ! increment number of Hessian linear transformations
-        tot_hess_x = tot_hess_x + n_trial
+        settings%n_hess_x = settings%n_hess_x + n_trial
 
         ! calculate linear transformations of basis vectors
         allocate(h_basis(n_param, n_trial))
@@ -2198,7 +2207,7 @@ contains
                     if (error /= 0) return
 
                     ! increment Hessian linear transformations
-                    tot_hess_x = tot_hess_x + 1
+                    settings%n_hess_x = settings%n_hess_x + 1
 
                 else
                     ! solve Jacobi-Davidson correction equations
@@ -2290,7 +2299,7 @@ contains
         integer(ip), intent(in) :: n_param
         procedure(obj_func_type), pointer, intent(in) :: obj_func
         procedure(hess_x_type), pointer, intent(in) :: hess_x_funptr
-        type(solver_settings_type), intent(in) :: settings
+        type(solver_settings_type), intent(inout) :: settings
         real(rp), intent(inout) :: trust_radius
         real(rp), intent(out) :: solution(:)
         integer(ip), intent(out) :: imicro, error
@@ -2362,7 +2371,7 @@ contains
             if (error /= 0) return
 
             ! increment Hessian linear transformations
-            tot_hess_x = tot_hess_x + 1
+            settings%n_hess_x = settings%n_hess_x + 1
 
             ! calculate curvature
             curvature = ddot(n_param, direction, 1_ip, hess_direction, 1_ip)

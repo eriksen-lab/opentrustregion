@@ -306,6 +306,11 @@ bool test_solver_settings_init(void) {
                     "parameter wrong.\n");
     ok = false;
   }
+  if (ss.n_hess_x != stability_defaults.n_hess_x) {
+    fprintf(stderr, "test_solver_settings_init failed: Nested stability number of "
+                    "Hessian linear transformations parameter wrong.\n");
+    ok = false;
+  }
   if (strcmp(ss.diag_solver, stability_defaults.diag_solver) != 0) {
     fprintf(stderr, "test_solver_settings_init failed: Nested stability diagonal "
                     "solver parameter wrong.\n");
@@ -314,6 +319,21 @@ bool test_solver_settings_init(void) {
   if (ss.precond || ss.project || ss.logger) {
     fprintf(stderr, "test_solver_settings_init failed: Nested stability callback "
                     "pointers should be NULL.\n");
+    ok = false;
+  }
+  if (s.max_precision_reached != defaults.max_precision_reached) {
+    fprintf(stderr, "test_solver_settings_init failed: Maximum precision reached "
+                    "parameter wrong.\n");
+    ok = false;
+  }
+  if (s.n_update_orbs != defaults.n_update_orbs) {
+    fprintf(stderr, "test_solver_settings_init failed: Total number of orbital "
+                    "updates parameter wrong.\n");
+    ok = false;
+  }
+  if (s.n_hess_x != defaults.n_hess_x) {
+    fprintf(stderr, "test_solver_settings_init failed: Total number of Hessian "
+                    "linear transformations parameter wrong.\n");
     ok = false;
   }
 
@@ -367,6 +387,11 @@ bool test_stability_settings_init(void) {
             "test_stability_settings_init failed: Verbosity parameter wrong.\n");
     ok = false;
   }
+  if (s.n_hess_x != defaults.n_hess_x) {
+    fprintf(stderr, "test_stability_settings_init failed: Total number of Hessian "
+                    "linear transformations parameter wrong.\n");
+    ok = false;
+  }
   if (strcmp(s.diag_solver, defaults.diag_solver) != 0) {
     fprintf(stderr, "test_stability_settings_init failed: Diagonal solver parameter "
                     "wrong.\n");
@@ -393,7 +418,7 @@ bool test_solver_c(void) {
   // Start in the quadratic region near first minimum
   const c_real start_near_min1[N_PARAM] = {0.20, 0.15, 0.48, 0.28, 0.31, 0.66};
   memcpy(curr_vars, start_near_min1, sizeof(curr_vars));
-  c_int error = solver(update_orbs, obj_func, N_PARAM, settings);
+  c_int error = solver(update_orbs, obj_func, N_PARAM, &settings);
   if (error != 0) {
     fprintf(stderr, "test_solver_c failed: Produced error.\n");
     ok = false;
@@ -406,11 +431,16 @@ bool test_solver_c(void) {
     fprintf(stderr, "test_solver_c failed: Logger was not called.\n");
     ok = false;
   }
+  if (settings.n_update_orbs <= 0 || settings.n_hess_x <= 0) {
+    fprintf(stderr, "test_solver_c failed: Orbital update / Hessian linear "
+                    "transformation counters were not populated.\n");
+    ok = false;
+  }
 
   // start near a saddle so the solver has to switch to a non-Newton step
   const c_real start_near_saddle[N_PARAM] = {0.35, 0.59, 0.48, 0.40, 0.31, 0.32};
   memcpy(curr_vars, start_near_saddle, sizeof(curr_vars));
-  error = solver(update_orbs, obj_func, N_PARAM, settings);
+  error = solver(update_orbs, obj_func, N_PARAM, &settings);
   if (error != 0) {
     fprintf(stderr,
             "test_solver_c failed: Produced error when starting near saddle.\n");
@@ -443,7 +473,7 @@ bool test_stability_check_c(void) {
   c_real direction[N_PARAM] = {0};
   c_bool stable = false;
   c_int error =
-      stability_check(h_diag, hess_x_fun, N_PARAM, &stable, settings, direction);
+      stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, direction);
   if (error != 0) {
     fprintf(stderr, "test_stability_check_c failed: Produced error.\n");
     ok = false;
@@ -457,6 +487,11 @@ bool test_stability_check_c(void) {
     fprintf(stderr, "test_stability_check_c failed: Logger was not called.\n");
     ok = false;
   }
+  if (settings.n_hess_x <= 0) {
+    fprintf(stderr, "test_stability_check_c failed: Hessian linear transformation "
+                    "counter was not populated.\n");
+    ok = false;
+  }
 
   // at a saddle, expect unstable
   memcpy(curr_vars, saddle_point, sizeof(curr_vars));
@@ -465,7 +500,7 @@ bool test_stability_check_c(void) {
     h_diag[i] = hess[i][i];
 
   stable = true;
-  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, settings, direction);
+  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, direction);
   if (error != 0) {
     fprintf(stderr, "test_stability_check_c failed: Produced error near saddle.\n");
     ok = false;
@@ -492,7 +527,7 @@ bool test_stability_check_c(void) {
 
   // also exercise the no-direction path
   stable = true;
-  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, settings, NULL);
+  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, NULL);
   if (error != 0) {
     fprintf(stderr, "test_stability_check_c failed: Produced error when not passing "
                     "direction.\n");
