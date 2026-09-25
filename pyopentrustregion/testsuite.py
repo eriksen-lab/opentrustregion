@@ -361,8 +361,27 @@ class PyInterfaceTests(unittest.TestCase):
         if not test_logger:
             print(" test_solver_py_interface failed: Called logging function wrong.")
 
+        # a logging function that raises must not be silent, the exception is reported
+        # once the solver has returned
+        def raising_logger(message):
+            raise ValueError("logging failure")
+
+        settings.logger = raising_logger
+        logger_error_reported = False
+        try:
+            solver(mock_obj_func, mock_update_orbs, n_param, settings)
+        except RuntimeError as e:
+            logger_error_reported = isinstance(e.__cause__, ValueError)
+        if not logger_error_reported:
+            print(
+                " test_solver_py_interface failed: Exception raised by logging "
+                "function was not reported."
+            )
+
         self.assertTrue(
-            c_bool.in_dll(lib, "test_solver_interface").value and test_logger,
+            c_bool.in_dll(lib, "test_solver_interface").value
+            and test_logger
+            and logger_error_reported,
             "test_solver_py_interface failed",
         )
         print(" test_solver_py_interface PASSED")
@@ -444,11 +463,29 @@ class PyInterfaceTests(unittest.TestCase):
                 " test_stability_check_py_interface failed: Returned direction wrong."
             )
 
+        # a logging function that raises must not be silent, the exception is reported
+        # once the stability check has returned
+        def raising_logger(message):
+            raise ValueError("logging failure")
+
+        settings.logger = raising_logger
+        logger_error_reported = False
+        try:
+            stability_check(h_diag, mock_hess_x, n_param, settings, kappa=kappa)
+        except RuntimeError as e:
+            logger_error_reported = isinstance(e.__cause__, ValueError)
+        if not logger_error_reported:
+            print(
+                " test_stability_check_py_interface failed: Exception raised by "
+                "logging function was not reported."
+            )
+
         self.assertTrue(
             c_bool.in_dll(lib, "test_stability_check_interface").value
             and test_logger
             and not stable
-            and not wrong_direction,
+            and not wrong_direction
+            and logger_error_reported,
             "test_stability_check_py_interface failed",
         )
         print(" test_stability_check_py_interface PASSED")
@@ -463,7 +500,14 @@ class PyInterfaceTests(unittest.TestCase):
         test_passed = True
         for field_info in settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
-            if field_type == c_void_p:
+            if field_name == "context":
+                if getattr(settings.settings_c, field_name) is not None:
+                    print(
+                        " test_solver_settings failed: Host context not initialized to "
+                        "null."
+                    )
+                    test_passed = False
+            elif field_type == c_void_p:
                 if (
                     getattr(settings, field_name) is not None
                     or getattr(settings.settings_c, field_name) is not None
@@ -500,7 +544,14 @@ class PyInterfaceTests(unittest.TestCase):
         stability_settings = settings.stability_settings
         for field_info in stability_settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
-            if field_type == c_void_p:
+            if field_name == "context":
+                if getattr(stability_settings.settings_c, field_name) is not None:
+                    print(
+                        " test_solver_settings failed: Host context not initialized "
+                        "to null for nested stability settings."
+                    )
+                    test_passed = False
+            elif field_type == c_void_p:
                 if (
                     getattr(stability_settings, field_name) is not None
                     or getattr(stability_settings.settings_c, field_name) is not None
@@ -570,7 +621,14 @@ class PyInterfaceTests(unittest.TestCase):
         test_passed = True
         for field_info in settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
-            if field_type == c_void_p:
+            if field_name == "context":
+                if getattr(settings.settings_c, field_name) is not None:
+                    print(
+                        " test_stability_settings failed: Host context not initialized "
+                        "to null."
+                    )
+                    test_passed = False
+            elif field_type == c_void_p:
                 if (
                     getattr(settings, field_name) is not None
                     or getattr(settings.settings_c, field_name) is not None

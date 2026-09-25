@@ -107,11 +107,20 @@ c_real = c_double
 # fixed size strings for keywords
 kw_len = c_int.in_dll(lib, "kw_len_c").value
 
+
+def callback_type(restype, *argtypes):
+    """
+    this function builds the ctypes signature of a callback function, every callback
+    function of the C interface receives the opaque host context as its last argument
+    so it is appended here instead of at every declaration
+    """
+    return CFUNCTYPE(restype, *argtypes, c_void_p)
+
+
 # callback function ctypes specifications, ctypes can only deal with simple return
-# types so we interface to Fortran subroutines by creating pointers to the relevant
-# data
-hess_x_interface_type = CFUNCTYPE(c_int, POINTER(c_real), POINTER(c_real))
-update_orbs_interface_type = CFUNCTYPE(
+# types so we interface to Fortran subroutines by creating pointers to the relevant data
+hess_x_interface_type = callback_type(c_int, POINTER(c_real), POINTER(c_real))
+update_orbs_interface_type = callback_type(
     c_int,
     POINTER(c_real),
     POINTER(c_real),
@@ -119,18 +128,30 @@ update_orbs_interface_type = CFUNCTYPE(
     POINTER(c_real),
     POINTER(hess_x_interface_type),
 )
-obj_func_interface_type = CFUNCTYPE(c_int, POINTER(c_real), POINTER(c_real))
-precond_interface_type = CFUNCTYPE(
+obj_func_interface_type = callback_type(c_int, POINTER(c_real), POINTER(c_real))
+precond_interface_type = callback_type(
     c_int, POINTER(c_real), POINTER(c_real), POINTER(c_real)
 )
-project_interface_type = CFUNCTYPE(c_int, POINTER(c_real))
-conv_check_interface_type = CFUNCTYPE(c_int, POINTER(c_bool))
-logger_interface_type = CFUNCTYPE(None, c_char_p)
+project_interface_type = callback_type(c_int, POINTER(c_real))
+conv_check_interface_type = callback_type(c_int, POINTER(c_bool))
+logger_interface_type = callback_type(None, c_char_p)
 
 
 # define interface factories
+class CallbackInterface:
+    """
+    this class is the base class of the callback function interfaces, the C interface
+    hands every callback function the opaque host context as its last argument while
+    Python hosts carry their data in closures instead, so it is dropped here and the
+    subclasses only implement call without it
+    """
+
+    def __call__(self, *args):
+        return self.call(*args[:-1])
+
+
 @dataclass
-class ObjFuncInterface:
+class ObjFuncInterface(CallbackInterface):
     """
     this class provides the interface for the objective function
     """
@@ -139,7 +160,7 @@ class ObjFuncInterface:
     n_param: int
     exception: Dict[str, Exception]
 
-    def __call__(self, kappa_ptr, func_ptr) -> int:
+    def call(self, kappa_ptr, func_ptr) -> int:
         # convert matrix pointers to numpy arrays
         kappa = np.ctypeslib.as_array(kappa_ptr, shape=(self.n_param,))
 
@@ -153,7 +174,7 @@ class ObjFuncInterface:
 
 
 @dataclass
-class HessXInterface:
+class HessXInterface(CallbackInterface):
     """
     this class provides the interface for the Hessian linear transformation
     """
@@ -162,7 +183,7 @@ class HessXInterface:
     n_param: int
     exception: Dict[str, Exception]
 
-    def __call__(self, x_ptr, hx_ptr) -> int:
+    def call(self, x_ptr, hx_ptr) -> int:
         # convert trial vector pointer to numpy array
         x = np.ctypeslib.as_array(x_ptr, shape=(self.n_param,))
         hx = np.ctypeslib.as_array(hx_ptr, shape=(self.n_param,))
@@ -178,7 +199,7 @@ class HessXInterface:
 
 
 @dataclass
-class UpdateOrbsInterface:
+class UpdateOrbsInterface(CallbackInterface):
     """
     this class provides the interface to the orbital updating function
     """
@@ -191,7 +212,7 @@ class UpdateOrbsInterface:
     exception: Dict[str, Exception]
     hess_x_funptr: Optional[Any] = None
 
-    def __call__(self, kappa_ptr, func_ptr, grad_ptr, h_diag_ptr, hess_x_funptr) -> int:
+    def call(self, kappa_ptr, func_ptr, grad_ptr, h_diag_ptr, hess_x_funptr) -> int:
         # convert matrix pointers to numpy arrays
         kappa = np.ctypeslib.as_array(kappa_ptr, shape=(self.n_param,))
         grad = np.ctypeslib.as_array(grad_ptr, shape=(self.n_param,))
@@ -216,7 +237,7 @@ class UpdateOrbsInterface:
 
 
 @dataclass
-class PrecondInterface:
+class PrecondInterface(CallbackInterface):
     """
     this class provides the interface to the preconditioning function
     """
@@ -225,7 +246,7 @@ class PrecondInterface:
     n_param: int
     exception: Dict[str, Exception]
 
-    def __call__(self, residual_ptr, mu_ptr, precond_residual_ptr) -> int:
+    def call(self, residual_ptr, mu_ptr, precond_residual_ptr) -> int:
         # convert pointers to numpy arrays and float
         residual = np.ctypeslib.as_array(residual_ptr, shape=(self.n_param,))
         mu = mu_ptr[0]
@@ -244,7 +265,7 @@ class PrecondInterface:
 
 
 @dataclass
-class ProjectInterface:
+class ProjectInterface(CallbackInterface):
     """
     this class provides the interface to the projection function
     """
@@ -253,7 +274,7 @@ class ProjectInterface:
     n_param: int
     exception: Dict[str, Exception]
 
-    def __call__(self, vector_ptr) -> int:
+    def call(self, vector_ptr) -> int:
         # convert matrix pointers to numpy arrays
         vector = np.ctypeslib.as_array(vector_ptr, shape=(self.n_param,))
 
@@ -268,7 +289,7 @@ class ProjectInterface:
 
 
 @dataclass
-class ConvCheckInterface:
+class ConvCheckInterface(CallbackInterface):
     """
     this class provides the interface to the convergence check function
     """
@@ -276,7 +297,7 @@ class ConvCheckInterface:
     conv_check: Callable[[], bool]
     exception: Dict[str, Exception]
 
-    def __call__(self, conv_ptr) -> int:
+    def call(self, conv_ptr) -> int:
         # call convergence check
         try:
             conv_ptr[0] = self.conv_check()
@@ -288,16 +309,23 @@ class ConvCheckInterface:
 
 
 @dataclass
-class LoggerInterface:
+class LoggerInterface(CallbackInterface):
     """
     this class provides the interface to the logging function
     """
 
     logger: Callable[[str], None]
+    exception: Dict[str, Exception]
 
-    def __call__(self, message):
+    def call(self, message):
         # call logger
-        self.logger(string_at(message).decode("utf-8"))
+        try:
+            self.logger(string_at(message).decode("utf-8"))
+        except Exception as e:
+            # the logger has no error channel since the result does not depend on it,
+            # so the first failure is kept and reported once the call into the library
+            # has returned
+            self.exception.setdefault("logger", e)
 
 
 # define classes corresponding to C structs for settings
@@ -315,6 +343,7 @@ class StabilitySettingsC(Structure):
         ("verbose", c_int),
         ("n_hess_x", c_int),
         ("diag_solver", c_char * (kw_len + 1)),
+        ("context", c_void_p),
     ]
 
 
@@ -342,6 +371,7 @@ class SolverSettingsC(Structure):
         ("n_hess_x", c_int),
         ("subsystem_solver", c_char * (kw_len + 1)),
         ("stability_settings", StabilitySettingsC),
+        ("context", c_void_p),
     ]
 
 
@@ -370,7 +400,7 @@ class Settings:
         # initializes all optional function pointers to None
         for field_info in self.settings_c._fields_:
             field_name, field_type = field_info[:2]
-            if field_type is c_void_p:
+            if field_type is c_void_p and field_name != "context":
                 setattr(self, field_name, None)
 
     def set_optional_callback(
@@ -446,7 +476,7 @@ class SolverSettings(Settings):
             exception,
         )
         self.set_optional_callback(
-            "logger", self.logger, LoggerInterface, logger_interface_type
+            "logger", self.logger, LoggerInterface, logger_interface_type, exception
         )
         self.stability_settings.set_optional_callbacks(n_param, exception)
 
@@ -484,7 +514,7 @@ class StabilitySettings(Settings):
             exception,
         )
         self.set_optional_callback(
-            "logger", self.logger, LoggerInterface, logger_interface_type
+            "logger", self.logger, LoggerInterface, logger_interface_type, exception
         )
 
 
@@ -553,6 +583,23 @@ auto_bind_fields(SolverSettings)
 auto_bind_fields(StabilitySettings)
 
 
+def raise_on_failure(error: int, exception: Dict[str, Exception], name: str):
+    """
+    this function raises if a call into the library failed or a callback function
+    raised, an error returned by the library takes precedence over a failed logger
+    since only the former affects the result
+    """
+    if error:
+        raise RuntimeError(
+            f"OpenTrustRegion {name} produced error (code {error})."
+        ) from exception.get("exc")
+    if "logger" in exception:
+        raise RuntimeError(
+            f"OpenTrustRegion {name} completed, but the logging function raised, so "
+            "log messages from that point on may be missing."
+        ) from exception["logger"]
+
+
 def solver(
     obj_func: Callable[[np.ndarray], float],
     update_orbs: Callable[
@@ -592,13 +639,7 @@ def solver(
         update_orbs_interface, obj_func_interface, n_param, byref(settings.settings_c)
     )
 
-    if error:
-        if exception is not None and "exc" in exception:
-            raise RuntimeError(
-                f"OpenTrustRegion solver produced error (code {error})."
-            ) from exception["exc"]
-        else:
-            raise RuntimeError(f"OpenTrustRegion solver produced error (code {error}).")
+    raise_on_failure(error, exception, "solver")
 
 
 def stability_check(
@@ -643,14 +684,6 @@ def stability_check(
         kappa.ctypes.data_as(POINTER(c_real)) if kappa is not None else kappa,
     )
 
-    if error:
-        if exception is not None and "exc" in exception:
-            raise RuntimeError(
-                f"OpenTrustRegion stability check produced error (code {error})."
-            ) from exception["exc"]
-        else:
-            raise RuntimeError(
-                f"OpenTrustRegion stability check produced error (code {error})."
-            )
+    raise_on_failure(error, exception, "stability check")
 
     return bool(stable)

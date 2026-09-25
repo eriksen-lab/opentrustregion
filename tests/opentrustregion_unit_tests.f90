@@ -8,7 +8,8 @@ module opentrustregion_unit_tests
 
     use opentrustregion, only: rp, ip, stderr
     use c_interface, only: c_rp, c_ip
-    use test_reference, only: tol
+    use test_reference, only: tol, check_host_context, arm_host_context, &
+                              host_context_reached
     use, intrinsic :: iso_c_binding, only: c_bool
 
     implicit none
@@ -134,7 +135,7 @@ contains
 
     end function hartmann6d_hess_x
 
-    subroutine hess_x_fun(x, hess_x, error)
+    subroutine hess_x_fun(x, hess_x, error, context)
         !
         ! this function describes the Hessian linear transformation operation for the
         ! Hartmann 6D function
@@ -142,6 +143,10 @@ contains
         real(rp), intent(in), target :: x(:)
         real(rp), intent(out), target :: hess_x(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
 
         ! initialize error flag
         error = 0
@@ -150,7 +155,7 @@ contains
 
     end subroutine hess_x_fun
 
-    subroutine overflow_hess_x(x, hess_x, error)
+    subroutine overflow_hess_x(x, hess_x, error, context)
         !
         ! this function describes the Hessian linear transformation operation for the
         ! ill-conditioned quadratic model used to test the guard that triggers when the 
@@ -159,13 +164,17 @@ contains
         real(rp), intent(in), target :: x(:)
         real(rp), intent(out), target :: hess_x(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
 
         error = 0
         hess_x = matmul(overflow_hess, x)
 
     end subroutine overflow_hess_x
 
-    function overflow_obj_func(delta_vars, error) result(func)
+    function overflow_obj_func(delta_vars, error, context) result(func)
         !
         ! this function describes the objective function evaluation for the
         ! ill-conditioned quadratic model used to test the guard that triggers when the 
@@ -173,7 +182,11 @@ contains
         !
         real(rp), intent(in), target :: delta_vars(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
         real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
 
         error = 0
         func = dot_product(overflow_grad, delta_vars) + 0.5_rp * &
@@ -181,14 +194,18 @@ contains
 
     end function overflow_obj_func
 
-    function obj_func(delta_vars, error) result(func)
+    function obj_func(delta_vars, error, context) result(func)
         !
         ! this function describes the objective function evaluation for the Hartmann
         ! 6D function
         !
         real(rp), intent(in), target :: delta_vars(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
         real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
 
         ! initialize error flag
         error = 0
@@ -197,7 +214,8 @@ contains
 
     end function obj_func
 
-    subroutine update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error)
+    subroutine update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, &
+                           context)
         !
         ! this function describes the orbital update equivalent for the Hartmann 6D
         ! function
@@ -209,8 +227,12 @@ contains
         real(rp), intent(out), target :: grad(:), h_diag(:)
         procedure(hess_x_type), intent(out), pointer :: hess_x_funptr
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
 
         integer(ip) :: i
+
+        ! check host context
+        call check_host_context(context)
 
         ! initialize error flag
         error = 0
@@ -228,7 +250,27 @@ contains
 
     end subroutine update_orbs
 
-    subroutine mock_precond(residual, mu, precond_residual, error)
+    subroutine update_orbs_no_hess_x(delta_vars, func, grad, h_diag, hess_x_funptr, &
+                                     error, context)
+        !
+        ! this function describes an orbital update which reports success but does
+        ! not provide a Hessian linear transformation
+        !
+        use opentrustregion, only: hess_x_type
+
+        real(rp), intent(in), target :: delta_vars(:)
+        real(rp), intent(out) :: func
+        real(rp), intent(out), target :: grad(:), h_diag(:)
+        procedure(hess_x_type), intent(out), pointer :: hess_x_funptr
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        call update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, context)
+        hess_x_funptr => null()
+
+    end subroutine update_orbs_no_hess_x
+
+    subroutine mock_precond(residual, mu, precond_residual, error, context)
         !
         ! this subroutine is a test subroutine for the preconditioner subroutine
         !
@@ -236,6 +278,10 @@ contains
         real(rp), intent(in) :: mu
         real(rp), intent(out), target :: precond_residual(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
 
         precond_residual = mu * residual
 
@@ -243,12 +289,16 @@ contains
 
     end subroutine mock_precond
 
-    subroutine mock_project(vector, error)
+    subroutine mock_project(vector, error, context)
         !
         ! this subroutine is a test subroutine for the projection subroutine
         !
         real(rp), intent(inout), target :: vector(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
 
         vector = 2 * vector
 
@@ -256,11 +306,15 @@ contains
 
     end subroutine mock_project
 
-    subroutine logger(message)
+    subroutine logger(message, context)
         !
         ! this subroutine is a mock logging subroutine
         !
         character(*), intent(in) :: message
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
 
         log_message = log_message//trim(message)
 
@@ -319,7 +373,7 @@ contains
         use opentrustregion, only: update_orbs_type, obj_func_type, &
                                    solver_settings_type, solver, &
                                    default_settings => default_solver_settings, &
-                                   error_solver_max_iter
+                                   error_solver_max_iter, error_update_orbs
 
         real(rp), parameter :: var_thres = 1e-6_rp
         integer(ip) :: error
@@ -410,6 +464,10 @@ contains
         ! default verbosity and check that it gets propagated to the nested settings
         settings%verbose = 2_ip
 
+        ! hand the callback functions a host context, the internal stability check has
+        ! to inherit it since it calls back into the same host
+        call arm_host_context(settings)
+
         ! run solver, check if error has occured and check whether gradient is zero and
         ! agrees with correct minimum
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
@@ -437,6 +495,13 @@ contains
         if (any(abs(curr_vars - minimum1) > var_thres) .and. &
             any(abs(curr_vars - minimum2) > var_thres)) then
             write (stderr, *) "test_solver failed: Solver did not find minimum."
+            test_solver = .false.
+        end if
+        test_solver = test_solver .and. &
+                      logical(host_context_reached("solver"), kind=c_bool)
+        if (associated(settings%stability_settings%context)) then
+            write (stderr, *) "test_solver failed: Host context lent to the "// &
+                "internal stability check was left on the nested settings."
             test_solver = .false.
         end if
 
@@ -475,6 +540,19 @@ contains
         if (.not. settings%max_precision_reached) then
             write (stderr, *) "test_solver failed: Did not flag that maximum "// &
                 "precision was reached when convergence tolerance could not be met."
+            test_solver = .false.
+        end if
+
+        ! run solver, an orbital update which succeeds without providing a Hessian
+        ! linear transformation is reported as an orbital update error
+        curr_vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        update_orbs_funptr => update_orbs_no_hess_x
+        obj_func_funptr => obj_func
+        call settings%init(error)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= error_update_orbs + 1) then
+            write (stderr, *) "test_solver failed: Did not report a missing "// &
+                "Hessian linear transformation."
             test_solver = .false.
         end if
 

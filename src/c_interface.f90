@@ -11,10 +11,9 @@ module c_interface
                                default_solver_settings, default_stability_settings, &
                                update_orbs_type, hess_x_type, obj_func_type, &
                                precond_type, project_type, conv_check_type, logger_type
-    use, intrinsic :: iso_c_binding, only: c_double, c_int64_t, c_int32_t, c_bool, &
-                                           c_ptr, c_funptr, c_f_pointer, &
-                                           c_f_procpointer, c_associated, c_char, &
-                                           c_null_char, c_null_funptr
+    use, intrinsic :: iso_c_binding, only: &
+        c_double, c_int64_t, c_int32_t, c_bool, c_ptr, c_funptr, c_f_pointer, &
+        c_f_procpointer, c_associated, c_char, c_null_char, c_null_ptr, c_null_funptr
 
     implicit none
 
@@ -30,85 +29,96 @@ module c_interface
     ! maximum keyword length
     integer(c_ip), bind(C) :: kw_len_c = kw_len
 
-    ! define procedure pointer which will point to the Fortran procedures
-    procedure(update_orbs_c_type), pointer :: update_orbs_before_wrapping => null()
-    procedure(hess_x_c_type), pointer :: hess_x_before_wrapping => null()
-    procedure(obj_func_c_type), pointer :: obj_func_before_wrapping => null()
-    procedure(precond_c_type), pointer :: precond_before_wrapping => null()
-    procedure(project_c_type), pointer :: project_before_wrapping => null()
-    procedure(conv_check_c_type), pointer :: conv_check_before_wrapping => null()
-    procedure(logger_c_type), pointer :: logger_before_wrapping => null()
-
     ! C-interoperable interfaces for the callback functions
     abstract interface
         function update_orbs_c_type(kappa_c, func_c, grad_c, h_diag_c, &
-                                    hess_x_c_funptr) result(error) bind(C)
-            import :: c_rp, c_funptr, c_ip
+                                    hess_x_c_funptr, context_c) result(error) bind(C)
+            import :: c_rp, c_funptr, c_ip, c_ptr
 
             real(c_rp), intent(in) :: kappa_c(*)
             real(c_rp), intent(out) :: func_c
             real(c_rp), intent(out) :: grad_c(*), h_diag_c(*)
             type(c_funptr), intent(out) :: hess_x_c_funptr
+            type(c_ptr), intent(in), value :: context_c
             integer(c_ip) :: error
         end function update_orbs_c_type
     end interface
 
     abstract interface
-        function hess_x_c_type(x_c, hess_x_c) result(error) bind(C)
-            import :: c_rp, c_ip
+        function hess_x_c_type(x_c, hess_x_c, context_c) result(error) bind(C)
+            import :: c_rp, c_ip, c_ptr
 
             real(c_rp), intent(in) :: x_c(*)
             real(c_rp), intent(out) :: hess_x_c(*)
+            type(c_ptr), intent(in), value :: context_c
             integer(c_ip) :: error
         end function hess_x_c_type
     end interface
 
     abstract interface
-        function obj_func_c_type(kappa_c, func) result(error) bind(C)
-            import :: c_rp, c_ip
+        function obj_func_c_type(kappa_c, func, context_c) result(error) bind(C)
+            import :: c_rp, c_ip, c_ptr
 
             real(c_rp), intent(in) :: kappa_c(*)
             real(c_rp), intent(out) :: func
+            type(c_ptr), intent(in), value :: context_c
             integer(c_ip) :: error
         end function obj_func_c_type
     end interface
 
     abstract interface
-        function precond_c_type(residual_c, mu_c, precond_residual_c) result(error) &
-            bind(C)
-            import :: c_rp, c_ip
+        function precond_c_type(residual_c, mu_c, precond_residual_c, context_c) &
+            result(error) bind(C)
+            import :: c_rp, c_ip, c_ptr
 
             real(c_rp), intent(in) :: residual_c(*), mu_c
             real(c_rp), intent(out) :: precond_residual_c(*)
+            type(c_ptr), intent(in), value :: context_c
             integer(c_ip) :: error
         end function precond_c_type
     end interface
 
     abstract interface
-        function project_c_type(vector_c) result(error) bind(C)
-            import :: c_rp, c_ip
+        function project_c_type(vector_c, context_c) result(error) bind(C)
+            import :: c_rp, c_ip, c_ptr
 
             real(c_rp), intent(inout), target :: vector_c(*)
+            type(c_ptr), intent(in), value :: context_c
             integer(c_ip) :: error
         end function project_c_type
     end interface
 
     abstract interface
-        function conv_check_c_type(converged) result(error) bind(C)
-            import :: c_bool, c_ip
+        function conv_check_c_type(converged, context_c) result(error) bind(C)
+            import :: c_bool, c_ip, c_ptr
 
             logical(c_bool), intent(out) :: converged
+            type(c_ptr), intent(in), value :: context_c
             integer(c_ip) :: error
         end function conv_check_c_type
     end interface
 
     abstract interface
-        subroutine logger_c_type(message) bind(C)
-            import :: c_char
+        subroutine logger_c_type(message, context_c) bind(C)
+            import :: c_char, c_ptr
 
             character(c_char), intent(in) :: message(*)
+            type(c_ptr), intent(in), value :: context_c
         end subroutine logger_c_type
     end interface
+
+    ! bundle of the C callback functions belonging to a single call
+    type :: c_callbacks_type
+        procedure(update_orbs_c_type), pointer, nopass :: update_orbs => null()
+        procedure(hess_x_c_type), pointer, nopass :: hess_x => null()
+        procedure(obj_func_c_type), pointer, nopass :: obj_func => null()
+        procedure(precond_c_type), pointer, nopass :: precond => null()
+        procedure(project_c_type), pointer, nopass :: project => null()
+        procedure(conv_check_c_type), pointer, nopass :: conv_check => null()
+        procedure(logger_c_type), pointer, nopass :: logger => null()
+        type(c_ptr) :: host_context = c_null_ptr
+        type(c_callbacks_type), pointer :: stability => null()
+    end type
 
     ! derived type for stability check settings
     type, bind(C) :: stability_settings_type_c
@@ -118,6 +128,7 @@ module c_interface
         integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
                          verbose, n_hess_x
         character(c_char) :: diag_solver(kw_len + 1)
+        type(c_ptr) :: context
     end type
 
     ! derived type for solver settings
@@ -129,6 +140,7 @@ module c_interface
                          jacobi_davidson_start, seed, verbose, n_update_orbs, n_hess_x
         character(c_char) :: subsystem_solver(kw_len + 1)
         type(stability_settings_type_c) :: stability_settings
+        type(c_ptr) :: context
     end type
 
     procedure(standard_solver), pointer :: solver => standard_solver
@@ -172,12 +184,27 @@ contains
         procedure(obj_func_f_wrapper), pointer :: obj_func
         integer(ip) :: n_param, error
         type(solver_settings_type) :: settings
+        type(c_callbacks_type), target :: callbacks, stability_callbacks
 
-        ! associate the input C pointer to update_orbs subroutine to a Fortran
-        ! procedure pointer
-        call c_f_procpointer(cptr=update_orbs_c_funptr, &
-                             fptr=update_orbs_before_wrapping)
-        call c_f_procpointer(cptr=obj_func_c_funptr, fptr=obj_func_before_wrapping)
+        ! bundle the C function pointers
+        call c_f_procpointer(cptr=update_orbs_c_funptr, fptr=callbacks%update_orbs)
+        call c_f_procpointer(cptr=obj_func_c_funptr, fptr=callbacks%obj_func)
+        call store_optional_c_callbacks(callbacks, settings_c%precond, &
+                                        settings_c%project, settings_c%conv_check, &
+                                        settings_c%logger)
+        callbacks%host_context = settings_c%context
+
+        ! the solver lets the internal stability check inherit its optional callback
+        ! functions when the nested settings do not provide their own, so the nested
+        ! bundle starts as a copy of the solver's and only the provided ones override
+        stability_callbacks = callbacks
+        call store_optional_c_callbacks( &
+            stability_callbacks, settings_c%stability_settings%precond, &
+            settings_c%stability_settings%project, c_null_funptr, &
+            settings_c%stability_settings%logger)
+        if (c_associated(settings_c%stability_settings%context)) &
+            stability_callbacks%host_context = settings_c%stability_settings%context
+        callbacks%stability => stability_callbacks
 
         ! associate procedure pointer to wrapper function
         update_orbs => update_orbs_f_wrapper
@@ -186,8 +213,11 @@ contains
         ! convert dummy argument to Fortran kind
         n_param = int(n_param_c, kind=ip)
 
-        ! convert settings
+        ! convert settings and hand the bundles to the callback wrappers as opaque
+        ! context
         settings = settings_c
+        settings%context => callbacks
+        settings%stability_settings%context => stability_callbacks
 
         ! call solver
         call solver(update_orbs, obj_func, n_param, error, settings)
@@ -225,10 +255,14 @@ contains
         integer(ip) :: error
         procedure(hess_x_f_wrapper), pointer :: hess_x
         type(stability_settings_type) :: settings
+        type(c_callbacks_type), target :: callbacks
 
-        ! associate the input C pointer to update_orbs subroutine to a Fortran
-        ! procedure pointer
-        call c_f_procpointer(cptr=hess_x_c_funptr, fptr=hess_x_before_wrapping)
+        ! bundle the C function pointers
+        call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
+        call store_optional_c_callbacks(callbacks, settings_c%precond, &
+                                        settings_c%project, c_null_funptr, &
+                                        settings_c%logger)
+        callbacks%host_context = settings_c%context
 
         ! associate procedure pointer to wrapper function
         hess_x => hess_x_f_wrapper
@@ -249,8 +283,10 @@ contains
             end if
         end if
 
-        ! convert settings
+        ! convert settings and hand the bundle to the callback wrappers as opaque
+        ! context
         settings = settings_c
+        settings%context => callbacks
 
         ! call stability check
         if (c_associated(kappa_c_ptr)) then
@@ -274,7 +310,30 @@ contains
 
     end function stability_check_c_wrapper
 
-    subroutine update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x, error)
+    subroutine store_optional_c_callbacks(callbacks, precond_c_funptr, &
+                                          project_c_funptr, conv_check_c_funptr, &
+                                          logger_c_funptr)
+        !
+        ! this subroutine stores the optional C callback functions in a callback
+        ! bundle, skipping the ones that were not provided
+        !
+        type(c_callbacks_type), intent(inout) :: callbacks
+        type(c_funptr), intent(in) :: precond_c_funptr, project_c_funptr, &
+                                      conv_check_c_funptr, logger_c_funptr
+
+        ! associate the C pointers that were provided to Fortran procedure pointers
+        if (c_associated(precond_c_funptr)) &
+            call c_f_procpointer(cptr=precond_c_funptr, fptr=callbacks%precond)
+        if (c_associated(project_c_funptr)) &
+            call c_f_procpointer(cptr=project_c_funptr, fptr=callbacks%project)
+        if (c_associated(conv_check_c_funptr)) &
+            call c_f_procpointer(cptr=conv_check_c_funptr, fptr=callbacks%conv_check)
+        if (c_associated(logger_c_funptr)) &
+            call c_f_procpointer(cptr=logger_c_funptr, fptr=callbacks%logger)
+
+    end subroutine store_optional_c_callbacks
+
+    subroutine update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x, error, context)
         !
         ! this subroutine exposes a C-implemented orbital update function to Fortran
         !
@@ -285,6 +344,7 @@ contains
         real(rp), intent(out), target :: grad(:), h_diag(:)
         procedure(hess_x_type), intent(out), pointer :: hess_x
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
 
         real(c_rp) :: func_c
         real(c_rp), pointer :: kappa_c(:), grad_c(:), h_diag_c(:)
@@ -303,9 +363,23 @@ contains
             kappa_c = real(kappa, kind=c_rp)
         end if
 
-        ! call update_orbs C function
-        error_c = update_orbs_before_wrapping(kappa_c, func_c, grad_c, h_diag_c, &
-                                              hess_x_c_funptr)
+        ! call update_orbs C function and keep the Hessian linear transformation it
+        ! returns in the context
+        hess_x_c_funptr = c_null_funptr
+        select type (callbacks => context)
+        type is (c_callbacks_type)
+            error_c = callbacks%update_orbs(kappa_c, func_c, grad_c, h_diag_c, &
+                                            hess_x_c_funptr, callbacks%host_context)
+            if (error_c == 0 .and. .not. c_associated(hess_x_c_funptr)) then
+                error_c = 1
+            else if (c_associated(hess_x_c_funptr)) then
+                call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
+                if (associated(callbacks%stability)) &
+                    callbacks%stability%hess_x => callbacks%hess_x
+            end if
+        class default
+            error_c = 1
+        end select
 
         ! convert arguments to Fortran kind
         func = real(func_c, kind=rp)
@@ -318,16 +392,12 @@ contains
             deallocate(h_diag_c)
         end if
 
-        ! associate the input C pointer to hess_x function to a Fortran procedure
-        ! pointer
-        call c_f_procpointer(cptr=hess_x_c_funptr, fptr=hess_x_before_wrapping)
-
         ! associate procedure pointer to wrapper function
         hess_x => hess_x_f_wrapper
 
     end subroutine update_orbs_f_wrapper
 
-    subroutine hess_x_f_wrapper(x, hess_x, error)
+    subroutine hess_x_f_wrapper(x, hess_x, error, context)
         !
         ! this subroutine exposes a C-implemented Hessian linear transformation to 
         ! Fortran
@@ -335,6 +405,7 @@ contains
         real(rp), intent(in), target :: x(:)
         real(rp), intent(out), target :: hess_x(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
 
         real(c_rp), pointer :: x_c(:), hess_x_c(:)
         integer(c_ip) :: error_c
@@ -350,7 +421,12 @@ contains
         end if
 
         ! call C function
-        error_c = hess_x_before_wrapping(x_c, hess_x_c)
+        select type (callbacks => context)
+        type is (c_callbacks_type)
+            error_c = callbacks%hess_x(x_c, hess_x_c, callbacks%host_context)
+        class default
+            error_c = 1
+        end select
 
         ! convert arguments to Fortran kind
         error = int(error_c, kind=ip)
@@ -362,12 +438,13 @@ contains
 
     end subroutine hess_x_f_wrapper
 
-    function obj_func_f_wrapper(kappa, error) result(obj_func)
+    function obj_func_f_wrapper(kappa, error, context) result(obj_func)
         !
         ! this function exposes a C-implemented objective function to Fortran
         !
         real(rp), intent(in), target :: kappa(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
         real(rp) :: obj_func
 
         real(c_rp) :: obj_func_c
@@ -383,7 +460,13 @@ contains
         end if
 
         ! call obj_func C function
-        error_c = obj_func_before_wrapping(kappa_c, obj_func_c)
+        obj_func_c = 0.0_c_rp
+        select type (callbacks => context)
+        type is (c_callbacks_type)
+            error_c = callbacks%obj_func(kappa_c, obj_func_c, callbacks%host_context)
+        class default
+            error_c = 1
+        end select
 
         ! convert arguments to Fortran kind
         obj_func = real(obj_func_c, kind=rp)
@@ -394,7 +477,7 @@ contains
 
     end function obj_func_f_wrapper
 
-    subroutine precond_f_wrapper(residual, mu, precond_residual, error)
+    subroutine precond_f_wrapper(residual, mu, precond_residual, error, context)
         !
         ! this subroutine exposes a C-implemented preconditioner function to Fortran
         !
@@ -402,6 +485,7 @@ contains
         real(rp), intent(in) :: mu
         real(rp), intent(out), target :: precond_residual(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
 
         real(c_rp) :: mu_c
         real(c_rp), pointer :: residual_c(:), precond_residual_c(:)
@@ -419,7 +503,13 @@ contains
         end if
 
         ! call precond C function
-        error_c = precond_before_wrapping(residual_c, mu_c, precond_residual_c)
+        select type (callbacks => context)
+        type is (c_callbacks_type)
+            error_c = callbacks%precond(residual_c, mu_c, precond_residual_c, &
+                                        callbacks%host_context)
+        class default
+            error_c = 1
+        end select
 
         ! convert arguments to Fortran kind
         error = int(error_c, kind=ip)
@@ -431,12 +521,13 @@ contains
 
     end subroutine precond_f_wrapper
 
-    subroutine project_f_wrapper(vector, error)
+    subroutine project_f_wrapper(vector, error, context)
         !
         ! this subroutine exposes a C-implemented projection function to Fortran
         !
         real(rp), intent(inout), target :: vector(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
 
         real(c_rp), pointer :: vector_c(:)
         integer(c_ip) :: error_c
@@ -450,7 +541,12 @@ contains
         end if
 
         ! call project C function
-        error_c = project_before_wrapping(vector_c)
+        select type (callbacks => context)
+        type is (c_callbacks_type)
+            error_c = callbacks%project(vector_c, callbacks%host_context)
+        class default
+            error_c = 1
+        end select
 
         ! convert arguments to Fortran kind
         error = int(error_c, kind=ip)
@@ -461,18 +557,25 @@ contains
 
     end subroutine project_f_wrapper
 
-    function conv_check_f_wrapper(error) result(converged)
+    function conv_check_f_wrapper(error, context) result(converged)
         !
         ! this function exposes a C-implemented convergence check function to Fortran
         !
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
         logical :: converged
 
         integer(c_ip) :: error_c
         logical(c_bool) :: converged_c
 
         ! call conv_check C function
-        error_c = conv_check_before_wrapping(converged_c)
+        converged_c = .false._c_bool
+        select type (callbacks => context)
+        type is (c_callbacks_type)
+            error_c = callbacks%conv_check(converged_c, callbacks%host_context)
+        class default
+            error_c = 1
+        end select
 
         ! convert arguments to Fortran kind
         converged = logical(converged_c)
@@ -480,11 +583,12 @@ contains
 
     end function conv_check_f_wrapper
 
-    subroutine logger_f_wrapper(message)
+    subroutine logger_f_wrapper(message, context)
         !
         ! this subroutine exposes a C-implemented logger function to Fortran
         !
         character(*), intent(in) :: message
+        class(*), intent(in), pointer :: context
 
         character(kind=c_char), allocatable :: message_c(:)
         integer(ip) :: message_len, i
@@ -500,7 +604,10 @@ contains
         message_c(message_len) = c_null_char 
 
         ! call logging C function
-        call logger_before_wrapping(message_c)
+        select type (callbacks => context)
+        type is (c_callbacks_type)
+            call callbacks%logger(message_c, callbacks%host_context)
+        end select
         deallocate(message_c)
 
     end subroutine logger_f_wrapper
@@ -538,29 +645,21 @@ contains
         if (settings_c%initialized) then
             ! convert callback functions
             if (c_associated(settings_c%precond)) then
-                call c_f_procpointer(cptr=settings_c%precond, &
-                                     fptr=precond_before_wrapping)
                 settings%precond => precond_f_wrapper
             else
                 settings%precond => null()
             end if
             if (c_associated(settings_c%project)) then
-                call c_f_procpointer(cptr=settings_c%project, &
-                                     fptr=project_before_wrapping)
                 settings%project => project_f_wrapper
             else
                 settings%project => null()
             end if
             if (c_associated(settings_c%conv_check)) then
-                call c_f_procpointer(cptr=settings_c%conv_check, &
-                                     fptr=conv_check_before_wrapping)
                 settings%conv_check => conv_check_f_wrapper
             else
                 settings%conv_check => null()
             end if
             if (c_associated(settings_c%logger)) then
-                call c_f_procpointer(cptr=settings_c%logger, &
-                                     fptr=logger_before_wrapping)
                 settings%logger => logger_f_wrapper
             else
                 settings%logger => null()
@@ -613,22 +712,16 @@ contains
         if (settings_c%initialized) then
             ! convert callback functions
             if (c_associated(settings_c%precond)) then
-                call c_f_procpointer(cptr=settings_c%precond, &
-                                     fptr=precond_before_wrapping)
                 settings%precond => precond_f_wrapper
             else
                 settings%precond => null()
             end if
             if (c_associated(settings_c%project)) then
-                call c_f_procpointer(cptr=settings_c%project, &
-                                     fptr=project_before_wrapping)
                 settings%project => project_f_wrapper
             else
                 settings%project => null()
             end if
             if (c_associated(settings_c%logger)) then
-                call c_f_procpointer(cptr=settings_c%logger, &
-                                     fptr=logger_before_wrapping)
                 settings%logger => logger_f_wrapper
             else
                 settings%logger => null()
@@ -702,6 +795,9 @@ contains
             ! convert objects
             settings_c%stability_settings = settings%stability_settings
 
+            ! the host context cannot be converted
+            settings_c%context = c_null_ptr
+
             ! set settings to initialized
             settings_c%initialized = .true._c_bool
         end if
@@ -738,6 +834,9 @@ contains
 
             ! convert characters
             settings_c%diag_solver = character_to_c(settings%diag_solver)
+
+            ! the host context cannot be converted
+            settings_c%context = c_null_ptr
 
             ! set settings to initialized
             settings_c%initialized = .true._c_bool

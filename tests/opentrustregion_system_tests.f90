@@ -16,6 +16,10 @@ module opentrustregion_system_tests
                              r_mo_ints(:, :, :), rii_rij_rjj_rji(:, :)
     character(:), allocatable :: data_dir
 
+    ! these tests reach their data through the module, so the callback functions are
+    ! handed an unassociated context
+    class(*), pointer :: no_context => null()
+
 contains
 
     subroutine set_test_data_path(path) bind(C)
@@ -114,7 +118,7 @@ contains
         ! get gradient, Hessian diagonal and Hessian linear transformation function
         ! pointer
         kappa = 0.0_rp
-        call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error)
+        call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, no_context)
 
         ! check if error has occured
         if (error /= 0) then
@@ -224,7 +228,7 @@ contains
         ! get gradient, Hessian diagonal and Hessian linear transformation function
         ! pointer
         kappa = 0.0_rp
-        call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error)
+        call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, no_context)
 
         ! check if error has occured
         if (error /= 0) then
@@ -259,13 +263,14 @@ contains
 
     end function test_h2o_saddle_fb
 
-    real(rp) function obj_func(kappa, error)
+    real(rp) function obj_func(kappa, error, context)
         !
         ! this function calculates the Foster-Boys orbital localization objective 
         ! function
         !
         real(rp), intent(in), target :: kappa(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
 
         real(rp), allocatable :: kappa_full(:, :), mo_coeff_tmp(:, :)
         integer(ip) :: xyz, i, j, idx
@@ -306,7 +311,7 @@ contains
 
     end function obj_func
 
-    subroutine update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error)
+    subroutine update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, context)
         !
         ! this function updates the orbitals for Foster-Boys orbital localization
         !
@@ -317,6 +322,7 @@ contains
         real(rp), intent(out), target :: grad(:), h_diag(:)
         procedure(hess_x_type), intent(out), pointer :: hess_x_funptr
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
 
         integer(ip) :: xyz, i, j, idx
         real(rp), allocatable :: kappa_full(:, :), h_diag_tmp(:, :), tmp1(:, :)
@@ -401,7 +407,7 @@ contains
 
     end subroutine update_orbs
 
-    subroutine hess_x_fun(x, hess_x, error)
+    subroutine hess_x_fun(x, hess_x, error, context)
         !
         ! this function performs the Hessian linear transformation for Foster-Boys 
         ! orbital localization, it cannot be defined within update_orbs as it would 
@@ -410,6 +416,7 @@ contains
         real(rp), intent(in), target :: x(:)
         real(rp), intent(out), target :: hess_x(:)
         integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
 
         real(rp), allocatable :: x_full(:, :), hess_x_full(:, :), tmp2(:, :), &
                                  tmp3(:, :, :)

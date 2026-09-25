@@ -35,33 +35,33 @@ typedef bool c_bool;   /* corresponds to logical(c_bool) */
  * ------------------------------------------------------------------ */
 
 /* Hessian-vector product callback */
-typedef c_int hess_x_fn(const c_real *x_c, c_real *hess_x);
+typedef c_int hess_x_fn(const c_real *x_c, c_real *hess_x, void *context);
 typedef hess_x_fn *hess_x_fp;
 
 /* Orbital update callback */
 typedef c_int update_orbs_fn(const c_real *kappa, c_real *func, c_real *grad,
-                             c_real *h_diag, hess_x_fp *hess_x_ptr);
+                             c_real *h_diag, hess_x_fp *hess_x_ptr, void *context);
 typedef update_orbs_fn *update_orbs_fp;
 
 /* Objective function callback */
-typedef c_int obj_func_fn(const c_real *kappa, c_real *func);
+typedef c_int obj_func_fn(const c_real *kappa, c_real *func, void *context);
 typedef obj_func_fn *obj_func_fp;
 
 /* Preconditioner callback */
 typedef c_int precond_fn(const c_real *residual, const c_real *mu,
-                         c_real *precond_residual);
+                         c_real *precond_residual, void *context);
 typedef precond_fn *precond_fp;
 
 /* Projection callback */
-typedef c_int project_fn(c_real *vector);
+typedef c_int project_fn(c_real *vector, void *context);
 typedef project_fn *project_fp;
 
 /* Convergence check callback */
-typedef c_int conv_check_fn(c_bool *converged);
+typedef c_int conv_check_fn(c_bool *converged, void *context);
 typedef conv_check_fn *conv_check_fp;
 
 /* Logger callback */
-typedef void logger_fn(const char *message);
+typedef void logger_fn(const char *message, void *context);
 typedef logger_fn *logger_fp;
 
 /* ------------------------------------------------------------------
@@ -86,6 +86,9 @@ typedef struct {
   c_int n_hess_x;
 
   char diag_solver[OTR_KW_LEN + 1];
+
+  /* opaque host data handed back to every callback, must outlive the call */
+  void *context;
 } stability_settings_type;
 
 // Fortran-callable init subroutine for stability check settings
@@ -120,6 +123,9 @@ typedef struct {
   char subsystem_solver[OTR_KW_LEN + 1];
 
   stability_settings_type stability_settings;
+
+  /* opaque host data handed back to every callback, must outlive the call */
+  void *context;
 } solver_settings_type;
 
 // Fortran-callable init subroutine for solver settings

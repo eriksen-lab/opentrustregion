@@ -126,7 +126,7 @@ static void hartmann_hess(const c_real x[N_PARAM]) {
 // Callbacks exposed to the Fortran solver via the C ABI.
 // ---------------------------------------------------------------------------
 
-static c_int hess_x_fun(const c_real *x, c_real *hx) {
+static c_int hess_x_fun(const c_real *x, c_real *hx, void *context) {
   for (int i = 0; i < N_PARAM; i++) {
     c_real s = 0.0;
     for (int j = 0; j < N_PARAM; j++)
@@ -137,7 +137,7 @@ static c_int hess_x_fun(const c_real *x, c_real *hx) {
 }
 
 static c_int update_orbs(const c_real *delta_vars, c_real *func, c_real *grad,
-                         c_real *h_diag, hess_x_fp *hess_x_ptr) {
+                         c_real *h_diag, hess_x_fp *hess_x_ptr, void *context) {
   for (int i = 0; i < N_PARAM; i++)
     curr_vars[i] += delta_vars[i];
   *func = hartmann_func(curr_vars);
@@ -149,7 +149,7 @@ static c_int update_orbs(const c_real *delta_vars, c_real *func, c_real *grad,
   return 0;
 }
 
-static c_int obj_func(const c_real *delta_vars, c_real *func) {
+static c_int obj_func(const c_real *delta_vars, c_real *func, void *context) {
   c_real x[N_PARAM];
   for (int i = 0; i < N_PARAM; i++)
     x[i] = curr_vars[i] + delta_vars[i];
@@ -159,17 +159,68 @@ static c_int obj_func(const c_real *delta_vars, c_real *func) {
 
 // Identity preconditioner — exercises the precond callback slot without risking a zero
 // vector when mu=0 (which would trip the Gram-Schmidt zero-vector guard).
-static c_int precond(const c_real *residual, const c_real *mu,
-                     c_real *precond_residual) {
+static c_int precond(const c_real *residual, const c_real *mu, c_real *precond_residual,
+                     void *context) {
   (void)mu;
   for (int i = 0; i < N_PARAM; i++)
     precond_residual[i] = residual[i];
   return 0;
 }
 
+// An identity projection, set only on the nested stability settings, so the test can
+// tell whether the internal stability check reached its own callback slots rather than
+// the solver's.
+static int stability_project_called = 0;
+
+static c_int stability_project(c_real *vector, void *context) {
+  (void)vector;
+  stability_project_called = 1;
+  return 0;
+}
+
+// Convergence check that runs a whole stability check from inside the running solve,
+// with its own settings object.
+static int nested_check_ran = 0;
+static int nested_check_error = 0;
+static int in_nested = 0;
+static int outer_used_inner_hess_x = 0;
+
+// The nested stability check is given a Hessian-vector product of its own, distinct
+// from the one the outer solve is using. If anything were still shared between the two
+// calls, the outer solve would resume against this one, which it records.
+static c_int inner_hess_x(const c_real *x, c_real *hx, void *context) {
+  if (!in_nested)
+    outer_used_inner_hess_x = 1;
+  for (int i = 0; i < N_PARAM; i++) {
+    c_real s = 0.0;
+    for (int j = 0; j < N_PARAM; j++)
+      s += hess[i][j] * x[j];
+    hx[i] = s;
+  }
+  return 0;
+}
+
+// only nest once, and never report convergence, so the outer solve is unaffected
+static c_int conv_check_nested(c_bool *converged, void *context) {
+  *converged = false;
+  if (!nested_check_ran) {
+    c_real h_diag[N_PARAM];
+    c_bool stable = false;
+    stability_settings_type inner = stability_settings_init();
+    nested_check_ran = 1;
+    for (int i = 0; i < N_PARAM; i++)
+      h_diag[i] = hess[i][i];
+    in_nested = 1;
+    nested_check_error =
+        stability_check(h_diag, inner_hess_x, N_PARAM, &stable, &inner, NULL);
+    in_nested = 0;
+  }
+  return 0;
+}
+
 static int logger_called = 0;
 
-static void logger(const char *message) {
+static void logger(const char *message, void *context) {
   (void)message;
   logger_called = 1;
 }
@@ -412,8 +463,16 @@ bool test_solver_c(void) {
   solver_settings_type settings = solver_settings_init();
   settings.precond = precond;
   settings.logger = logger;
+  settings.stability = true;
+  settings.stability_settings.project = stability_project;
+  settings.conv_check = conv_check_nested;
   settings.verbose = 3; // ensure the logger callback is exercised
   logger_called = 0;
+  stability_project_called = 0;
+  nested_check_ran = 0;
+  nested_check_error = 0;
+  in_nested = 0;
+  outer_used_inner_hess_x = 0;
 
   // Start in the quadratic region near first minimum
   const c_real start_near_min1[N_PARAM] = {0.20, 0.15, 0.48, 0.28, 0.31, 0.66};
@@ -434,6 +493,21 @@ bool test_solver_c(void) {
   if (settings.n_update_orbs <= 0 || settings.n_hess_x <= 0) {
     fprintf(stderr, "test_solver_c failed: Orbital update / Hessian linear "
                     "transformation counters were not populated.\n");
+    ok = false;
+  }
+  if (!stability_project_called) {
+    fprintf(stderr, "test_solver_c failed: The internal stability check did not use "
+                    "the projection set on the nested stability settings.\n");
+    ok = false;
+  }
+  if (!nested_check_ran || nested_check_error != 0) {
+    fprintf(stderr, "test_solver_c failed: A stability check nested inside the "
+                    "running solve did not complete.\n");
+    ok = false;
+  }
+  if (outer_used_inner_hess_x) {
+    fprintf(stderr, "test_solver_c failed: After the nested stability check the outer "
+                    "solve resumed against the nested call's callbacks.\n");
     ok = false;
   }
 

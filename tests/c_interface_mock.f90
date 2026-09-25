@@ -52,14 +52,14 @@ contains
         character(:), allocatable, target :: message
 
         ! test passed orbital update function
-        test_solver_interface = test_solver_interface .and. &
-            test_update_orbs_c_funptr(update_orbs_c_funptr, "solver_py_interface", &
-                                      " by given orbital updating function")
+        test_solver_interface = test_solver_interface .and. test_update_orbs_c_funptr( &
+            update_orbs_c_funptr, "solver_py_interface", &
+            " by given orbital updating function", settings_c%context)
 
         ! test passed objective function
-        test_solver_interface = test_solver_interface .and. &
-            test_obj_func_c_funptr(obj_func_c_funptr, "solver_py_interface", &
-                                   " by given objective function")
+        test_solver_interface = test_solver_interface .and. test_obj_func_c_funptr( &
+            obj_func_c_funptr, "solver_py_interface", " by given objective function", &
+            settings_c%context)
 
         ! check if passed number of parameters is correct
         if (n_param_c /= 3) then
@@ -69,24 +69,24 @@ contains
         end if
 
         ! test passed preconditioner function
-        test_solver_interface = test_solver_interface .and. &
-            test_precond_c_funptr(settings_c%precond, "solver_py_interface", &
-                                  " by given preconditioning function")
+        test_solver_interface = test_solver_interface .and. test_precond_c_funptr( &
+            settings_c%precond, "solver_py_interface", &
+            " by given preconditioning function", settings_c%context)
 
         ! test passed projection function
-        test_solver_interface = test_solver_interface .and. &
-            test_project_c_funptr(settings_c%project, "solver_py_interface", &
-                                  " by given projection function")
+        test_solver_interface = test_solver_interface .and. test_project_c_funptr( &
+            settings_c%project, "solver_py_interface", &
+            " by given projection function", settings_c%context)
 
         ! test passed convergence check function
-        test_solver_interface = test_solver_interface .and. &
-            test_conv_check_c_funptr(settings_c%conv_check, "solver_py_interface", &
-                                     " by given convergence check function")
+        test_solver_interface = test_solver_interface .and. test_conv_check_c_funptr( &
+            settings_c%conv_check, "solver_py_interface", &
+            " by given convergence check function", settings_c%context)
 
         ! get Fortran pointer to passed logging function and call it
         message = "test" // c_null_char
         call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
-        call logger_funptr(message)
+        call logger_funptr(message, settings_c%context)
 
         ! check optional settings against reference values
         if (settings_c /= ref_settings) then
@@ -132,9 +132,10 @@ contains
         end if
 
         ! test passed Hessian linear transformation
-        test_stability_check_interface = test_stability_check_interface .and. &
-            test_hess_x_c_funptr(hess_x_c_funptr, "stability_check_py_interface", &
-                                 " by given Hessian linear transformation function")
+        test_stability_check_interface = &
+            test_stability_check_interface .and. test_hess_x_c_funptr( &
+                hess_x_c_funptr, "stability_check_py_interface", &
+                " by given Hessian linear transformation function", settings_c%context)
 
         ! check if passed number of parameters is correct
         if (n_param_c /= 3) then
@@ -144,19 +145,21 @@ contains
         end if
 
         ! test passed preconditioner
-        test_stability_check_interface = test_stability_check_interface .and. &
-            test_precond_c_funptr(settings_c%precond, "stability_check_py_interface", &
-                                  " by given preconditioning function")
+        test_stability_check_interface = &
+            test_stability_check_interface .and. test_precond_c_funptr( &
+                settings_c%precond, "stability_check_py_interface", &
+                " by given preconditioning function", settings_c%context)
 
         ! test passed projection function
-        test_stability_check_interface = test_stability_check_interface .and. &
+        test_stability_check_interface = &
+            test_stability_check_interface .and. &
             test_project_c_funptr(settings_c%project, "stability_check_py_interface", &
-                                  " by given projection function")
+                                  " by given projection function", settings_c%context)
 
         ! get Fortran pointer to passed logging function and call it
         message = "test" // c_null_char
         call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
-        call logger_funptr(message)
+        call logger_funptr(message, settings_c%context)
 
         ! check optional settings against reference values
         if (settings_c /= ref_settings) then
