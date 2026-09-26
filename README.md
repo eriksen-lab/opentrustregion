@@ -83,11 +83,14 @@ The optimization process is initiated by calling a `solver` subroutine. This rou
   - A **`hess_x`** subroutine that performs Hessian-vector products:
     - Accepts a trial vector and writes the result of the Hessian transformation into an output array (real array, written in-place)
     - Returns an integer error code (0 for success, positive integers < 100 for errors)
+    - Receives the host context as its last argument.
   - Returns an integer error code (0 for success, positive integers < 100 for errors)
+  - Receives the host context as its last argument.
 - **`obj_func`** (function):  
   Accepts and applies a variable update (e.g., orbital rotation) and returns:
   - Objective function value (real)
   - An integer error code (0 for success, positive integers < 100 for errors)
+  - Receives the host context as its last argument.
 - **`n_param`** (integer): Specifies the number of parameters to be optimized.
 - **`error`** (integer): An integer code indicating the success or failure of the solver. The error code structure is explained below.
 - **`settings`** (settings_type): Settings object which controls optional arguments as described below.
@@ -116,6 +119,9 @@ settings%conv_tol = 1e-6_rp
 settings%n_macro = 100
 settings%subsystem_solver = "tcg"
 
+! hand the callback functions whatever the host needs to reach its own data
+settings%context => host_data
+
 ! run solver
 call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
 
@@ -126,6 +132,7 @@ print *, "Number of orbital updates:", settings%n_update_orbs
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized using the `init()` method of the derived type, and default settings can be overridden (here, `conv_tol` and `n_macro`).
+- `host_data` is a variable of any type declared with the `target` attribute. Every callback function receives it as its last argument, declared as `class(*), intent(in), pointer :: context`, and recovers its own type with `select type`. The `intent(in)` applies to the pointer rather than the data, so a callback function may modify `host_data` but not point `context` elsewhere. Leaving `settings%context` unset is fine; the callback functions then receive an unassociated pointer.
 - Finally, the `solver` is called with the initialized settings and callback functions.
 - After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other component.
 
@@ -152,6 +159,9 @@ settings.conv_tol = 1e-6;
 settings.n_macro = 100;
 strcpy(settings.subsystem_solver, "tcg");
 
+// hand the callback functions whatever the host needs to reach its own data
+settings.context = &host_data;
+
 // run solver
 c_int error = solver(update_orbs_funptr, obj_func_funptr, n_param, &settings);
 
@@ -162,6 +172,7 @@ printf("Number of orbital updates: %d\n", settings.n_update_orbs);
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized via a small helper function `solver_settings_init()`, which returns a struct with default values. Individual settings (here, `conv_tol` and `n_macro`) can then be overridden.
+- `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
 - Finally, the `solver` is called with a pointer to the initialized settings and callback functions and directly returns an error code in typical C fashion.
 - After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other attribute.
 
@@ -190,15 +201,16 @@ print(f"Number of orbital updates: {settings.n_update_orbs}")
 - Callback functions (`update_orbs`, `obj_func`) are defined elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized via the `SolverSettings` class, which returns an object with default values; individual settings (here, `conv_tol`, and `n_macro`) can then be overridden.
-- Finally, the `solver` is called with the initialized settings and callback functions and errors can be caught in pythonic fashion in the form of a `RuntimeException`.
+- There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
+- Finally, the `solver` is called with the initialized settings and callback functions and errors can be caught in pythonic fashion in the form of a `RuntimeError`.
 - After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other attribute.
 
 ### Optional Settings
 The optimization process can be fine-tuned using the following settings:
 
-- **`precond`** (subroutine): Applies a preconditioner to a residual vector. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors).
-- **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for optimization using non-redundant parameters. When this is used, all other passed routines (`update_orbs`, `hess_x`, and `precond`) must be self-projecting.
-- **`conv_check`** (function): Returns whether the optimization has converged due to some supplied convergence criterion. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions.
+- **`precond`** (subroutine): Applies a preconditioner to a residual vector. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors). Receives the host context as its last argument.
+- **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for optimization using non-redundant parameters. When this is used, all other passed routines (`update_orbs`, `hess_x`, and `precond`) must be self-projecting. Receives the host context as its last argument.
+- **`conv_check`** (function): Returns whether the optimization has converged due to some supplied convergence criterion. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
 - **`stability`** (boolean): Determines whether a stability check is performed upon convergence.
 - **`line_search`** (boolean): Determines whether a line search is performed after every macro iteration.
 - **`subsystem_solver`** (string): Specifies which subsystem solver to use. Options include:
@@ -215,8 +227,9 @@ The optimization process can be fine-tuned using the following settings:
 - **`local_red_factor`** (real): Reduction factor for the residual during micro iterations in the local region.
 - **`verbose`** (integer): Controls the verbosity of output during optimization.
 - **`seed`** (integer): Seed value for generating random trial vectors.
-- **`logger`** (subroutine): Accepts a log message. Logging is otherwise routed to stdout.
-- **`stability_settings`** (stability_settings_type): Settings object controlling the internal stability check that is automatically performed upon convergence when `stability` is `True` or when starting at a stationary point (see the Stability Check section below). If `stability_settings%precond`, `stability_settings%project`, or `stability_settings%logger` are left unset, they default to the corresponding `precond`, `project`, and `logger` supplied to `solver`. `stability_settings%verbose` is raised to at least the solver's own `verbose` level.
+- **`logger`** (subroutine): Accepts a log message. Logging is otherwise routed to stdout. Receives the host context as its last argument.
+- **`context`** (unlimited polymorphic pointer in Fortran, `void *` in C, absent in Python): Opaque host data, handed back unchanged as the last argument of every callback function so that the host does not have to reach its own state through module-level variables. The library never inspects it and never keeps it past the call, so it only has to stay valid for the duration of the call. Two solves can therefore run at the same time, or be nested inside one another, as long as each is given its own settings object.
+- **`stability_settings`** (stability_settings_type): Settings object controlling the internal stability check that is automatically performed upon convergence when `stability` is `True` or when starting at a stationary point (see the Stability Check section below). If `stability_settings%precond`, `stability_settings%project`, `stability_settings%logger`, or `stability_settings%context` are left unset, they default to the corresponding `precond`, `project`, `logger`, and `context` supplied to `solver`. `stability_settings%verbose` is raised to at least the solver's own `verbose` level.
 
 ### Output
 After `solver` returns, the following fields on the settings object have been populated and can be read by the caller:
@@ -234,6 +247,7 @@ A separate `stability_check` subroutine is available to verify whether the curre
 - **`hess_x`** (subroutine): Performs Hessian-vector products at the current point:
   - Accepts a trial vector and writes the result of the Hessian transformation into an output array (real array, written in-place)
   - Returns an integer error code (0 for success, positive integers < 100 for errors)
+  - Receives the host context as its last argument.
 - **`stable`** (boolean): Returns whether the current point is stable.
 - **`error`** (integer): An integer code indicating the success or failure of the solver. The error code structure is explained below.
 - **`kappa`** (real array): If the memory is provided and the current point is not stable (as can be checked from return code of `stable`), the descent direction is written in-place in this array.
@@ -263,6 +277,9 @@ settings%conv_tol = 1e-6_rp
 settings%n_iter = 100
 settings%diag_solver = "jacobi-davidson"
 
+! hand the callback functions whatever the host needs to reach its own data
+settings%context => host_data
+
 ! run stability check
 call stability_check(h_diag, hess_x_funptr, n_param, stable, error, settings, kappa=kappa)
 
@@ -273,6 +290,7 @@ print *, "Number of Hessian linear transformations:", settings%n_hess_x
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Stability settings are initialized via the `init()` method of the derived type and can be overridden (here, `conv_tol` and `n_iter`).
+- `host_data` is a variable of any type declared with the `target` attribute. Every callback function receives it as its last argument, declared as `class(*), intent(in), pointer :: context`, and recovers its own type with `select type`. The `intent(in)` applies to the pointer rather than the data, so a callback function may modify `host_data` but not point `context` elsewhere. Leaving `settings%context` unset is fine; the callback functions then receive an unassociated pointer.
 - The `stable` logical output receives the result of the stability check.
 - The descent direction `kappa` is optional and is only returned if provided.
 - After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other component.
@@ -300,6 +318,9 @@ settings.conv_tol = 1e-6;
 settings.n_iter = 100;
 strcpy(settings.diag_solver, "jacobi-davidson");
 
+// hand the callback functions whatever the host needs to reach its own data
+settings.context = &host_data;
+
 // pointers to Hessian diagonal and descent direction
 double* h_diag;
 double* kappa;
@@ -313,6 +334,7 @@ printf("Number of Hessian linear transformations: %d\n", settings.n_hess_x);
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
 - `n_param` and `h_diag` are assumed to be defined elsewhere.
+- `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
 - Stability settings are initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol` and `n_iter`) can then be overridden.
 - The `stable` output receives the result of the stability check which directly returns an error code in typical C fashion.
 - The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `nullptr`.
@@ -347,15 +369,16 @@ print(f"Number of Hessian linear transformations: {settings.n_hess_x}")
 - `hess_x` is an existing Hessian-vector product implementation elsewhere in the program.
 - `n_param` and `h_diag` are assumed to be defined elsewhere.
 - Stability settings are initialized via the `StabilitySettings` class, which returns an object with default values; individual settings (here, `conv_tol`) can then be overridden.
-- The `stable` output receives the result of the stability check and errors can be caught in pythonic fashion in the form of a `RuntimeException`.
+- There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
+- The `stable` output receives the result of the stability check and errors can be caught in pythonic fashion in the form of a `RuntimeError`.
 - The descent direction `kappa` is optional and is only returned if provided.
 - After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other attribute.
 
 ### Optional Settings
 The stability check can be fine-tuned using the following settings:
 
-- **`precond`** (subroutine): Applies a preconditioner to a residual vector. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors).
-- **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for stability check using non-redundant parameters. When this is used, all other passed routines (`hess_x` and `precond`) must be self-projecting.
+- **`precond`** (subroutine): Applies a preconditioner to a residual vector. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors). Receives the host context as its last argument.
+- **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for stability check using non-redundant parameters. When this is used, all other passed routines (`hess_x` and `precond`) must be self-projecting. Receives the host context as its last argument.
 - **`diag_solver`** (string): Specifies which diagonalization solver to use. Options include:
   - `"davidson"`: standard Davidson method,
   - `"jacobi-davidson"`: Davidson method with fallback to Jacobi-Davidson if convergence is difficult, or automatically after `jacobi_davidson_start` micro iterations.
@@ -365,7 +388,8 @@ The stability check can be fine-tuned using the following settings:
 - **`jacobi_davidson_start`** (integer): Number of micro iterations after which the subsystem solver switches to the Jacobi-Davidson method.
 - **`verbose`** (integer): Controls the verbosity of output during the stability check.
 - **`seed`** (integer): Seed value for generating random trial vectors.
-- **`logger`** (function): Accepts a log message. Logging is otherwise routed to stdout.
+- **`logger`** (function): Accepts a log message. Logging is otherwise routed to stdout. Receives the host context as its last argument.
+- **`context`** (unlimited polymorphic pointer in Fortran, `void *` in C, absent in Python): Opaque host data, handed back unchanged as the last argument of every callback function so that the host does not have to reach its own state through module-level variables. The library never inspects it and never keeps it past the call, so it only has to stay valid for the duration of the call. Two stability checks can therefore run at the same time, or be nested inside one another, as long as each is given its own settings object.
 
 ### Output
 After `stability_check` returns, the following field on the settings object has been populated and can be read by the caller:
