@@ -46,7 +46,7 @@ contains
         !
         real(c_rp), intent(in) :: kappa(*)
         real(c_rp), intent(out) :: func, grad(*), h_diag(*)
-        type(c_funptr), intent(out) :: hess_x_c_funptr
+        type(c_funptr), intent(inout) :: hess_x_c_funptr
         type(c_ptr), intent(in), value :: context_c
         integer(c_ip) :: error
 
@@ -73,7 +73,7 @@ contains
         !
         real(c_rp), intent(in) :: kappa(*)
         real(c_rp), intent(out) :: func, grad(*), h_diag(*)
-        type(c_funptr), intent(out) :: hess_x_c_funptr
+        type(c_funptr), intent(inout) :: hess_x_c_funptr
         type(c_ptr), intent(in), value :: context_c
         integer(c_ip) :: error
 
@@ -195,12 +195,16 @@ contains
         !
         use c_interface, only: solver_settings_type_c, solver, solver_c_wrapper
         use opentrustregion, only: standard_solver => solver
-        use opentrustregion_mock, only: mock_solver, test_passed
-        use test_reference, only: assignment(=), ref_settings
+        use opentrustregion_mock, only: mock_solver, test_passed, mock_n_update_orbs, &
+                                        mock_n_hess_x, mock_stability_n_hess_x
+        use test_reference, only: assignment(=), ref_settings, stability_host_context
 
         type(c_funptr) :: update_orbs_c_funptr, obj_func_c_funptr
         type(solver_settings_type_c) :: settings
         integer(c_ip) :: error
+        integer(ip) :: icase
+        character(22), parameter :: case_names(2) = [character(22) :: &
+            "without nested context", "with nested context"]
 
         ! assume tests pass
         test_solver_c_wrapper = .true.
@@ -212,43 +216,84 @@ contains
         update_orbs_c_funptr = c_funloc(mock_update_orbs)
         obj_func_c_funptr = c_funloc(mock_obj_func)
 
-        ! associate optional settings with values
-        settings = ref_settings
-        settings%precond = c_funloc(mock_precond)
-        settings%project = c_funloc(mock_project)
-        settings%conv_check = c_funloc(mock_conv_check)
-        settings%logger = c_funloc(mock_logger)
+        ! run once without and once with a context on the nested stability check
+        ! settings, the callback functions of the internal stability check have to
+        ! receive the solver's context in the former and the nested one in the latter
+        do icase = 1, size(case_names)
+            ! associate optional settings with values
+            settings = ref_settings
+            settings%precond = c_funloc(mock_precond)
+            settings%project = c_funloc(mock_project)
+            settings%conv_check = c_funloc(mock_conv_check)
+            settings%logger = c_funloc(mock_logger)
 
-        ! set host context
-        call arm_host_context_c(settings%context)
+            ! set host contexts
+            call arm_host_context_c(settings%context)
+            if (icase == 2) &
+                settings%stability_settings%context = c_loc(stability_host_context)
 
-        ! initialize logger logical
-        test_logger = .true.
+            ! initialize logger logical
+            test_logger = .false.
 
-        ! call solver
-        error = solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param_c, &
-                                 settings)
+            ! call solver
+            error = solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, &
+                                     n_param_c, settings)
 
-        ! check if logging subroutine was correctly called
-        if (.not. test_logger) then
-            test_solver_c_wrapper = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Called logging "// &
-                "subroutine wrong."
-        end if
+            ! check if logging subroutine was correctly called
+            if (.not. test_logger) then
+                test_solver_c_wrapper = .false.
+                write (stderr, *) "test_solver_c_wrapper failed: Called logging "// &
+                    "subroutine wrong "//trim(case_names(icase))//"."
+            end if
 
-        ! check if output variables are as expected
-        if (error /= 0) then
-            test_solver_c_wrapper = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Returned error "// &
-                "boolean wrong."
-        end if
+            ! check if output variables are as expected
+            if (error /= 0) then
+                test_solver_c_wrapper = .false.
+                write (stderr, *) "test_solver_c_wrapper failed: Returned error "// &
+                    "boolean wrong "//trim(case_names(icase))//"."
+            end if
 
-        ! check that the host context reached the callback functions unchanged
-        test_solver_c_wrapper = test_solver_c_wrapper .and. &
-                                host_context_reached("solver_c_wrapper")
+            ! check if output fields are written back with the values set by the solver
+            if (settings%max_precision_reached) then
+                test_solver_c_wrapper = .false.
+                write (stderr, *) "test_solver_c_wrapper failed: Returned maximum "// &
+                    "precision reached flag wrong "//trim(case_names(icase))//"."
+            end if
+            if (settings%n_update_orbs /= int(mock_n_update_orbs, kind=c_ip)) then
+                test_solver_c_wrapper = .false.
+                write (stderr, *) "test_solver_c_wrapper failed: Returned number "// &
+                    "of orbital updates wrong "//trim(case_names(icase))//"."
+            end if
+            if (settings%n_hess_x /= int(mock_n_hess_x, kind=c_ip)) then
+                test_solver_c_wrapper = .false.
+                write (stderr, *) "test_solver_c_wrapper failed: Returned number "// &
+                    "of Hessian linear transformations wrong "// &
+                    trim(case_names(icase))//"."
+            end if
+            if (settings%stability_settings%n_hess_x /= &
+                int(mock_stability_n_hess_x, kind=c_ip)) then
+                test_solver_c_wrapper = .false.
+                write (stderr, *) "test_solver_c_wrapper failed: Returned number "// &
+                    "of Hessian linear transformations of internal stability check "// &
+                    "wrong "//trim(case_names(icase))//"."
+            end if
 
-        ! check if test has passed
-        test_solver_c_wrapper = test_solver_c_wrapper .and. test_passed
+            ! check that the callback functions of the internal stability check
+            ! received the context of the nested settings when one was set
+            if (icase == 2 .and. stability_host_context%n_calls == 0) then
+                test_solver_c_wrapper = .false.
+                write (stderr, *) "test_solver_c_wrapper failed: Callback "// &
+                    "functions of internal stability check did not receive context "// &
+                    "of nested settings."
+            end if
+
+            ! check that the host context reached the callback functions unchanged
+            test_solver_c_wrapper = test_solver_c_wrapper .and. &
+                                    host_context_reached("solver_c_wrapper")
+
+            ! check if test has passed
+            test_solver_c_wrapper = test_solver_c_wrapper .and. test_passed
+        end do
 
         ! restore the procedure pointer so later tests do not inherit the mock
         solver => standard_solver

@@ -14,6 +14,11 @@ module opentrustregion_mock
 
     logical :: test_passed
 
+    ! output values the mock solver writes into the settings object, so that a test can 
+    ! check the C wrapper hands them back
+    integer(ip), parameter :: mock_n_update_orbs = 3, mock_n_hess_x = 5, &
+                              mock_stability_n_hess_x = 2
+
     ! create function pointers to ensure that routines comply with interface
     procedure(solver), pointer :: mock_solver_ptr => mock_solver
     procedure(stability_check), pointer :: mock_stability_check_ptr => &
@@ -119,6 +124,12 @@ contains
             write (stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
                 "settings associated with wrong values."
         end if
+
+        ! set output fields
+        settings%max_precision_reached = .false.
+        settings%n_update_orbs = mock_n_update_orbs
+        settings%n_hess_x = mock_n_hess_x
+        settings%stability_settings%n_hess_x = mock_stability_n_hess_x
 
     end subroutine mock_solver
 

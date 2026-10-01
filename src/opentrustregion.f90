@@ -88,7 +88,7 @@ module opentrustregion
             real(rp), intent(in), target :: kappa(:)
             real(rp), intent(out) :: func
             real(rp), intent(out), target :: grad(:), h_diag(:)
-            procedure(hess_x_type), intent(out), pointer :: hess_x_funptr
+            procedure(hess_x_type), intent(inout), pointer :: hess_x_funptr
             integer(ip), intent(out) :: error
             class(*), intent(in), pointer :: context
         end subroutine update_orbs_type
@@ -236,6 +236,7 @@ contains
         settings%max_precision_reached = .false.
         settings%n_update_orbs = 0
         settings%n_hess_x = 0
+        settings%stability_settings%n_hess_x = 0
 
         ! initialize settings
         if (.not. settings%initialized) then
@@ -286,6 +287,10 @@ contains
                 hess_x_funptr => null()
                 call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, &
                                  settings%context)
+
+                ! increment number of orbital updates
+                settings%n_update_orbs = settings%n_update_orbs + 1
+
                 if (error == 0 .and. .not. associated(hess_x_funptr)) then
                     call settings%log("Orbital update did not provide a Hessian "// &
                                       "linear transformation.", verbosity_error, .true.)
@@ -418,12 +423,14 @@ contains
                         max_precision_reached = .false.
                         cycle
                     else
-                        settings%max_precision_reached = max_precision_reached
+                        settings%max_precision_reached = max_precision_reached .and. &
+                                                         .not. conv_check_passed
                         macro_converged = .true.
                         exit
                     end if
                 else
-                    settings%max_precision_reached = max_precision_reached
+                    settings%max_precision_reached = max_precision_reached .and. &
+                                                     .not. conv_check_passed
                     macro_converged = .true.
                     exit
                 end if
@@ -472,9 +479,6 @@ contains
 
         ! deallocate arrays
         deallocate(kappa, grad, h_diag, solution, precond_kappa)
-
-        ! increment total number of orbital updates
-        settings%n_update_orbs = settings%n_update_orbs + imacro
 
         ! stop if no convergence
         if (.not. macro_converged) then
@@ -568,12 +572,10 @@ contains
         do i = 1, n_trial
             call hess_x_funptr(red_space_basis(:, i), h_basis(:, i), error, &
                                settings%context)
+            settings%n_hess_x = settings%n_hess_x + 1
             call add_error_origin(error, error_hess_x, settings)
             if (error /= 0) return
         end do
-
-        ! increment number of Hessian linear transformations
-        settings%n_hess_x = settings%n_hess_x + n_trial
 
         ! construct augmented Hessian in reduced space
         allocate(red_space_hess(n_trial, n_trial))
@@ -641,11 +643,9 @@ contains
 
                 ! add linear transformation of new basis vector
                 call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
+                settings%n_hess_x = settings%n_hess_x + 1
                 call add_error_origin(error, error_hess_x, settings)
                 if (error /= 0) return
-
-                ! increment Hessian linear transformations
-                settings%n_hess_x = settings%n_hess_x + 1
 
             else
                 ! solve Jacobi-Davidson correction equations
@@ -675,6 +675,7 @@ contains
                         - ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), 1_ip)) > &
                     hess_symm_thres) then
                     call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
+                    settings%n_hess_x = settings%n_hess_x + 1
                     call add_error_origin(error, error_hess_x, settings)
                     if (error /= 0) return
                 end if
@@ -1669,7 +1670,7 @@ contains
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         real(rp), intent(in) :: vector(:), solution(:), eigval
         real(rp), intent(out) :: corr_vector(:), hess_vector(:)
-        class(settings_type), intent(in) :: settings
+        class(settings_type), intent(inout) :: settings
         integer(ip), intent(out) :: error
 
         ! initialize error flag
@@ -1680,6 +1681,7 @@ contains
 
         ! get Hessian linear transformation of projected vector
         call hess_x_funptr(corr_vector, hess_vector, error, settings%context)
+        settings%n_hess_x = settings%n_hess_x + 1
         call add_error_origin(error, error_hess_x, settings)
         if (error /= 0) return
 
@@ -1733,7 +1735,6 @@ contains
             call jacobi_davidson_correction(hess_x_funptr, vec, solution, eigval, &
                                             matvec, hvec, settings, error)
             if (error /= 0) return
-            settings%n_hess_x = settings%n_hess_x + 1
         else
             vec = 0.0_rp
             hvec = 0.0_rp
@@ -1789,7 +1790,6 @@ contains
             call jacobi_davidson_correction(hess_x_funptr, v, solution, eigval, y, hv, &
                                             settings, error)
             if (error /= 0) return
-            settings%n_hess_x = settings%n_hess_x + 1
 
             ! get new trial vector
             if (iteration >= 2) y = y - (beta / old_beta) * r1
@@ -2091,14 +2091,12 @@ contains
         ! number of trial vectors
         n_trial = size(red_space_basis, 2)
 
-        ! increment number of Hessian linear transformations
-        settings%n_hess_x = settings%n_hess_x + n_trial
-
         ! calculate linear transformations of basis vectors
         allocate(h_basis(n_param, n_trial))
         do i = 1, n_trial
             call hess_x_funptr(red_space_basis(:, i), h_basis(:, i), error, &
                                settings%context)
+            settings%n_hess_x = settings%n_hess_x + 1
             call add_error_origin(error, error_hess_x, settings)
             if (error /= 0) return
         end do
@@ -2232,11 +2230,9 @@ contains
 
                     ! add linear transformation of new basis vector
                     call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
+                    settings%n_hess_x = settings%n_hess_x + 1
                     call add_error_origin(error, error_hess_x, settings)
                     if (error /= 0) return
-
-                    ! increment Hessian linear transformations
-                    settings%n_hess_x = settings%n_hess_x + 1
 
                 else
                     ! solve Jacobi-Davidson correction equations
@@ -2266,6 +2262,7 @@ contains
                         > hess_symm_thres) then
                         call hess_x_funptr(basis_vec, h_basis_vec, error, &
                                            settings%context)
+                        settings%n_hess_x = settings%n_hess_x + 1
                         call add_error_origin(error, error_hess_x, settings)
                         if (error /= 0) return
                     end if
@@ -2397,11 +2394,9 @@ contains
         do imicro = 1, settings%n_micro - 1
             ! get Hessian linear transformation of direction
             call hess_x_funptr(direction, hess_direction, error, settings%context)
+            settings%n_hess_x = settings%n_hess_x + 1
             call add_error_origin(error, error_hess_x, settings)
             if (error /= 0) return
-
-            ! increment Hessian linear transformations
-            settings%n_hess_x = settings%n_hess_x + 1
 
             ! calculate curvature
             curvature = ddot(n_param, direction, 1_ip, hess_direction, 1_ip)

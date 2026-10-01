@@ -62,7 +62,8 @@ module test_reference
     type :: host_context_type
         integer(ip) :: n_calls = 0
     end type
-    type(host_context_type), target :: host_context
+    type(host_context_type), target :: host_context, stability_host_context
+
     logical :: host_context_armed = .false., host_context_wrong = .false., &
                host_context_missing = .false.
 
@@ -138,7 +139,8 @@ contains
             return
         end if
 
-        if (c_associated(context_c, c_loc(host_context))) then
+        if (c_associated(context_c, c_loc(host_context)) .or. &
+            c_associated(context_c, c_loc(stability_host_context))) then
             call c_f_pointer(context_c, context)
             context%n_calls = context%n_calls + 1
         else
@@ -153,6 +155,7 @@ contains
         ! host context for a test
         !
         host_context%n_calls = 0
+        stability_host_context%n_calls = 0
         host_context_armed = .true.
         host_context_wrong = .false.
         host_context_missing = .false.

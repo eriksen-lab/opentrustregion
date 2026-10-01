@@ -38,7 +38,7 @@ module c_interface
             real(c_rp), intent(in) :: kappa_c(*)
             real(c_rp), intent(out) :: func_c
             real(c_rp), intent(out) :: grad_c(*), h_diag_c(*)
-            type(c_funptr), intent(out) :: hess_x_c_funptr
+            type(c_funptr), intent(inout) :: hess_x_c_funptr
             type(c_ptr), intent(in), value :: context_c
             integer(c_ip) :: error
         end function update_orbs_c_type
@@ -227,6 +227,8 @@ contains
                                                    kind=c_bool)
         settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
         settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
+        settings_c%stability_settings%n_hess_x = &
+            int(settings%stability_settings%n_hess_x, kind=c_ip)
 
         ! convert return arguments to C kind
         error_c = int(error, kind=c_ip)
@@ -342,7 +344,7 @@ contains
         real(rp), intent(in), target :: kappa(:)
         real(rp), intent(out) :: func
         real(rp), intent(out), target :: grad(:), h_diag(:)
-        procedure(hess_x_type), intent(out), pointer :: hess_x
+        procedure(hess_x_type), intent(inout), pointer :: hess_x
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 

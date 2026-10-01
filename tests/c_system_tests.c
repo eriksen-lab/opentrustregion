@@ -495,6 +495,11 @@ bool test_solver_c(void) {
                     "transformation counters were not populated.\n");
     ok = false;
   }
+  if (settings.stability_settings.n_hess_x <= 0) {
+    fprintf(stderr, "test_solver_c failed: Hessian linear transformation counter of "
+                    "the internal stability check was not populated.\n");
+    ok = false;
+  }
   if (!stability_project_called) {
     fprintf(stderr, "test_solver_c failed: The internal stability check did not use "
                     "the projection set on the nested stability settings.\n");
