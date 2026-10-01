@@ -380,3 +380,8 @@ Future versions may define more specific codes for other actionable failure mode
 | `0101`     | General error in `solver` |
 | `1201`     | Error in `update_orbs`    |
 
+## AI Usage Disclosure
+
+Recent development of OpenTrustRegion has been assisted by AI coding agents. They have been used for code generation, refactoring, writing tests and drafting documentation.
+
+All AI-assisted contributions are reviewed, edited where necessary and validated by the developers before they are merged. The developers make all design decisions, in particular those concerning the underlying methodology, and hold AI-assisted code to the same standards as any other code in the library.
