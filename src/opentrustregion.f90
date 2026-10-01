@@ -246,6 +246,14 @@ contains
             call settings%log("Settings were not initialized. All settings are set "// &
                               "to default values", verbosity_warning)
         end if
+        if (.not. settings%stability_settings%initialized) then
+            call settings%stability_settings%init(error)
+            call add_error_origin(error, error_solver, settings)
+            if (error /= 0) return
+            call settings%log("Stability check settings were not initialized. All "// &
+                              "stability check settings are set to default values", &
+                              verbosity_warning)
+        end if
 
         ! initialize maximum precision convergence
         max_precision_reached = .false.

@@ -1352,7 +1352,8 @@ contains
 
         type(stability_settings_type), intent(in) :: lhs, rhs
         
-        equal_stability = abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
+        equal_stability = (lhs%initialized .eqv. rhs%initialized) .and. &
+            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
             lhs%n_iter == rhs%n_iter .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &

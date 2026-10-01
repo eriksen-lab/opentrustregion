@@ -688,6 +688,28 @@ contains
             test_solver = .false.
         end if
 
+        ! start at saddle point again with nested stability check settings that were
+        ! not initialized, the solver initializes them before handing down its context,
+        ! so the internal stability check still calls the Hessian linear transformation
+        ! with the solver's context
+        curr_vars = saddle_point
+        call arm_host_context(settings)
+        settings%stability_settings%initialized = .false.
+        settings%stability_settings%context => null()
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= 0) then
+            write (stderr, *) "test_solver failed: Produced error when nested "// &
+                "stability check settings were not initialized."
+            test_solver = .false.
+        end if
+        test_solver = test_solver .and. &
+                      logical(host_context_reached("solver"), kind=c_bool)
+        if (.not. settings%stability_settings%initialized) then
+            write (stderr, *) "test_solver failed: Nested stability check settings "// &
+                "were left uninitialized."
+            test_solver = .false.
+        end if
+
         ! start at saddle point but allow only a single macro iteration, the internal
         ! stability check finds the saddle point unstable and the solver stops before
         ! solving a trust region subproblem, so all Hessian linear transformations are

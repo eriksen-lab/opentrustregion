@@ -423,6 +423,80 @@ contains
 
     end function test_stability_check_c_wrapper
 
+    logical(c_bool) function test_store_optional_c_callbacks() bind(C)
+        !
+        ! this function tests the subroutine that stores the optional C callback
+        ! functions and the host context of C settings in a callback bundle
+        !
+        use c_interface, only: c_callbacks_type, store_optional_c_callbacks
+        use test_reference, only: host_context
+
+        type(c_callbacks_type) :: callbacks
+
+        ! assume test passes
+        test_store_optional_c_callbacks = .true.
+
+        ! store the callback functions and host context of initialized settings
+        call store_optional_c_callbacks(callbacks, .true._c_bool, &
+                                        c_funloc(mock_precond), &
+                                        c_funloc(mock_project), &
+                                        c_funloc(mock_conv_check), &
+                                        c_funloc(mock_logger), c_loc(host_context))
+        if (.not. (associated(callbacks%precond, mock_precond) .and. &
+                   associated(callbacks%project, mock_project) .and. &
+                   associated(callbacks%conv_check, mock_conv_check) .and. &
+                   associated(callbacks%logger, mock_logger))) then
+            test_store_optional_c_callbacks = .false.
+            write (stderr, *) "test_store_optional_c_callbacks failed: Callback "// &
+                "functions of initialized settings not stored."
+        end if
+        if (.not. c_associated(callbacks%host_context, c_loc(host_context))) then
+            test_store_optional_c_callbacks = .false.
+            write (stderr, *) "test_store_optional_c_callbacks failed: Host "// &
+                "context of initialized settings not stored."
+        end if
+
+        ! store initialized settings that provide nothing, the callback functions and
+        ! host context already in the bundle have to be kept
+        call store_optional_c_callbacks(callbacks, .true._c_bool, c_null_funptr, &
+                                        c_null_funptr, c_null_funptr, c_null_funptr, &
+                                        c_null_ptr)
+        if (.not. (associated(callbacks%precond, mock_precond) .and. &
+                   associated(callbacks%project, mock_project) .and. &
+                   associated(callbacks%conv_check, mock_conv_check) .and. &
+                   associated(callbacks%logger, mock_logger))) then
+            test_store_optional_c_callbacks = .false.
+            write (stderr, *) "test_store_optional_c_callbacks failed: Callback "// &
+                "functions in the bundle replaced by ones that were not provided."
+        end if
+        if (.not. c_associated(callbacks%host_context, c_loc(host_context))) then
+            test_store_optional_c_callbacks = .false.
+            write (stderr, *) "test_store_optional_c_callbacks failed: Host "// &
+                "context in the bundle replaced by one that was not provided."
+        end if
+
+        ! store the callback functions and host context of settings that were not
+        ! initialized in an empty bundle, nothing may be stored
+        callbacks = c_callbacks_type()
+        call store_optional_c_callbacks(callbacks, .false._c_bool, &
+                                        c_funloc(mock_precond), &
+                                        c_funloc(mock_project), &
+                                        c_funloc(mock_conv_check), &
+                                        c_funloc(mock_logger), c_loc(host_context))
+        if (associated(callbacks%precond) .or. associated(callbacks%project) .or. &
+            associated(callbacks%conv_check) .or. associated(callbacks%logger)) then
+            test_store_optional_c_callbacks = .false.
+            write (stderr, *) "test_store_optional_c_callbacks failed: Callback "// &
+                "functions of settings that were not initialized stored."
+        end if
+        if (c_associated(callbacks%host_context)) then
+            test_store_optional_c_callbacks = .false.
+            write (stderr, *) "test_store_optional_c_callbacks failed: Host "// &
+                "context of settings that were not initialized stored."
+        end if
+
+    end function test_store_optional_c_callbacks
+
     logical(c_bool) function test_update_orbs_f_wrapper() bind(C)
         !
         ! this function tests the Fortran wrapper for the orbital update
@@ -808,7 +882,7 @@ contains
         ! Fortran correctly perform this conversion
         !
         use c_interface, only: solver_settings_type_c, c_callbacks_type, assignment(=)
-        use opentrustregion, only: solver_settings_type
+        use opentrustregion, only: solver_settings_type, default_solver_settings
         use test_reference, only: assignment(=), ref_settings, test_precond_funptr, &
                                   test_project_funptr, test_conv_check_funptr, &
                                   operator(/=)
@@ -898,6 +972,26 @@ contains
             test_assign_solver_f_c = .false.
         end if
 
+        ! convert C settings that were not initialized, the custom values they still
+        ! carry have to be replaced by the default settings
+        settings_c%initialized = .false.
+        settings = settings_c
+
+        ! check that no callback functions were converted
+        if (associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%conv_check) .or. associated(settings%logger)) then
+            write (stderr, *) "test_assign_solver_f_c failed: Function pointers "// &
+                "converted for settings that were not initialized."
+            test_assign_solver_f_c = .false.
+        end if
+
+        ! check against default values
+        if (settings /= default_solver_settings) then
+            write (stderr, *) "test_assign_solver_f_c failed: Settings that were "// &
+                "not initialized not converted to default values."
+            test_assign_solver_f_c = .false.
+        end if
+
     end function test_assign_solver_f_c
 
     logical(c_bool) function test_assign_stability_f_c() bind(C)
@@ -907,7 +1001,7 @@ contains
         !
         use c_interface, only: stability_settings_type_c, c_callbacks_type, &
                                assignment(=)
-        use opentrustregion, only: stability_settings_type
+        use opentrustregion, only: stability_settings_type, default_stability_settings
         use test_reference, only: assignment(=), ref_settings, test_precond_funptr, &
                                   test_project_funptr, operator(/=)
 
@@ -982,6 +1076,26 @@ contains
             test_assign_stability_f_c = .false.
             write (stderr, *) "test_assign_stability_f_c failed: Settings not "// &
                 "marked as initialized."
+        end if
+
+        ! convert C settings that were not initialized, the custom values they still
+        ! carry have to be replaced by the default settings
+        settings_c%initialized = .false.
+        settings = settings_c
+
+        ! check that no callback functions were converted
+        if (associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%logger)) then
+            test_assign_stability_f_c = .false.
+            write (stderr, *) "test_assign_stability_f_c failed: Function "// &
+                "pointers converted for settings that were not initialized."
+        end if
+
+        ! check against default values
+        if (settings /= default_stability_settings) then
+            test_assign_stability_f_c = .false.
+            write (stderr, *) "test_assign_stability_f_c failed: Settings that "// &
+                "were not initialized not converted to default values."
         end if
 
     end function test_assign_stability_f_c

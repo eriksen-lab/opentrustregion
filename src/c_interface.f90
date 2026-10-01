@@ -189,21 +189,21 @@ contains
         ! bundle the C function pointers
         call c_f_procpointer(cptr=update_orbs_c_funptr, fptr=callbacks%update_orbs)
         call c_f_procpointer(cptr=obj_func_c_funptr, fptr=callbacks%obj_func)
-        call store_optional_c_callbacks(callbacks, settings_c%precond, &
-                                        settings_c%project, settings_c%conv_check, &
-                                        settings_c%logger)
-        callbacks%host_context = settings_c%context
+        call store_optional_c_callbacks(callbacks, settings_c%initialized, &
+                                        settings_c%precond, settings_c%project, &
+                                        settings_c%conv_check, settings_c%logger, &
+                                        settings_c%context)
 
         ! the solver lets the internal stability check inherit its optional callback
         ! functions when the nested settings do not provide their own, so the nested
         ! bundle starts as a copy of the solver's and only the provided ones override
         stability_callbacks = callbacks
         call store_optional_c_callbacks( &
-            stability_callbacks, settings_c%stability_settings%precond, &
+            stability_callbacks, settings_c%initialized .and. &
+            settings_c%stability_settings%initialized, &
+            settings_c%stability_settings%precond, &
             settings_c%stability_settings%project, c_null_funptr, &
-            settings_c%stability_settings%logger)
-        if (c_associated(settings_c%stability_settings%context)) &
-            stability_callbacks%host_context = settings_c%stability_settings%context
+            settings_c%stability_settings%logger, settings_c%stability_settings%context)
         callbacks%stability => stability_callbacks
 
         ! associate procedure pointer to wrapper function
@@ -261,10 +261,10 @@ contains
 
         ! bundle the C function pointers
         call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
-        call store_optional_c_callbacks(callbacks, settings_c%precond, &
-                                        settings_c%project, c_null_funptr, &
-                                        settings_c%logger)
-        callbacks%host_context = settings_c%context
+        call store_optional_c_callbacks(callbacks, settings_c%initialized, &
+                                        settings_c%precond, settings_c%project, &
+                                        c_null_funptr, settings_c%logger, &
+                                        settings_c%context)
 
         ! associate procedure pointer to wrapper function
         hess_x => hess_x_f_wrapper
@@ -312,16 +312,26 @@ contains
 
     end function stability_check_c_wrapper
 
-    subroutine store_optional_c_callbacks(callbacks, precond_c_funptr, &
+    subroutine store_optional_c_callbacks(callbacks, initialized, precond_c_funptr, &
                                           project_c_funptr, conv_check_c_funptr, &
-                                          logger_c_funptr)
+                                          logger_c_funptr, context_c)
         !
-        ! this subroutine stores the optional C callback functions in a callback
-        ! bundle, skipping the ones that were not provided
+        ! this subroutine stores the optional C callback functions and the host context
+        ! of C settings in a callback bundle, skipping the ones that were not provided
+        ! and all of them if the settings were not initialized
         !
         type(c_callbacks_type), intent(inout) :: callbacks
+        logical(c_bool), intent(in) :: initialized
         type(c_funptr), intent(in) :: precond_c_funptr, project_c_funptr, &
                                       conv_check_c_funptr, logger_c_funptr
+        type(c_ptr), intent(in) :: context_c
+
+        ! settings that were not initialized are replaced by the default settings and
+        ! therefore provide neither optional callback functions nor a host context
+        if (.not. initialized) return
+
+        ! store the host context if one was provided
+        if (c_associated(context_c)) callbacks%host_context = context_c
 
         ! associate the C pointers that were provided to Fortran procedure pointers
         if (c_associated(precond_c_funptr)) &
@@ -698,6 +708,11 @@ contains
 
             ! set settings to initialized
             settings%initialized = .true.
+        else
+            ! settings that were not initialized are set to the default values here
+            ! rather than by the solver, whose initialization would also discard the
+            ! callback bundles the C wrapper hands over as context
+            settings = default_solver_settings
         end if
 
     end subroutine assign_solver_f_c
@@ -747,6 +762,11 @@ contains
 
             ! set settings to initialized
             settings%initialized = .true.
+        else
+            ! settings that were not initialized are set to the default values here
+            ! rather than by the stability check, whose initialization would also
+            ! discard the callback bundle the C wrapper hands over as context
+            settings = default_stability_settings
         end if
 
     end subroutine assign_stability_f_c
