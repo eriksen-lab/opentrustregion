@@ -42,18 +42,17 @@ contains
 
         ! test passed orbital update subroutine
         test_passed = test_passed .and. &
-            test_update_orbs_funptr(update_orbs_funptr, "solver_c_wrapper", &
-                                    " by given orbital updating subroutine")
+                      test_update_orbs_funptr(update_orbs_funptr, "solver_c_wrapper", &
+                                              " by given orbital updating subroutine")
 
         ! test passed objective function
-        test_passed = test_passed .and. &
-            test_obj_func_funptr(obj_func_funptr, "solver_c_wrapper", &
-                                 " by given objective function")
+        test_passed = test_passed .and. test_obj_func_funptr( &
+            obj_func_funptr, "solver_c_wrapper", " by given objective function")
 
         ! check number of parameters
         if (n_param /= 3) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed number of "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed number of "// &
                 "parameters wrong."
         end if
 
@@ -63,40 +62,39 @@ contains
         ! check if optional preconditioner subroutine is correctly passed
         if (.not. associated(settings%precond)) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed preconditioner "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed preconditioner "// &
                 "function not associated with value."
         else
             test_passed = test_passed .and. &
-            test_precond_funptr(settings%precond, "solver_c_wrapper", &
-                                " by given preconditioner subroutine")
+                          test_precond_funptr(settings%precond, "solver_c_wrapper", &
+                                              " by given preconditioner subroutine")
         end if
 
         ! check if optional projection subroutine is correctly passed
         if (.not. associated(settings%project)) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed projection "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed projection "// &
                 "function not associated with value."
         else
-            test_passed = test_passed .and. &
-            test_project_funptr(settings%project, "solver_c_wrapper", &
-                                " by given projection subroutine")
+            test_passed = test_passed .and. test_project_funptr( &
+                settings%project, "solver_c_wrapper", " by given projection subroutine")
         end if
 
         ! check if optional convergence check function is correctly passed
         if (.not. associated(settings%conv_check)) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed convergence "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed convergence "// &
                 "check function not associated with value."
         else
-            test_passed = test_passed .and. &
-            test_conv_check_funptr(settings%conv_check, "solver_c_wrapper", &
-                                   " by given convergence check function")
+            test_passed = test_passed .and. test_conv_check_funptr( &
+                settings%conv_check, "solver_c_wrapper", &
+                " by given convergence check function")
         end if
 
         ! check if optional logging function is correctly passed
         if (.not. associated(settings%logger)) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed logging "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed logging "// &
                 "function not associated with value."
         else
             call settings%logger("test")
@@ -105,7 +103,7 @@ contains
         ! check if optional settings are correctly passed
         if (settings /= ref_settings) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
                 "settings associated with wrong values."
         end if
 
@@ -114,7 +112,7 @@ contains
     subroutine mock_stability_check(h_diag, hess_x_funptr, stable, error, settings, &
                                     kappa)
         !
-        ! this subroutine is a mock routine for the stability check to test the C 
+        ! this subroutine is a mock routine for the stability check to test the C
         ! interface
         !
         use opentrustregion, only: stability_settings_type
@@ -134,14 +132,14 @@ contains
         ! check Hessian diagonal
         if (any(abs(h_diag - 3.0_rp) > tol)) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal wrong."
         end if
 
         ! test passed Hessian linear transformation subroutine
-        test_passed = test_passed .and. &
-            test_hess_x_funptr(hess_x_funptr, "stability_check_c_wrapper", &
-                               " by given Hessian linear transformation subroutine")
+        test_passed = test_passed .and. test_hess_x_funptr( &
+            hess_x_funptr, "stability_check_c_wrapper", &
+            " by given Hessian linear transformation subroutine")
 
         ! set output quantities
         stable = .false.
@@ -151,29 +149,29 @@ contains
         ! check if optional preconditioner subroutine is correctly passed
         if (.not. associated(settings%precond)) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "preconditioner function not associated with value."
         else
-            test_passed = test_passed .and. &
-            test_precond_funptr(settings%precond, "stability_check_c_wrapper", &
-                                " by given preconditioner subroutine")
+            test_passed = test_passed .and. test_precond_funptr( &
+                settings%precond, "stability_check_c_wrapper", &
+                " by given preconditioner subroutine")
         end if
 
         ! check if optional projection subroutine is correctly passed
         if (.not. associated(settings%project)) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "projection function not associated with value."
         else
-            test_passed = test_passed .and. &
-            test_project_funptr(settings%project, "stability_check_c_wrapper", &
-                                " by given projection subroutine")
+            test_passed = test_passed .and. test_project_funptr( &
+                settings%project, "stability_check_c_wrapper", &
+                " by given projection subroutine")
         end if
 
         ! check if optional logging function is correctly passed
         if (.not. associated(settings%logger)) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "logging function not associated with value."
         else
             call settings%logger("test")
@@ -182,7 +180,7 @@ contains
         ! check if optional settings are correctly passed
         if (settings /= ref_settings) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "optional settings associated with wrong values."
         end if
 

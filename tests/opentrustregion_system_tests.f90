@@ -14,7 +14,7 @@ module opentrustregion_system_tests
     integer(ip) :: n_ao, n_mo, n_param
     real(rp), allocatable :: r_ao_ints(:, :, :), r2_ao_ints(:, :), mo_coeff(:, :), &
                              r_mo_ints(:, :, :), rii_rij_rjj_rji(:, :)
-    character(:), allocatable :: data_dir
+    character(len=:), allocatable :: data_dir
 
 contains
 
@@ -24,8 +24,8 @@ contains
         !
         use, intrinsic :: iso_c_binding, only: c_ptr, c_char, c_f_pointer, c_null_char
 
-        type(c_ptr), intent(in), value :: path 
-        character(c_char), pointer :: c_path(:)
+        type(c_ptr), intent(in), value :: path
+        character(kind=c_char), pointer :: c_path(:)
         integer(ip) :: len, i
 
         ! conda paths need ample space
@@ -35,7 +35,7 @@ contains
             if (c_path(i) == c_null_char) exit
             len = len + 1
         end do
-        allocate(character(len) :: data_dir)
+        allocate(character(len=len) :: data_dir)
         data_dir = transfer(c_path(1:len), data_dir)
 
     end subroutine set_test_data_path
@@ -45,7 +45,7 @@ contains
         ! this function tests the Foster-Boys localization on water
         !
         use opentrustregion, only: update_orbs_type, obj_func_type, &
-                                   solver_settings_type, solver,  hess_x_type, &
+                                   solver_settings_type, solver, hess_x_type, &
                                    stability_settings_type, stability_check
 
         procedure(update_orbs_type), pointer :: update_orbs_funptr
@@ -77,21 +77,21 @@ contains
             "through set_test_data_path subroutine before calling system test."
 
         ! read raw binary data
-        open (unit=10, file=data_dir//"/h2o_atomic_mo_coeff.bin", form="unformatted", &
-              access="stream", status="old", action="read", iostat=ios)
+        open(unit=10, file=data_dir//"/h2o_atomic_mo_coeff.bin", form="unformatted", &
+             access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read (10) mo_coeff
-        close (10)
-        open (unit=10, file=data_dir//"/h2o_r_ints.bin", form="unformatted", &
-              access="stream", status="old", action="read", iostat=ios)
+        read(10) mo_coeff
+        close(10)
+        open(unit=10, file=data_dir//"/h2o_r_ints.bin", form="unformatted", &
+             access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read (10) r_ao_ints
-        close (10)
-        open (unit=10, file=data_dir//"/h2o_r2_ints.bin", form="unformatted", &
-              access="stream", status="old", action="read", iostat=ios)
+        read(10) r_ao_ints
+        close(10)
+        open(unit=10, file=data_dir//"/h2o_r2_ints.bin", form="unformatted", &
+             access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read (10) r2_ao_ints
-        close (10)
+        read(10) r2_ao_ints
+        close(10)
 
         ! set function pointers
         update_orbs_funptr => update_orbs
@@ -106,7 +106,7 @@ contains
 
         ! check if error has occured
         if (error /= 0) then
-            write (stderr, *) "test_h2o_atomic_fb failed: Solver subroutine "// &
+            write(stderr, *) "test_h2o_atomic_fb failed: Solver subroutine "// &
                 "produced error."
             test_h2o_atomic_fb = .false.
         end if
@@ -118,8 +118,8 @@ contains
 
         ! check if error has occured
         if (error /= 0) then
-            write (stderr, *) "test_h2o_atomic_fb failed: Orbital updating "// &
-            "subroutine produced error."
+            write(stderr, *) "test_h2o_atomic_fb failed: Orbital updating "// &
+                "subroutine produced error."
             test_h2o_atomic_fb = .false.
         end if
 
@@ -131,14 +131,14 @@ contains
 
         ! check if error has occured
         if (error /= 0) then
-            write (stderr, *) "test_h2o_atomic_fb failed: Stability check "// &
-            "subroutine produced error."
+            write(stderr, *) "test_h2o_atomic_fb failed: Stability check "// &
+                "subroutine produced error."
             test_h2o_atomic_fb = .false.
         end if
 
         ! test if solution is stable
         if (.not. stable) then
-            write (stderr, *) "test_h2o_atomic_fb failed: Solver did not converge "// &
+            write(stderr, *) "test_h2o_atomic_fb failed: Solver did not converge "// &
                 "to minimum."
             test_h2o_atomic_fb = .false.
         end if
@@ -174,7 +174,7 @@ contains
         ! set size parameters for system
         n_ao = 13
         n_mo = 5
-        n_param = n_mo*(n_mo - 1)/2
+        n_param = n_mo * (n_mo - 1) / 2
 
         ! allocate arrays
         allocate(mo_coeff(n_ao, n_mo), r_ao_ints(3, n_ao, n_ao), &
@@ -187,21 +187,21 @@ contains
             "through set_test_data_path subroutine before calling system test."
 
         ! read raw binary data
-        open (unit=10, file=data_dir//"/h2o_saddle_mo_coeff.bin", form="unformatted", &
-              access="stream", status="old", action="read", iostat=ios)
+        open(unit=10, file=data_dir//"/h2o_saddle_mo_coeff.bin", form="unformatted", &
+             access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read (10) mo_coeff
-        close (10)
-        open (unit=10, file=data_dir//"/h2o_r_ints.bin", form="unformatted", &
-              access="stream", status="old", action="read", iostat=ios)
+        read(10) mo_coeff
+        close(10)
+        open(unit=10, file=data_dir//"/h2o_r_ints.bin", form="unformatted", &
+             access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read (10) r_ao_ints
-        close (10)
-        open (unit=10, file=data_dir//"/h2o_r2_ints.bin", form="unformatted", &
-              access="stream", status="old", action="read", iostat=ios)
+        read(10) r_ao_ints
+        close(10)
+        open(unit=10, file=data_dir//"/h2o_r2_ints.bin", form="unformatted", &
+             access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read (10) r2_ao_ints
-        close (10)
+        read(10) r2_ao_ints
+        close(10)
 
         ! set function pointers
         update_orbs_funptr => update_orbs
@@ -216,7 +216,7 @@ contains
 
         ! check if error has occured
         if (error /= 0) then
-            write (stderr, *) "test_h2o_saddle_fb failed: Solver subroutine "// &
+            write(stderr, *) "test_h2o_saddle_fb failed: Solver subroutine "// &
                 "produced error."
             test_h2o_saddle_fb = .false.
         end if
@@ -228,8 +228,8 @@ contains
 
         ! check if error has occured
         if (error /= 0) then
-            write (stderr, *) "test_h2o_saddle_fb failed: Orbital update "// &
-            "subroutine produced error."
+            write(stderr, *) "test_h2o_saddle_fb failed: Orbital update subroutine "// &
+                "produced error."
             test_h2o_saddle_fb = .false.
         end if
 
@@ -241,14 +241,14 @@ contains
 
         ! check if error has occured
         if (error /= 0) then
-            write (stderr, *) "test_h2o_saddle_fb failed: Stability check "// &
-            "subroutine produced error."
+            write(stderr, *) "test_h2o_saddle_fb failed: Stability check "// &
+                "subroutine produced error."
             test_h2o_saddle_fb = .false.
         end if
 
         ! test if solution is stable
         if (.not. stable) then
-            write (stderr, *) "test_h2o_saddle_fb failed: Solver did not converge "// &
+            write(stderr, *) "test_h2o_saddle_fb failed: Solver did not converge "// &
                 "to minimum."
             test_h2o_saddle_fb = .false.
         end if
@@ -261,7 +261,7 @@ contains
 
     real(rp) function obj_func(kappa, error)
         !
-        ! this function calculates the Foster-Boys orbital localization objective 
+        ! this function calculates the Foster-Boys orbital localization objective
         ! function
         !
         real(rp), intent(in), target :: kappa(:)
@@ -275,7 +275,7 @@ contains
 
         ! unpack orbital rotation
         allocate(kappa_full(n_mo, n_mo))
-        kappa_full = 0.0
+        kappa_full = 0.0_rp
         idx = 1
         do i = 2, n_mo
             do j = 1, i - 1
@@ -292,14 +292,11 @@ contains
         ! compute cost function
         obj_func = 0.0_rp
         do i = 1, n_mo
-            obj_func = obj_func &
-                       + dot_product(mo_coeff_tmp(:, i), &
-                                     matmul(r2_ao_ints, mo_coeff_tmp(:, i)))
+            obj_func = obj_func + dot_product(mo_coeff_tmp(:, i), &
+                                              matmul(r2_ao_ints, mo_coeff_tmp(:, i)))
             do xyz = 1, 3
-                obj_func = obj_func &
-                           - dot_product(mo_coeff_tmp(:, i), &
-                                         matmul(r_ao_ints(xyz, :, :), &
-                                                mo_coeff_tmp(:, i)))**2
+                obj_func = obj_func - dot_product(mo_coeff_tmp(:, i), matmul( &
+                    r_ao_ints(xyz, :, :), mo_coeff_tmp(:, i)))**2
             end do
         end do
         deallocate(mo_coeff_tmp)
@@ -326,7 +323,7 @@ contains
 
         ! unpack orbital rotation
         allocate(kappa_full(n_mo, n_mo))
-        kappa_full = 0.0
+        kappa_full = 0.0_rp
         idx = 1
         do i = 2, n_mo
             do j = 1, i - 1
@@ -342,23 +339,22 @@ contains
 
         ! transform integrals to MO basis
         do xyz = 1, 3
-            r_mo_ints(xyz, :, :) = matmul(matmul(transpose(mo_coeff), &
-                                                 r_ao_ints(xyz, :, :)), mo_coeff)
+            r_mo_ints(xyz, :, :) = &
+                matmul(matmul(transpose(mo_coeff), r_ao_ints(xyz, :, :)), mo_coeff)
         end do
 
         ! compute cost function
         func = 0.0_rp
         do i = 1, n_mo
-            func = func &
-                   + dot_product(mo_coeff(:, i), matmul(r2_ao_ints, mo_coeff(:, i))) &
-                   - sum(r_mo_ints(:, i, i)**2)
+            func = func + dot_product(mo_coeff(:, i), matmul( &
+                r2_ao_ints, mo_coeff(:, i))) - sum(r_mo_ints(:, i, i)**2)
         end do
 
         ! construct temporary intermediate
         allocate(tmp1(n_mo, n_mo))
         do i = 1, n_mo
             do j = 1, n_mo
-                tmp1(i, j) = sum(r_mo_ints(:, j, j)*r_mo_ints(:, j, i))
+                tmp1(i, j) = sum(r_mo_ints(:, j, j) * r_mo_ints(:, j, i))
             end do
         end do
 
@@ -366,7 +362,7 @@ contains
         idx = 1
         do i = 2, n_mo
             do j = 1, i - 1
-                grad(idx) = -2*(tmp1(i, j) - tmp1(j, i))
+                grad(idx) = -2 * (tmp1(i, j) - tmp1(j, i))
                 idx = idx + 1
             end do
         end do
@@ -375,9 +371,9 @@ contains
         allocate(h_diag_tmp(n_mo, n_mo))
         do i = 1, n_mo
             do j = 1, n_mo
-                h_diag_tmp(i, j) = 2*sum(r_mo_ints(:, j, j)*r_mo_ints(:, i, i) + &
-                                         r_mo_ints(:, j, i)*r_mo_ints(:, j, i) + &
-                                         r_mo_ints(:, j, i)*r_mo_ints(:, i, j)) - &
+                h_diag_tmp(i, j) = 2 * sum(r_mo_ints(:, j, j) * r_mo_ints(:, i, i) + &
+                                           r_mo_ints(:, j, i) * r_mo_ints(:, j, i) + &
+                                           r_mo_ints(:, j, i) * r_mo_ints(:, i, j)) - &
                                    tmp1(i, i) - tmp1(j, j)
             end do
         end do
@@ -386,7 +382,7 @@ contains
         idx = 1
         do i = 2, n_mo
             do j = 1, i - 1
-                h_diag(idx) = -2*(h_diag_tmp(i, j))
+                h_diag(idx) = -2 * (h_diag_tmp(i, j))
                 idx = idx + 1
             end do
         end do
@@ -403,8 +399,8 @@ contains
 
     subroutine hess_x_fun(x, hess_x, error)
         !
-        ! this function performs the Hessian linear transformation for Foster-Boys 
-        ! orbital localization, it cannot be defined within update_orbs as it would 
+        ! this function performs the Hessian linear transformation for Foster-Boys
+        ! orbital localization, it cannot be defined within update_orbs as it would
         ! otherwise go out of scope when that subroutine returns
         !
         real(rp), intent(in), target :: x(:)
@@ -420,7 +416,7 @@ contains
 
         ! unpack trial vector
         allocate(x_full(n_mo, n_mo))
-        x_full = 0.0
+        x_full = 0.0_rp
         idx1 = 1
         do i1 = 2, n_mo
             do j1 = 1, i1 - 1
@@ -434,9 +430,9 @@ contains
         allocate(tmp2(3, n_mo), tmp3(3, n_mo, n_mo))
         do xyz1 = 1, 3
             do i1 = 1, n_mo
-                tmp2(xyz1, i1) = sum(x_full(:, i1)*r_mo_ints(xyz1, i1, :))
+                tmp2(xyz1, i1) = sum(x_full(:, i1) * r_mo_ints(xyz1, i1, :))
                 do j1 = 1, n_mo
-                    tmp3(xyz1, i1, j1) = sum(x_full(:, j1)*r_mo_ints(xyz1, i1, :))
+                    tmp3(xyz1, i1, j1) = sum(x_full(:, j1) * r_mo_ints(xyz1, i1, :))
                 end do
             end do
         end do
@@ -446,10 +442,9 @@ contains
         hess_x_full = matmul(transpose(x_full), transpose(rii_rij_rjj_rji))
         do i1 = 1, n_mo
             do j1 = 1, n_mo
-                hess_x_full(i1, j1) = hess_x_full(i1, j1) + &
-                                      2*sum(r_mo_ints(:, j1, i1)*tmp2(:, j1) - &
-                                            r_mo_ints(:, i1, i1)*tmp3(:, j1, i1) - &
-                                            r_mo_ints(:, j1, i1)*tmp2(:, i1))
+                hess_x_full(i1, j1) = hess_x_full(i1, j1) + 2 * sum( &
+                    r_mo_ints(:, j1, i1) * tmp2(:, j1) - r_mo_ints(:, i1, i1) * &
+                    tmp3(:, j1, i1) - r_mo_ints(:, j1, i1) * tmp2(:, i1))
             end do
         end do
         deallocate(x_full, tmp2, tmp3)
@@ -476,7 +471,7 @@ contains
         integer(ip) :: n, lwork, info, i
         real(rp), allocatable :: eigvals(:), rwork(:)
         complex(rp), allocatable :: work(:), eigvecs(:, :), tmp(:, :)
-                       
+
         external :: zheev
 
         ! size of matrix
@@ -501,7 +496,7 @@ contains
         ! imaginary
         allocate(tmp(n, n))
         do i = 1, n
-            tmp(:, i) = eigvecs(:, i)*cmplx(cos(eigvals(i)), sin(eigvals(i)), kind=rp)
+            tmp(:, i) = eigvecs(:, i) * cmplx(cos(eigvals(i)), sin(eigvals(i)), kind=rp)
         end do
         exp_asymm_mat = real(transpose(matmul(tmp, conjg(transpose(eigvecs)))))
         deallocate(eigvecs, eigvals, tmp)

@@ -23,15 +23,15 @@ module c_interface_mock
         mock_solver_c_wrapper
     procedure(stability_check_c_wrapper), pointer :: &
         mock_stability_check_c_wrapper_ptr => mock_stability_check_c_wrapper
-    procedure(init_solver_settings_c), pointer :: mock_init_solver_settings_c_ptr &
-        => mock_init_solver_settings_c
+    procedure(init_solver_settings_c), pointer :: mock_init_solver_settings_c_ptr => &
+        mock_init_solver_settings_c
     procedure(init_stability_settings_c), pointer :: &
         mock_init_stability_settings_c_ptr => mock_init_stability_settings_c
 
 contains
 
-    function mock_solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, &
-                                   n_param_c, settings_c) result(error_c) &
+    function mock_solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param_c, &
+                                   settings_c) result(error_c) &
         bind(C, name="mock_solver")
         !
         ! this subroutine is a mock routine for the solver C wrapper subroutine
@@ -49,48 +49,46 @@ contains
         integer(c_ip) :: error_c
 
         procedure(logger_c_type), pointer :: logger_funptr
-        character(:), allocatable, target :: message
+        character(len=:), allocatable, target :: message
 
         ! test passed orbital update function
-        test_solver_interface = test_solver_interface .and. &
-            test_update_orbs_c_funptr(update_orbs_c_funptr, "solver_py_interface", &
-                                      " by given orbital updating function")
+        test_solver_interface = test_solver_interface .and. test_update_orbs_c_funptr( &
+            update_orbs_c_funptr, "solver_py_interface", &
+            " by given orbital updating function")
 
         ! test passed objective function
-        test_solver_interface = test_solver_interface .and. &
-            test_obj_func_c_funptr(obj_func_c_funptr, "solver_py_interface", &
-                                   " by given objective function")
+        test_solver_interface = test_solver_interface .and. test_obj_func_c_funptr( &
+            obj_func_c_funptr, "solver_py_interface", " by given objective function")
 
         ! check if passed number of parameters is correct
         if (n_param_c /= 3) then
-            write (stderr, *) "test_solver_py_interface failed: Passed number of "// &
+            write(stderr, *) "test_solver_py_interface failed: Passed number of "// &
                 "parameters wrong."
             test_solver_interface = .false.
         end if
 
         ! test passed preconditioner function
-        test_solver_interface = test_solver_interface .and. &
-            test_precond_c_funptr(settings_c%precond, "solver_py_interface", &
-                                  " by given preconditioning function")
+        test_solver_interface = test_solver_interface .and. test_precond_c_funptr( &
+            settings_c%precond, "solver_py_interface", &
+            " by given preconditioning function")
 
         ! test passed projection function
-        test_solver_interface = test_solver_interface .and. &
-            test_project_c_funptr(settings_c%project, "solver_py_interface", &
-                                  " by given projection function")
+        test_solver_interface = test_solver_interface .and. test_project_c_funptr( &
+            settings_c%project, "solver_py_interface", " by given projection function")
 
         ! test passed convergence check function
-        test_solver_interface = test_solver_interface .and. &
-            test_conv_check_c_funptr(settings_c%conv_check, "solver_py_interface", &
-                                     " by given convergence check function")
+        test_solver_interface = test_solver_interface .and. test_conv_check_c_funptr( &
+            settings_c%conv_check, "solver_py_interface", &
+            " by given convergence check function")
 
         ! get Fortran pointer to passed logging function and call it
-        message = "test" // c_null_char
+        message = "test"//c_null_char
         call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
         call logger_funptr(message)
 
         ! check optional settings against reference values
         if (settings_c /= ref_settings) then
-            write (stderr, *) "test_solver_py_interface failed: Passed settings "// &
+            write(stderr, *) "test_solver_py_interface failed: Passed settings "// &
                 "associated with wrong values."
             test_solver_interface = .false.
         end if
@@ -122,45 +120,48 @@ contains
 
         real(c_rp), pointer :: kappa_ptr(:)
         procedure(logger_c_type), pointer :: logger_funptr
-        character(:), allocatable, target :: message
+        character(len=:), allocatable, target :: message
 
         ! check if Hessian diagonal is passed correctly
         if (any(abs(h_diag_c(:n_param_c) - 3.0_c_rp) > tol_c)) then
-            write (stderr, *) "test_stability_check_py_interface failed: Passed "// &
+            write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
                 "Hessian diagonal wrong."
             test_stability_check_interface = .false.
         end if
 
         ! test passed Hessian linear transformation
-        test_stability_check_interface = test_stability_check_interface .and. &
+        test_stability_check_interface = &
+            test_stability_check_interface .and. &
             test_hess_x_c_funptr(hess_x_c_funptr, "stability_check_py_interface", &
                                  " by given Hessian linear transformation function")
 
         ! check if passed number of parameters is correct
         if (n_param_c /= 3) then
-            write (stderr, *) "test_stability_check_py_interface failed: Passed "// &
+            write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
                 "number of parameters wrong."
             test_stability_check_interface = .false.
         end if
 
         ! test passed preconditioner
-        test_stability_check_interface = test_stability_check_interface .and. &
+        test_stability_check_interface = &
+            test_stability_check_interface .and. &
             test_precond_c_funptr(settings_c%precond, "stability_check_py_interface", &
                                   " by given preconditioning function")
 
         ! test passed projection function
-        test_stability_check_interface = test_stability_check_interface .and. &
+        test_stability_check_interface = &
+            test_stability_check_interface .and. &
             test_project_c_funptr(settings_c%project, "stability_check_py_interface", &
                                   " by given projection function")
 
         ! get Fortran pointer to passed logging function and call it
-        message = "test" // c_null_char
+        message = "test"//c_null_char
         call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
         call logger_funptr(message)
 
         ! check optional settings against reference values
         if (settings_c /= ref_settings) then
-            write (stderr, *) "test_stability_check_py_interface failed: Passed "// &
+            write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
                 "settings associated with wrong values."
             test_stability_check_interface = .false.
         end if
@@ -178,7 +179,7 @@ contains
     subroutine mock_init_solver_settings_c(settings) &
         bind(C, name="mock_init_solver_settings")
         !
-        ! this subroutine is a mock routine for the C solver setting initialization 
+        ! this subroutine is a mock routine for the C solver setting initialization
         ! subroutine
         !
         use c_interface, only: solver_settings_type_c
@@ -194,7 +195,7 @@ contains
     subroutine mock_init_stability_settings_c(settings) &
         bind(C, name="mock_init_stability_settings")
         !
-        ! this subroutine is a mock routine for the C stability check setting 
+        ! this subroutine is a mock routine for the C stability check setting
         ! initialization subroutine
         !
         use c_interface, only: stability_settings_type_c

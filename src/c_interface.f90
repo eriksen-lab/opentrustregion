@@ -11,10 +11,9 @@ module c_interface
                                default_solver_settings, default_stability_settings, &
                                update_orbs_type, hess_x_type, obj_func_type, &
                                precond_type, project_type, conv_check_type, logger_type
-    use, intrinsic :: iso_c_binding, only: c_double, c_int64_t, c_int32_t, c_bool, &
-                                           c_ptr, c_funptr, c_f_pointer, &
-                                           c_f_procpointer, c_associated, c_char, &
-                                           c_null_char, c_null_funptr
+    use, intrinsic :: iso_c_binding, only: &
+        c_double, c_int64_t, c_int32_t, c_bool, c_ptr, c_funptr, c_f_pointer, &
+        c_f_procpointer, c_associated, c_char, c_null_char, c_null_funptr
 
     implicit none
 
@@ -106,7 +105,7 @@ module c_interface
         subroutine logger_c_type(message) bind(C)
             import :: c_char
 
-            character(c_char), intent(in) :: message(*)
+            character(kind=c_char), intent(in) :: message(*)
         end subroutine logger_c_type
     end interface
 
@@ -117,7 +116,7 @@ module c_interface
         real(c_rp) :: conv_tol
         integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
                          verbose
-        character(c_char) :: diag_solver(kw_len + 1)
+        character(kind=c_char) :: diag_solver(kw_len + 1)
     end type
 
     ! derived type for solver settings
@@ -127,7 +126,7 @@ module c_interface
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
                          jacobi_davidson_start, seed, verbose
-        character(c_char) :: subsystem_solver(kw_len + 1)
+        character(kind=c_char) :: subsystem_solver(kw_len + 1)
         type(stability_settings_type_c) :: stability_settings
     end type
 
@@ -197,9 +196,9 @@ contains
 
     end function solver_c_wrapper
 
-    function stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, &
-                                       stable_c, settings_c, kappa_c_ptr) &                    
-        result(error_c) bind(C, name="stability_check")
+    function stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, stable_c, &
+                                       settings_c, kappa_c_ptr) result(error_c) &
+        bind(C, name="stability_check")
         !
         ! this function exposes a Fortran-implemented stability check subroutine to C
         !
@@ -320,7 +319,7 @@ contains
 
     subroutine hess_x_f_wrapper(x, hess_x, error)
         !
-        ! this subroutine exposes a C-implemented Hessian linear transformation to 
+        ! this subroutine exposes a C-implemented Hessian linear transformation to
         ! Fortran
         !
         real(rp), intent(in), target :: x(:)
@@ -475,7 +474,7 @@ contains
         !
         ! this subroutine exposes a C-implemented logger function to Fortran
         !
-        character(*), intent(in) :: message
+        character(len=*), intent(in) :: message
 
         character(kind=c_char), allocatable :: message_c(:)
         integer(ip) :: message_len, i
@@ -486,9 +485,9 @@ contains
         do i = 1, message_len
             message_c(i - 1) = message(i:i)
         end do
-        
+
         ! append null terminator
-        message_c(message_len) = c_null_char 
+        message_c(message_len) = c_null_char
 
         ! call logging C function
         call logger_before_wrapping(message_c)
@@ -568,12 +567,12 @@ contains
             settings%local_red_factor = real(settings_c%local_red_factor, kind=rp)
 
             ! convert integers
-            settings%n_random_trial_vectors = int(settings_c%n_random_trial_vectors, &
-                                                  kind=ip)
+            settings%n_random_trial_vectors = &
+                int(settings_c%n_random_trial_vectors, kind=ip)
             settings%n_macro = int(settings_c%n_macro, kind=ip)
             settings%n_micro = int(settings_c%n_micro, kind=ip)
-            settings%jacobi_davidson_start = int(settings_c%jacobi_davidson_start, &
-                                                 kind=ip)
+            settings%jacobi_davidson_start = &
+                int(settings_c%jacobi_davidson_start, kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
 
@@ -626,11 +625,11 @@ contains
             settings%conv_tol = real(settings_c%conv_tol, kind=rp)
 
             ! convert integers
-            settings%n_random_trial_vectors = int(settings_c%n_random_trial_vectors, &
-                                                  kind=ip)
+            settings%n_random_trial_vectors = &
+                int(settings_c%n_random_trial_vectors, kind=ip)
             settings%n_iter = int(settings_c%n_iter, kind=ip)
-            settings%jacobi_davidson_start = int(settings_c%jacobi_davidson_start, &
-                                                 kind=ip)
+            settings%jacobi_davidson_start = &
+                int(settings_c%jacobi_davidson_start, kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
 
@@ -670,12 +669,12 @@ contains
             settings_c%local_red_factor = real(settings%local_red_factor, kind=c_rp)
 
             ! convert integers
-            settings_c%n_random_trial_vectors = int(settings%n_random_trial_vectors, &
-                                                    kind=c_ip)
+            settings_c%n_random_trial_vectors = &
+                int(settings%n_random_trial_vectors, kind=c_ip)
             settings_c%n_macro = int(settings%n_macro, kind=c_ip)
             settings_c%n_micro = int(settings%n_micro, kind=c_ip)
-            settings_c%jacobi_davidson_start = int(settings%jacobi_davidson_start, &
-                                                   kind=c_ip)
+            settings_c%jacobi_davidson_start = &
+                int(settings%jacobi_davidson_start, kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
 
@@ -710,11 +709,11 @@ contains
             settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
 
             ! convert integers
-            settings_c%n_random_trial_vectors = int(settings%n_random_trial_vectors, &
-                                                    kind=c_ip)
+            settings_c%n_random_trial_vectors = &
+                int(settings%n_random_trial_vectors, kind=c_ip)
             settings_c%n_iter = int(settings%n_iter, kind=c_ip)
-            settings_c%jacobi_davidson_start = int(settings%jacobi_davidson_start, &
-                                                   kind=c_ip)
+            settings_c%jacobi_davidson_start = &
+                int(settings%jacobi_davidson_start, kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
 
@@ -729,11 +728,11 @@ contains
 
     function character_from_c(char_c) result(char_f)
         !
-        ! this function converts a C null-terminated character array to a Fortran 
+        ! this function converts a C null-terminated character array to a Fortran
         ! character
         !
-        character(c_char), intent(in) :: char_c(*)
-        character(:), allocatable :: char_f
+        character(kind=c_char), intent(in) :: char_c(*)
+        character(len=:), allocatable :: char_f
 
         integer(ip) :: n
 
@@ -742,7 +741,7 @@ contains
         do while (char_c(n) /= c_null_char)
             n = n + 1
         end do
-        allocate(character(n - 1) :: char_f)
+        allocate(character(len=n - 1) :: char_f)
 
         ! copy and convert each character
         char_f = transfer(char_c(1:n - 1), char_f)
@@ -751,11 +750,11 @@ contains
 
     function character_to_c(char_f) result(char_c)
         !
-        ! this function converts a Fortran character string to a C null-terminated 
+        ! this function converts a Fortran character string to a C null-terminated
         ! character array
         !
-        character(*), intent(in) :: char_f
-        character(c_char), allocatable :: char_c(:)
+        character(len=*), intent(in) :: char_f
+        character(kind=c_char), allocatable :: char_c(:)
 
         integer(ip) :: n
 

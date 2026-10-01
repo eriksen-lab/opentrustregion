@@ -27,7 +27,7 @@ module test_reference
         real(rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(ip) :: n_random_trial_vectors, n_macro, n_micro, &
                        jacobi_davidson_start, seed, verbose, n_iter
-        character(kw_len, c_char) :: subsystem_solver, diag_solver
+        character(len=kw_len, kind=c_char) :: subsystem_solver, diag_solver
     end type
 
     type, bind(C) :: ref_settings_type_c
@@ -35,18 +35,16 @@ module test_reference
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
                          jacobi_davidson_start, seed, verbose, n_iter
-        character(c_char) :: subsystem_solver(kw_len + 1), diag_solver(kw_len + 1)
+        character(kind=c_char) :: subsystem_solver(kw_len + 1), diag_solver(kw_len + 1)
     end type
 
     ! general reference parameters
-    type(ref_settings_type) :: ref_settings = &
-        ref_settings_type(stability = .true., line_search = .true., &
-                          conv_tol = 1e-3_rp, start_trust_radius = 0.2_rp, &
-                          global_red_factor = 1e-2_rp, local_red_factor = 1e-3_rp, &
-                          n_random_trial_vectors = 5, n_macro = 300, n_micro = 200, &
-                          jacobi_davidson_start = 10, seed = 33, verbose = 3, &
-                          n_iter = 50, subsystem_solver = "tcg", &
-                          diag_solver = "jacobi-davidson")
+    type(ref_settings_type) :: ref_settings = ref_settings_type( &
+        stability=.true., line_search=.true., conv_tol=1e-3_rp, &
+        start_trust_radius=0.2_rp, global_red_factor=1e-2_rp, &
+        local_red_factor=1e-3_rp, n_random_trial_vectors=5, n_macro=300, n_micro=200, &
+        jacobi_davidson_start=10, seed=33, verbose=3, n_iter=50, &
+        subsystem_solver="tcg", diag_solver="jacobi-davidson")
 
     interface assignment(=)
         module procedure assign_ref_to_solver
@@ -88,7 +86,7 @@ contains
         use opentrustregion, only: update_orbs_type, hess_x_type
 
         procedure(update_orbs_type), intent(in), pointer :: update_orbs_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
 
         real(rp), allocatable :: kappa(:), grad(:), h_diag(:)
@@ -102,7 +100,7 @@ contains
         ! check if function pointer is associated
         if (.not. associated(update_orbs_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Orbital updating "// &
+            write(stderr, *) "test_"//test_name//" failed: Orbital updating "// &
                 "function provided"//message//" not associated with value."
             return
         end if
@@ -119,29 +117,28 @@ contains
         ! check for error
         if (error /= 0) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
         end if
 
         ! check objective function value
         if (abs(func - 3.0_rp) > tol) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Objective function "// &
-                "value returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Objective function value returned"//message//" wrong."
         end if
 
         ! check gradient
         if (any(abs(grad - 2.0_rp) > tol)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Gradient returned"// &
+            write(stderr, *) "test_"//test_name//" failed: Gradient returned"// &
                 message//" wrong."
         end if
 
         ! check Hessian diagonal
         if (any(abs(h_diag - 3.0_rp) > tol)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Hessian diagonal "// &
-                "returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Hessian diagonal returned"//message//" wrong."
         end if
 
         ! deallocate arrays
@@ -150,9 +147,9 @@ contains
         ! test returned Hessian linear transformation, the function pointer is only
         ! defined if the orbital update did not produce an error
         if (error == 0) then
-            test_passed = test_passed .and. &
-                test_hess_x_funptr(hess_x_funptr, test_name, " by Hessian linear "// &
-                                   "transformation function returned"//message)
+            test_passed = test_passed .and. test_hess_x_funptr( &
+                hess_x_funptr, test_name, &
+                " by Hessian linear transformation function returned"//message)
         end if
 
     end function test_update_orbs_funptr
@@ -165,7 +162,7 @@ contains
         use c_interface, only: update_orbs_c_type
 
         type(c_funptr), intent(in) :: update_orbs_c_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
 
         procedure(update_orbs_c_type), pointer :: update_orbs_funptr
@@ -180,7 +177,7 @@ contains
         ! check if function pointer is associated
         if (.not. c_associated(update_orbs_c_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Orbital updating "// &
+            write(stderr, *) "test_"//test_name//" failed: Orbital updating "// &
                 "function provided"//message//" not associated with value."
             return
         end if
@@ -200,29 +197,28 @@ contains
         ! check for error
         if (error /= 0) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
         end if
 
         ! check objective function value
         if (abs(func - 3.0_c_rp) > tol_c) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Objective function "// &
-                "value returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Objective function value returned"//message//" wrong."
         end if
 
         ! check gradient
         if (any(abs(grad - 2.0_c_rp) > tol_c)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Gradient returned"// &
+            write(stderr, *) "test_"//test_name//" failed: Gradient returned"// &
                 message//" wrong."
         end if
 
         ! check Hessian diagonal
         if (any(abs(h_diag - 3.0_c_rp) > tol_c)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Hessian diagonal "// &
-                "returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Hessian diagonal returned"//message//" wrong."
         end if
 
         ! deallocate arrays
@@ -231,10 +227,9 @@ contains
         ! test returned Hessian linear transformation, the function pointer is only
         ! defined if the orbital update did not produce an error
         if (error == 0) then
-            test_passed = test_passed .and. &
-                test_hess_x_c_funptr(hess_x_c_funptr, test_name, " by Hessian "// &
-                                     "linear transformation function returned"// &
-                                     message)
+            test_passed = test_passed .and. test_hess_x_c_funptr( &
+                hess_x_c_funptr, test_name, &
+                " by Hessian linear transformation function returned"//message)
         end if
 
     end function test_update_orbs_c_funptr
@@ -246,7 +241,7 @@ contains
         use opentrustregion, only: hess_x_type
 
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
 
         real(rp), allocatable :: x(:), hess_x(:)
@@ -258,9 +253,9 @@ contains
         ! check if function pointer is associated
         if (.not. associated(hess_x_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Hessian linear "// &
-                "transformation function provided"//message//" not associated "// &
-                "with value."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Hessian linear transformation function provided"//message// &
+                " not associated with value."
             return
         end if
 
@@ -276,15 +271,14 @@ contains
         ! check for error
         if (error /= 0) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
         end if
 
         ! check Hessian linear transformation
         if (any(abs(hess_x - 4.0_rp) > tol)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Hessian linear "// &
-                "transformation returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Hessian linear transformation returned"//message//" wrong."
         end if
 
         ! deallocate arrays
@@ -295,13 +289,13 @@ contains
     function test_hess_x_c_funptr(hess_x_c_funptr, test_name, message) &
         result(test_passed)
         !
-        ! this function tests a provided Hessian linear transformation C function 
+        ! this function tests a provided Hessian linear transformation C function
         ! pointer
         !
         use c_interface, only: hess_x_c_type
 
         type(c_funptr), intent(in) :: hess_x_c_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
 
         procedure(hess_x_c_type), pointer :: hess_x_funptr_c
@@ -314,9 +308,9 @@ contains
         ! check if function pointer is associated
         if (.not. c_associated(hess_x_c_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Hessian linear "// &
-                "transformation function provided"//message//" not associated "// &
-                "with value."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Hessian linear transformation function provided"//message// &
+                " not associated with value."
             return
         end if
 
@@ -335,15 +329,14 @@ contains
         ! check for error
         if (error /= 0) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-               "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
         end if
 
         ! check Hessian linear transformation
         if (any(abs(hess_x - 4.0_c_rp) > tol_c)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Hessian linear "// &
-                "transformation returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Hessian linear transformation returned"//message//" wrong."
         end if
 
         ! deallocate arrays
@@ -359,7 +352,7 @@ contains
         use opentrustregion, only: obj_func_type
 
         procedure(obj_func_type), intent(in), pointer :: obj_func_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
 
         real(rp), allocatable :: kappa(:)
@@ -372,7 +365,7 @@ contains
         ! check if function pointer is associated
         if (.not. associated(obj_func_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Objective function "// &
+            write(stderr, *) "test_"//test_name//" failed: Objective function "// &
                 "provided"//message//" not associated with value."
             return
         end if
@@ -388,14 +381,13 @@ contains
 
         ! check for error
         if (error /= 0) then
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
             test_passed = .false.
         end if
 
         ! check objective function
         if (abs(func - 3.0_rp) > tol) then
-            write (stderr, *) "test_"//test_name//" failed: Function value returned"// &
+            write(stderr, *) "test_"//test_name//" failed: Function value returned"// &
                 message//" wrong."
             test_passed = .false.
         end if
@@ -413,7 +405,7 @@ contains
         use c_interface, only: obj_func_c_type
 
         type(c_funptr), intent(in) :: obj_func_c_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
 
         procedure(obj_func_c_type), pointer :: obj_func_funptr
@@ -427,7 +419,7 @@ contains
         ! check if function pointer is associated
         if (.not. c_associated(obj_func_c_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Objective function "// &
+            write(stderr, *) "test_"//test_name//" failed: Objective function "// &
                 "provided"//message//" not associated with value."
             return
         end if
@@ -446,14 +438,13 @@ contains
 
         ! check for error
         if (error /= 0) then
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
             test_passed = .false.
         end if
 
         ! check objective function
         if (abs(func - 3.0_c_rp) > tol_c) then
-            write (stderr, *) "test_"//test_name//" failed: Function value returned"// &
+            write(stderr, *) "test_"//test_name//" failed: Function value returned"// &
                 message//" wrong."
             test_passed = .false.
         end if
@@ -463,17 +454,16 @@ contains
 
     end function test_obj_func_c_funptr
 
-    function test_precond_funptr(precond_funptr, test_name, message) &
-        result(test_passed)
+    function test_precond_funptr(precond_funptr, test_name, message) result(test_passed)
         !
         ! this function tests a provided preconditioner function pointer
         !
         use opentrustregion, only: precond_type
 
         procedure(precond_type), intent(in), pointer :: precond_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
-        
+
         real(rp), allocatable :: residual(:), precond_residual(:)
         integer(ip) :: error
 
@@ -483,8 +473,8 @@ contains
         ! check if function pointer is associated
         if (.not. associated(precond_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Preconditioner "// &
-                "function provided"//message//" not associated with value."
+            write(stderr, *) "test_"//test_name//" failed: Preconditioner function "// &
+                "provided"//message//" not associated with value."
             return
         end if
 
@@ -499,15 +489,14 @@ contains
 
         ! check for error
         if (error /= 0) then
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
             test_passed = .false.
         end if
 
         ! check preconditioned residual
         if (any(abs(precond_residual - 5.0_rp) > tol)) then
-            write (stderr, *) "test_"//test_name//" failed: Preconditioned "// &
-                "residual returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Preconditioned residual returned"//message//" wrong."
             test_passed = .false.
         end if
 
@@ -524,7 +513,7 @@ contains
         use c_interface, only: precond_c_type
 
         type(c_funptr), intent(in) :: precond_c_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
 
         procedure(precond_c_type), pointer :: precond_funptr
@@ -537,8 +526,8 @@ contains
         ! check if function pointer is associated
         if (.not. c_associated(precond_c_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Preconditioner "// &
-                "function provided"//message//" not associated with value."
+            write(stderr, *) "test_"//test_name//" failed: Preconditioner function "// &
+                "provided"//message//" not associated with value."
             return
         end if
 
@@ -556,15 +545,14 @@ contains
 
         ! check for error
         if (error /= 0) then
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
             test_passed = .false.
         end if
 
         ! check preconditioned residual
         if (any(abs(precond_residual - 5.0_c_rp) > tol_c)) then
-            write (stderr, *) "test_"//test_name//" failed: Preconditioned "// &
-                "residual returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Preconditioned residual returned"//message//" wrong."
             test_passed = .false.
         end if
 
@@ -580,9 +568,9 @@ contains
         use opentrustregion, only: project_type
 
         procedure(project_type), intent(in), pointer :: project_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
-        
+
         real(rp), allocatable :: vector(:)
         integer(ip) :: error
 
@@ -592,7 +580,7 @@ contains
         ! check if function pointer is associated
         if (.not. associated(project_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Project function "// &
+            write(stderr, *) "test_"//test_name//" failed: Project function "// &
                 "provided"//message//" not associated with value."
             return
         end if
@@ -608,15 +596,14 @@ contains
 
         ! check for error
         if (error /= 0) then
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
             test_passed = .false.
         end if
 
         ! check projected vector
         if (any(abs(vector - 2.0_rp) > tol)) then
-            write (stderr, *) "test_"//test_name//" failed: Projected vector "// &
-                "returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Projected vector returned"//message//" wrong."
             test_passed = .false.
         end if
 
@@ -633,7 +620,7 @@ contains
         use c_interface, only: project_c_type
 
         type(c_funptr), intent(in) :: project_c_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
 
         procedure(project_c_type), pointer :: project_funptr
@@ -646,7 +633,7 @@ contains
         ! check if function pointer is associated
         if (.not. c_associated(project_c_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Project function "// &
+            write(stderr, *) "test_"//test_name//" failed: Project function "// &
                 "provided"//message//" not associated with value."
             return
         end if
@@ -665,15 +652,14 @@ contains
 
         ! check for error
         if (error /= 0) then
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
             test_passed = .false.
         end if
 
         ! check projected vector
         if (any(abs(vector - 2.0_c_rp) > tol_c)) then
-            write (stderr, *) "test_"//test_name//" failed: Projected vector "// &
-                "returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Projected vector returned"//message//" wrong."
             test_passed = .false.
         end if
 
@@ -690,9 +676,9 @@ contains
         use opentrustregion, only: conv_check_type
 
         procedure(conv_check_type), intent(in), pointer :: conv_check_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
-        
+
         logical :: converged
         integer(ip) :: error
 
@@ -702,7 +688,7 @@ contains
         ! check if function pointer is associated
         if (.not. associated(conv_check_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Convergence check "// &
+            write(stderr, *) "test_"//test_name//" failed: Convergence check "// &
                 "function provided"//message//" not associated with value."
             return
         end if
@@ -712,15 +698,14 @@ contains
 
         ! check for error
         if (error /= 0) then
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
             test_passed = .false.
         end if
 
         ! check convergence logical
         if (.not. converged) then
-            write (stderr, *) "test_"//test_name//" failed: Convergence logical "// &
-                "returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Convergence logical returned"//message//" wrong."
             test_passed = .false.
         end if
 
@@ -734,9 +719,9 @@ contains
         use c_interface, only: conv_check_c_type
 
         type(c_funptr), intent(in) :: conv_check_c_funptr
-        character(*), intent(in) :: test_name, message
+        character(len=*), intent(in) :: test_name, message
         logical :: test_passed
-        
+
         procedure(conv_check_c_type), pointer :: conv_check_funptr
         logical(c_bool) :: converged
         integer(ip) :: error
@@ -747,7 +732,7 @@ contains
         ! check if function pointer is associated
         if (.not. c_associated(conv_check_c_funptr)) then
             test_passed = .false.
-            write (stderr, *) "test_"//test_name//" failed: Convergence check "// &
+            write(stderr, *) "test_"//test_name//" failed: Convergence check "// &
                 "function provided"//message//" not associated with value."
             return
         end if
@@ -760,15 +745,14 @@ contains
 
         ! check for error
         if (error /= 0) then
-            write (stderr, *) "test_"//test_name//" failed: Error produced"//message// &
-                "."
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
             test_passed = .false.
         end if
 
         ! check convergence logical
         if (.not. converged) then
-            write (stderr, *) "test_"//test_name//" failed: Convergence logical "// &
-                "returned"//message//" wrong."
+            write(stderr, *) "test_"//test_name// &
+                " failed: Convergence logical returned"//message//" wrong."
             test_passed = .false.
         end if
 
@@ -812,7 +796,7 @@ contains
 
     subroutine assign_ref_to_solver(lhs, rhs)
         !
-        ! this subroutine overloads the assignment operator to set solver settings to 
+        ! this subroutine overloads the assignment operator to set solver settings to
         ! reference values
         !
         use opentrustregion, only: solver_settings_type
@@ -832,7 +816,7 @@ contains
         lhs%conv_tol = rhs%conv_tol
         lhs%start_trust_radius = rhs%start_trust_radius
         lhs%global_red_factor = rhs%global_red_factor
-        lhs%local_red_factor  = rhs%local_red_factor
+        lhs%local_red_factor = rhs%local_red_factor
         lhs%n_random_trial_vectors = rhs%n_random_trial_vectors
         lhs%n_macro = rhs%n_macro
         lhs%n_micro = rhs%n_micro
@@ -851,7 +835,7 @@ contains
 
     subroutine assign_ref_to_stability(lhs, rhs)
         !
-        ! this subroutine overloads the assignment operator to set stability settings 
+        ! this subroutine overloads the assignment operator to set stability settings
         ! to reference values
         !
         use opentrustregion, only: stability_settings_type
@@ -880,7 +864,7 @@ contains
 
     subroutine assign_ref_to_solver_c(lhs_c, rhs)
         !
-        ! this subroutine overloads the assignment operator to set C solver settings to 
+        ! this subroutine overloads the assignment operator to set C solver settings to
         ! reference values
         !
         use c_interface, only: solver_settings_type_c, assignment(=)
@@ -898,7 +882,7 @@ contains
 
     subroutine assign_ref_to_stability_c(lhs_c, rhs)
         !
-        ! this subroutine overloads the assignment operator to set C stability settings 
+        ! this subroutine overloads the assignment operator to set C stability settings
         ! to reference values
         !
         use c_interface, only: stability_settings_type_c, assignment(=)
@@ -929,7 +913,7 @@ contains
         lhs%conv_tol = real(rhs%conv_tol, kind=c_rp)
         lhs%start_trust_radius = real(rhs%start_trust_radius, kind=c_rp)
         lhs%global_red_factor = real(rhs%global_red_factor, kind=c_rp)
-        lhs%local_red_factor  = real(rhs%local_red_factor, kind=c_rp)
+        lhs%local_red_factor = real(rhs%local_red_factor, kind=c_rp)
         lhs%n_random_trial_vectors = int(rhs%n_random_trial_vectors, kind=c_ip)
         lhs%n_macro = int(rhs%n_macro, kind=c_ip)
         lhs%n_micro = int(rhs%n_micro, kind=c_ip)
@@ -944,15 +928,16 @@ contains
 
     logical function equal_solver_to_ref(lhs, rhs)
         !
-        ! this function overloads the comparison operator to compare solver settings 
-        ! to reference values
+        ! this function overloads the comparison operator to compare solver settings to
+        ! reference values
         !
         use opentrustregion, only: solver_settings_type
 
         type(solver_settings_type), intent(in) :: lhs
         type(ref_settings_type), intent(in) :: rhs
 
-        equal_solver_to_ref = (lhs%stability .eqv. rhs%stability) .and. &
+        equal_solver_to_ref = &
+            (lhs%stability .eqv. rhs%stability) .and. &
             (lhs%line_search .eqv. rhs%line_search) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
@@ -969,7 +954,7 @@ contains
 
     logical function not_equal_solver_to_ref(lhs, rhs)
         !
-        ! this function overloads the negated comparison operator to compare solver 
+        ! this function overloads the negated comparison operator to compare solver
         ! settings to reference values
         !
         use opentrustregion, only: solver_settings_type
@@ -983,7 +968,7 @@ contains
 
     logical function equal_stability_to_ref(lhs, rhs)
         !
-        ! this function overloads the comparison operator to compare stability settings 
+        ! this function overloads the comparison operator to compare stability settings
         ! to reference values
         !
         use opentrustregion, only: stability_settings_type
@@ -991,7 +976,8 @@ contains
         type(stability_settings_type), intent(in) :: lhs
         type(ref_settings_type), intent(in) :: rhs
 
-        equal_stability_to_ref = abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
+        equal_stability_to_ref = &
+            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
             lhs%n_iter == rhs%n_iter .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
@@ -1009,14 +995,14 @@ contains
 
         type(stability_settings_type), intent(in) :: lhs
         type(ref_settings_type), intent(in) :: rhs
-        
+
         not_equal_stability_to_ref = .not. (lhs == rhs)
 
     end function not_equal_stability_to_ref
 
     logical function equal_solver_c_to_ref(lhs_c, rhs)
         !
-        ! this function overloads the comparison operator to compare solver settings to 
+        ! this function overloads the comparison operator to compare solver settings to
         ! reference values
         !
         use c_interface, only: solver_settings_type_c, assignment(=)
@@ -1034,21 +1020,21 @@ contains
 
     logical function not_equal_solver_c_to_ref(lhs, rhs)
         !
-        ! this function overloads the negated comparison operator to compare solver 
+        ! this function overloads the negated comparison operator to compare solver
         ! settings to reference values
         !
         use c_interface, only: solver_settings_type_c
 
         type(solver_settings_type_c), intent(in) :: lhs
         type(ref_settings_type), intent(in) :: rhs
-        
+
         not_equal_solver_c_to_ref = .not. (lhs == rhs)
 
     end function not_equal_solver_c_to_ref
 
     logical function equal_stability_c_to_ref(lhs_c, rhs)
         !
-        ! this function overloads the comparison operator to compare stability settings 
+        ! this function overloads the comparison operator to compare stability settings
         ! to reference values
         !
         use c_interface, only: stability_settings_type_c, assignment(=)
@@ -1058,7 +1044,7 @@ contains
         type(ref_settings_type), intent(in) :: rhs
 
         type(stability_settings_type) :: lhs
-        
+
         lhs = lhs_c
         equal_stability_c_to_ref = lhs == rhs
 
@@ -1073,21 +1059,22 @@ contains
 
         type(stability_settings_type_c), intent(in) :: lhs
         type(ref_settings_type), intent(in) :: rhs
-        
+
         not_equal_stability_c_to_ref = .not. (lhs == rhs)
 
     end function not_equal_stability_c_to_ref
 
     logical function equal_solver(lhs, rhs)
         !
-        ! this function overloads the comparison operator to compare solver settings 
-        ! to different solver settings
+        ! this function overloads the comparison operator to compare solver settings to
+        ! different solver settings
         !
         use opentrustregion, only: solver_settings_type
 
         type(solver_settings_type), intent(in) :: lhs, rhs
-        
-        equal_solver = (lhs%stability .eqv. rhs%stability) .and. &
+
+        equal_solver = &
+            (lhs%stability .eqv. rhs%stability) .and. &
             (lhs%line_search .eqv. rhs%line_search) .and. &
             (lhs%initialized .eqv. rhs%initialized) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
@@ -1105,27 +1092,28 @@ contains
 
     logical function not_equal_solver(lhs, rhs)
         !
-        ! this function overloads the negated comparison operator to compare solver 
+        ! this function overloads the negated comparison operator to compare solver
         ! settings to different solver settings
         !
         use opentrustregion, only: solver_settings_type
 
         type(solver_settings_type), intent(in) :: lhs, rhs
-        
+
         not_equal_solver = .not. (lhs == rhs)
 
     end function not_equal_solver
 
     logical function equal_stability(lhs, rhs)
         !
-        ! this function overloads the comparison operator to compare stability settings 
+        ! this function overloads the comparison operator to compare stability settings
         ! to different stability settings
         !
         use opentrustregion, only: stability_settings_type
 
         type(stability_settings_type), intent(in) :: lhs, rhs
-        
-        equal_stability = abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
+
+        equal_stability = &
+            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
             lhs%n_iter == rhs%n_iter .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
@@ -1142,22 +1130,22 @@ contains
         use opentrustregion, only: stability_settings_type
 
         type(stability_settings_type), intent(in) :: lhs, rhs
-        
+
         not_equal_stability = .not. (lhs == rhs)
 
     end function not_equal_stability
 
     logical function equal_solver_c(lhs_c, rhs)
         !
-        ! this function overloads the comparison operator to compare solver settings 
-        ! to different solver settings
+        ! this function overloads the comparison operator to compare solver settings to
+        ! different solver settings
         !
         use c_interface, only: solver_settings_type_c, assignment(=)
         use opentrustregion, only: solver_settings_type
 
         type(solver_settings_type_c), intent(in) :: lhs_c
         type(solver_settings_type), intent(in) :: rhs
-        
+
         type(solver_settings_type) :: lhs
 
         lhs = lhs_c
@@ -1167,7 +1155,7 @@ contains
 
     logical function not_equal_solver_c(lhs_c, rhs)
         !
-        ! this function overloads the negated comparison operator to compare solver 
+        ! this function overloads the negated comparison operator to compare solver
         ! settings to different solver settings
         !
         use c_interface, only: solver_settings_type_c
@@ -1175,14 +1163,14 @@ contains
 
         type(solver_settings_type_c), intent(in) :: lhs_c
         type(solver_settings_type), intent(in) :: rhs
-        
+
         not_equal_solver_c = .not. (lhs_c == rhs)
 
     end function not_equal_solver_c
 
     logical function equal_stability_c(lhs_c, rhs)
         !
-        ! this function overloads the comparison operator to compare stability settings 
+        ! this function overloads the comparison operator to compare stability settings
         ! to different stability settings
         !
         use c_interface, only: stability_settings_type_c, assignment(=)
@@ -1190,7 +1178,7 @@ contains
 
         type(stability_settings_type_c), intent(in) :: lhs_c
         type(stability_settings_type), intent(in) :: rhs
-        
+
         type(stability_settings_type) :: lhs
 
         lhs = lhs_c
@@ -1208,7 +1196,7 @@ contains
 
         type(stability_settings_type_c), intent(in) :: lhs_c
         type(stability_settings_type), intent(in) :: rhs
-        
+
         not_equal_stability_c = .not. (lhs_c == rhs)
 
     end function not_equal_stability_c
