@@ -70,6 +70,21 @@ module opentrustregion_unit_tests
     ! guard that triggers when the reduced space reaches the full space size
     real(rp) :: overflow_hess(n_param, n_param), overflow_grad(n_param)
 
+    ! define global variables recording whether the Hartmann 6D objective function was
+    ! evaluated without displacement, whether the Hartmann 6D Hessian was applied to the
+    ! normalized gradient, the last displacement passed to the Hartmann 6D orbital
+    ! update and whether the preconditioner received this displacement
+    logical :: obj_func_zero_step, hess_x_normalized_grad, precond_received_step
+    real(rp) :: last_delta_vars(n_param)
+
+    ! define global current variables for the double well function x^2 - y^2 + y^4,
+    ! which has a saddle point at the origin and minima at y = +-1/sqrt(2)
+    real(rp) :: double_well_vars(2)
+
+    ! define global variable selecting the one-dimensional function used to test the
+    ! bracketing
+    integer(ip) :: bracket_func_case
+
 contains
 
     ! 6D Hartmann function definition
@@ -157,6 +172,8 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
+        real(rp) :: grad(n_param)
+
         ! check host context
         call check_host_context(context)
 
@@ -165,6 +182,13 @@ contains
 
         ! initialize error flag
         error = 0
+
+        ! record whether the Hessian is applied to the normalized gradient at the
+        ! current variables
+        call hartmann6d_gradient(curr_vars, grad)
+        if (norm2(grad) > 0.0_rp) then
+            if (norm2(x - grad / norm2(grad)) < tol) hess_x_normalized_grad = .true.
+        end if
 
         hess_x = hartmann6d_hess_x(x)
 
@@ -273,6 +297,9 @@ contains
         ! initialize error flag
         error = 0
 
+        ! record whether function is evaluated without displacement
+        if (maxval(abs(delta_vars)) <= 0.0_rp) obj_func_zero_step = .true.
+
         func = hartmann6d_func(curr_vars + delta_vars)
 
     end function obj_func
@@ -303,7 +330,8 @@ contains
         ! initialize error flag
         error = 0
 
-        ! update variables
+        ! record and update variables
+        last_delta_vars = delta_vars
         curr_vars = curr_vars + delta_vars
 
         ! evaluate function, calculate gradient and Hessian diagonal and define Hessian
@@ -336,6 +364,169 @@ contains
 
     end subroutine update_orbs_no_hess_x
 
+    ! double well function definition
+
+    function double_well_func(vars) result(f)
+        !
+        ! this function defines the double well function
+        !
+        real(rp), intent(in) :: vars(:)
+        real(rp) :: f
+
+        f = vars(1)**2 - vars(2)**2 + vars(2)**4
+
+    end function double_well_func
+
+    subroutine double_well_hess_x(x, hess_x, error, context)
+        !
+        ! this function describes the Hessian linear transformation operation for the
+        ! double well function
+        !
+        real(rp), intent(in), target :: x(:)
+        real(rp), intent(out), target :: hess_x(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        hess_x = [2.0_rp, -2.0_rp + 12.0_rp * double_well_vars(2)**2] * x
+
+    end subroutine double_well_hess_x
+
+    function double_well_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes the objective function evaluation for the double
+        ! well function
+        !
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        func = double_well_func(double_well_vars + delta_vars)
+
+    end function double_well_obj_func
+
+    function raised_double_well_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes an objective function evaluation for the double
+        ! well function that is inconsistent with the orbital update since it raises
+        ! the function value, so that no displacement lowers the function value
+        !
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        func = double_well_func(double_well_vars + delta_vars) + 1.0_rp
+
+    end function raised_double_well_obj_func
+
+    subroutine double_well_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
+                                       error, context)
+        !
+        ! this function describes the orbital update equivalent for the double well
+        ! function
+        !
+        use opentrustregion, only: hess_x_type
+
+        real(rp), intent(in), target :: delta_vars(:)
+        real(rp), intent(out) :: func
+        real(rp), intent(out), target :: grad(:), h_diag(:)
+        procedure(hess_x_type), intent(inout), pointer :: hess_x_funptr
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        ! initialize error flag
+        error = 0
+
+        ! update variables
+        double_well_vars = double_well_vars + delta_vars
+
+        ! evaluate function, calculate gradient and Hessian diagonal and define Hessian
+        ! linear transformation
+        func = double_well_func(double_well_vars)
+        grad = [2.0_rp * double_well_vars(1), &
+                -2.0_rp * double_well_vars(2) + 4.0_rp * double_well_vars(2)**3]
+        h_diag = [2.0_rp, -2.0_rp + 12.0_rp * double_well_vars(2)**2]
+        hess_x_funptr => double_well_hess_x
+
+    end subroutine double_well_update_orbs
+
+    function constant_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes an objective function evaluation that does not depend
+        ! on the displacement
+        !
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        func = 1.0_rp + 0.0_rp * sum(delta_vars)
+
+    end function constant_obj_func
+
+    function bracket_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes the objective function evaluation for the
+        ! one-dimensional functions used to test the bracketing, selected by the
+        ! global case variable
+        !
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        real(rp) :: x
+
+        ! check host context
+        call check_host_context(context)
+
+        ! initialize error flag
+        error = 0
+
+        x = delta_vars(1)
+        select case (bracket_func_case)
+        case (1)
+            func = (x - 3.0_rp)**2
+        case (2)
+            func = (x - 2.0_rp)**4
+        case (3)
+            func = exp(-x) + 0.01_rp * x
+        case (4)
+            func = abs(x - 2.2_rp)
+        case (5)
+            func = sqrt(abs(x - 5.0_rp))
+        case (6)
+            func = (x - 1000.0_rp)**2
+        case (7)
+            func = (x - 2.0_rp)**2 + 10.0_rp * exp(-100.0_rp * (x - 2.0_rp)**2)
+        case (8)
+            func = -x
+        case default
+            func = 1.0_rp
+        end select
+
+    end function bracket_obj_func
+
     subroutine mock_precond(residual, mu, precond_residual, error, context)
         !
         ! this subroutine is a test subroutine for the preconditioner subroutine
@@ -354,6 +545,30 @@ contains
         error = 0
 
     end subroutine mock_precond
+
+    subroutine step_recording_precond(residual, mu, precond_residual, error, context)
+        !
+        ! this subroutine is an identity preconditioner which records whether it
+        ! received the last nonvanishing displacement passed to the Hartmann 6D orbital
+        ! update
+        !
+        real(rp), intent(in), target :: residual(:)
+        real(rp), intent(in) :: mu
+        real(rp), intent(out), target :: precond_residual(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        if (maxval(abs(last_delta_vars)) > 0.0_rp .and. &
+            maxval(abs(residual - last_delta_vars)) <= 0.0_rp) &
+            precond_received_step = .true.
+        precond_residual = residual + 0.0_rp * mu
+
+        error = 0
+
+    end subroutine step_recording_precond
 
     subroutine mock_project(vector, error, context)
         !
@@ -590,87 +805,24 @@ contains
         use opentrustregion, only: &
             update_orbs_type, obj_func_type, solver_settings_type, solver, &
             default_settings => default_solver_settings, error_solver_max_iter, &
-            error_update_orbs, error_conv_check
+            error_update_orbs, error_conv_check, error_solver
 
         real(rp), parameter :: var_thres = 1e-6_rp
         integer(ip) :: error
         real(rp), allocatable :: final_grad(:)
         procedure(update_orbs_type), pointer :: update_orbs_funptr
         procedure(obj_func_type), pointer :: obj_func_funptr
-        type(solver_settings_type) :: settings
+        type(solver_settings_type) :: settings, uninitialized_settings
         real(rp) :: start_vars(n_param)
 
         ! assume tests pass
         test_solver = .true.
-
-        ! start in quadratic region near minimum
-        curr_vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
-        update_orbs_funptr => update_orbs
-        obj_func_funptr => obj_func
 
         ! initialize settings
         call settings%init(error)
 
         ! allocate space for the final gradient
         allocate(final_grad(n_param))
-
-        ! run solver, check if error has occured and check whether gradient is zero and
-        ! agrees with correct minimum, that the reported number of orbital updates
-        ! agrees with the orbital update calls and that convergence is not flagged as
-        ! reaching maximum precision
-        n_update_orbs_calls = 0
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
-        if (error /= 0) then
-            write(stderr, *) "test_solver failed: Produced error."
-            test_solver = .false.
-        end if
-        call hartmann6d_gradient(curr_vars, final_grad)
-        if (norm2(final_grad) / sqrt(real(n_param, kind=rp)) > &
-            default_settings%conv_tol) then
-            write(stderr, *) "test_solver failed: Solver did not find stationary point."
-            test_solver = .false.
-        end if
-        if (any(abs(curr_vars - minimum1) > var_thres)) then
-            write(stderr, *) "test_solver failed: Solver did not find correct minimum."
-            test_solver = .false.
-        end if
-        test_solver = test_solver .and. logical(call_counts_match( &
-            "solver", "near minimum", n_update_orbs=settings%n_update_orbs), &
-            kind=c_bool)
-        if (settings%max_precision_reached) then
-            write(stderr, *) "test_solver failed: Flagged that maximum precision "// &
-                "was reached when convergence tolerance was met."
-            test_solver = .false.
-        end if
-
-        ! start near saddle point
-        curr_vars = [0.35_rp, 0.59_rp, 0.48_rp, 0.40_rp, 0.31_rp, 0.32_rp]
-        update_orbs_funptr => update_orbs
-        obj_func_funptr => obj_func
-
-        ! run solver, check if error has occured and check whether gradient is zero and
-        ! agrees with correct minimum, the settings object is reused so the reported
-        ! number of orbital updates must not include the previous call
-        n_update_orbs_calls = 0
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
-        if (error /= 0) then
-            write(stderr, *) "test_solver failed: Produced error."
-            test_solver = .false.
-        end if
-        call hartmann6d_gradient(curr_vars, final_grad)
-        if (norm2(final_grad) / sqrt(real(n_param, kind=rp)) > &
-            default_settings%conv_tol) then
-            write(stderr, *) "test_solver failed: Solver did not find stationary point."
-            test_solver = .false.
-        end if
-        if (any(abs(curr_vars - minimum1) > var_thres) .and. &
-            any(abs(curr_vars - minimum2) > var_thres)) then
-            write(stderr, *) "test_solver failed: Solver did not find correct minimum."
-            test_solver = .false.
-        end if
-        test_solver = test_solver .and. logical(call_counts_match( &
-            "solver", "near saddle point", n_update_orbs=settings%n_update_orbs), &
-            kind=c_bool)
 
         ! start at saddle point
         curr_vars = saddle_point
@@ -686,12 +838,19 @@ contains
         ! verbosity and check that it gets propagated to the nested settings
         settings%verbose = 2_ip
 
+        ! check that the objective function is not evaluated without displacement,
+        ! which only the line search does
+        obj_func_zero_step = .false.
+
         ! hand the callback functions a host context, the internal stability check has
         ! to inherit it since it calls back into the same host
         call arm_host_context(settings)
 
         ! run solver, check if error has occured and check whether gradient is zero and
-        ! agrees with correct minimum
+        ! agrees with correct minimum, that the reported number of orbital updates
+        ! agrees with the orbital update calls and that convergence is not flagged as
+        ! reaching maximum precision
+        n_update_orbs_calls = 0
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
             write(stderr, *) "test_solver failed: Produced error."
@@ -718,6 +877,19 @@ contains
             write(stderr, *) "test_solver failed: Solver did not find minimum."
             test_solver = .false.
         end if
+        test_solver = test_solver .and. logical(call_counts_match( &
+            "solver", "at saddle point", n_update_orbs=settings%n_update_orbs), &
+            kind=c_bool)
+        if (settings%max_precision_reached) then
+            write(stderr, *) "test_solver failed: Flagged that maximum precision "// &
+                "was reached when convergence tolerance was met."
+            test_solver = .false.
+        end if
+        if (obj_func_zero_step) then
+            write(stderr, *) "test_solver failed: Line search performed although "// &
+                "it was not requested."
+            test_solver = .false.
+        end if
         test_solver = test_solver .and. &
                       logical(host_context_reached("solver"), kind=c_bool)
         if (associated(settings%stability_settings%context)) then
@@ -737,6 +909,7 @@ contains
         settings%stability_settings%logger => null()
         call arm_host_context(settings)
         settings%stability_settings%context => stability_host_context
+        n_update_orbs_calls = 0
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
             write(stderr, *) "test_solver failed: Produced error when nested "// &
@@ -745,6 +918,9 @@ contains
         end if
         test_solver = test_solver .and. &
                       logical(host_context_reached("solver"), kind=c_bool)
+        test_solver = test_solver .and. logical( &
+            call_counts_match("solver", "when settings object is reused", &
+                              n_update_orbs=settings%n_update_orbs), kind=c_bool)
         if (stability_host_context%n_calls == 0) then
             write(stderr, *) "test_solver failed: Hessian linear transformation "// &
                 "did not receive the context of the nested stability check settings."
@@ -948,6 +1124,116 @@ contains
             call_counts_match("solver", "for missing Hessian linear transformation", &
                               n_update_orbs=settings%n_update_orbs), kind=c_bool)
 
+        ! run solver with settings that were not initialized and check that these are
+        ! initialized
+        update_orbs_funptr => update_orbs
+        obj_func_funptr => obj_func
+        curr_vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, &
+                    uninitialized_settings)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error for settings that "// &
+                "were not initialized."
+            test_solver = .false.
+        end if
+        if (.not. uninitialized_settings%initialized) then
+            write(stderr, *) "test_solver failed: Settings were not initialized."
+            test_solver = .false.
+        end if
+
+        ! check that the line search brackets the step starting from a vanishing step
+        curr_vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        call settings%init(error)
+        settings%line_search = .true.
+        obj_func_zero_step = .false.
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error with line search."
+            test_solver = .false.
+        end if
+        call hartmann6d_gradient(curr_vars, final_grad)
+        if (norm2(final_grad) / sqrt(real(n_param, kind=rp)) > settings%conv_tol) then
+            write(stderr, *) "test_solver failed: Solver did not find stationary "// &
+                "point with line search."
+            test_solver = .false.
+        end if
+        if (.not. obj_func_zero_step) then
+            write(stderr, *) "test_solver failed: Line search was not performed."
+            test_solver = .false.
+        end if
+
+        ! check that the truncated conjugate gradient solver is used instead of the
+        ! Davidson solvers, whose first trial vector is the normalized gradient, and
+        ! that the reported step size is measured with the preconditioner
+        curr_vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        call settings%init(error)
+        settings%subsystem_solver = "tcg"
+        settings%precond => step_recording_precond
+        hess_x_normalized_grad = .false.
+        precond_received_step = .false.
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error with truncated "// &
+                "conjugate gradient."
+            test_solver = .false.
+        end if
+        call hartmann6d_gradient(curr_vars, final_grad)
+        if (norm2(final_grad) / sqrt(real(n_param, kind=rp)) > settings%conv_tol) then
+            write(stderr, *) "test_solver failed: Solver did not find stationary "// &
+                "point with truncated conjugate gradient."
+            test_solver = .false.
+        end if
+        if (hess_x_normalized_grad) then
+            write(stderr, *) "test_solver failed: Davidson solver used instead of "// &
+                "truncated conjugate gradient."
+            test_solver = .false.
+        end if
+        if (.not. precond_received_step) then
+            write(stderr, *) "test_solver failed: Step size not measured with "// &
+                "preconditioner for truncated conjugate gradient."
+            test_solver = .false.
+        end if
+
+        ! converge to the saddle point of the double well function by excluding the
+        ! direction of negative curvature from the reduced space and check that the
+        ! requested stability check detects the saddle point and the optimization
+        ! continues to a minimum
+        call setup_settings(settings)
+        settings%stability = .true.
+        settings%n_random_trial_vectors = 0
+        double_well_vars = [0.5_rp, 0.0_rp]
+        update_orbs_funptr => double_well_update_orbs
+        obj_func_funptr => double_well_obj_func
+        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error when saddle point "// &
+                "is reached."
+            test_solver = .false.
+        end if
+        if (index(log_message, "Reached saddle point.") == 0) then
+            write(stderr, *) "test_solver failed: Did not detect saddle point "// &
+                "reached during optimization."
+            test_solver = .false.
+        end if
+        if (abs(double_well_vars(2)) < 0.5_rp) then
+            write(stderr, *) "test_solver failed: Did not continue to minimum "// &
+                "after saddle point was reached."
+            test_solver = .false.
+        end if
+
+        ! start at the saddle point of the double well function with an objective
+        ! function that no displacement lowers and check that the failed line search
+        ! along the unstable mode returns an error
+        call settings%init(error)
+        double_well_vars = [0.0_rp, 0.0_rp]
+        obj_func_funptr => raised_double_well_obj_func
+        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings)
+        if (error /= error_solver + 1) then
+            write(stderr, *) "test_solver failed: Did not return error when line "// &
+                "search along unstable mode fails."
+            test_solver = .false.
+        end if
+
         ! deallocate space for the gradient
         deallocate(final_grad)
 
@@ -958,14 +1244,15 @@ contains
         ! this function tests the stability check subroutine
         !
         use opentrustregion, only: hess_x_type, stability_settings_type, &
-                                   stability_check, error_stability_check_max_iter
+                                   stability_check, error_stability_check_max_iter, &
+                                   verbosity_debug
 
         real(rp) :: vars(n_param), h_diag(n_param), direction(n_param), &
                     hess_eigvals(n_param), hess_eigvecs(n_param, n_param)
         procedure(hess_x_type), pointer :: hess_x_funptr
         logical :: stable
         integer(ip) :: error, i
-        type(stability_settings_type) :: settings
+        type(stability_settings_type) :: settings, uninitialized_settings
 
         ! assume tests pass
         test_stability_check = .true.
@@ -1068,12 +1355,14 @@ contains
         end if
 
         ! run stability check at saddle point with the Jacobi-Davidson method switched
-        ! on after the first iteration, so that the Hessian linear transformations
+        ! on after the first iteration, check that the correction equations are solved,
+        ! which is logged at debug verbosity, so that the Hessian linear transformations
         ! performed in the Jacobi-Davidson correction are counted as well, the Hessian
         ! linear transformation is slightly asymmetric so that the ones recalculated
         ! when Hessian symmetry is violated are also counted
         hess_x_funptr => hess_x_fun_asymmetric
-        call settings%init(error)
+        call setup_settings(settings)
+        settings%verbose = verbosity_debug
         settings%diag_solver = "jacobi-davidson"
         settings%jacobi_davidson_start = 1
         n_hess_x_calls = 0
@@ -1081,6 +1370,11 @@ contains
         if (error /= 0) then
             write(stderr, *) "test_stability_check failed: Produced error with "// &
                 "Jacobi-Davidson method."
+            test_stability_check = .false.
+        end if
+        if (index(log_message, "MINRES") == 0) then
+            write(stderr, *) "test_stability_check failed: Jacobi-Davidson "// &
+                "correction equations not solved."
             test_stability_check = .false.
         end if
         if (stable) then
@@ -1107,6 +1401,22 @@ contains
         test_stability_check = test_stability_check .and. logical(call_counts_match( &
             "stability_check", "for failing Hessian linear transformation", &
             settings%n_hess_x), kind=c_bool)
+
+        ! run stability check with settings that were not initialized and check that
+        ! these are initialized
+        hess_x_funptr => hess_x_fun
+        call stability_check(h_diag, hess_x_funptr, stable, error, &
+                             uninitialized_settings)
+        if (error /= 0) then
+            write(stderr, *) "test_stability_check failed: Produced error for "// &
+                "settings that were not initialized."
+            test_stability_check = .false.
+        end if
+        if (.not. uninitialized_settings%initialized) then
+            write(stderr, *) "test_stability_check failed: Settings were not "// &
+                "initialized."
+            test_stability_check = .false.
+        end if
 
     end function test_stability_check
 
@@ -1299,6 +1609,63 @@ contains
             test_bisection = .false.
         end if
 
+        ! set up a reduced space Hessian in an orthonormal basis with a negative
+        ! eigenvalue whose eigenvector has a gradient component and which is large
+        ! compared to the gradient, so that the step at the starting alpha is longer
+        ! than the trust radius and alpha has to be increased repeatedly to bracket the
+        ! trust radius
+        red_space_basis = 0.0_rp
+        red_space_basis(1, 1) = 1.0_rp
+        red_space_basis(2, 2) = 1.0_rp
+        red_space_basis(3, 3) = 1.0_rp
+        grad_norm = 0.1_rp
+        trust_radius = 0.5_rp
+        aug_hess = 0.0_rp
+        aug_hess(2, 2) = -10.0_rp
+        aug_hess(3, 3) = 2.0_rp
+        aug_hess(4, 4) = 3.0_rp
+
+        ! diagonalize Hessian
+        call ref_symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                               red_space_hess_eigvecs)
+
+        ! perform bisection, check whether error has occured and determine whether
+        ! resulting solution respects target trust radius, solves the level-shifted
+        ! Newton equations in reduced space for a level shift below the lowest reduced
+        ! space Hessian eigenvalue and is correctly transformed to the full space
+        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
+                       red_space_hess_eigvecs, trust_radius, solution, &
+                       red_space_solution, mu, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_bisection failed: Produced error when alpha has "// &
+                "to be increased."
+            test_bisection = .false.
+        end if
+        if (abs(norm2(solution) - trust_radius) > tol) then
+            write(stderr, *) "test_bisection failed: Solution does not respect "// &
+                "trust radius when alpha has to be increased."
+            test_bisection = .false.
+        end if
+        red_space_grad = 0.0_rp
+        red_space_grad(1) = grad_norm
+        if (any(abs(matmul(aug_hess(2:, 2:), red_space_solution) - &
+                    mu * red_space_solution + red_space_grad) > tol)) then
+            write(stderr, *) "test_bisection failed: Reduced space solution does "// &
+                "not solve level-shifted Newton equations when alpha has to be "// &
+                "increased."
+            test_bisection = .false.
+        end if
+        if (mu > minval(red_space_hess_eigvals)) then
+            write(stderr, *) "test_bisection failed: Level shift not below lowest "// &
+                "reduced space Hessian eigenvalue when alpha has to be increased."
+            test_bisection = .false.
+        end if
+        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+            write(stderr, *) "test_bisection failed: Full space solution not "// &
+                "correct when alpha has to be increased."
+            test_bisection = .false.
+        end if
+
         ! set up hard case by using an orthonormal basis as this is what the hard case
         ! step assumes
         red_space_basis = 0.0_rp
@@ -1414,8 +1781,26 @@ contains
 
         type(solver_settings_type) :: settings
         procedure(obj_func_type), pointer :: obj_func_funptr
-        real(rp) :: vars(n_param), lower, upper, n
-        integer(ip) :: error
+        real(rp) :: n
+        integer(ip) :: error, i
+        integer(ip), parameter :: n_cases = 9
+        real(rp), parameter :: direction(1) = [1.0_rp]
+        character(len=*), parameter :: case_names(n_cases) = &
+            [character(len=26) :: "(x - 3)^2", "(x - 2)^4", "exp(-x) + x / 100", &
+             "|x - 2.2|", "sqrt(|x - 5|)", "(x - 1000)^2", "(x - 2)^2 with bump at 2", &
+             "-x", "constant"]
+        logical, parameter :: expect_error(n_cases) = &
+            [.false., .false., .false., .false., .false., .false., .false., .true., &
+             .true.]
+
+        ! expected multipliers, the first one at the minimum where the parabolic fit
+        ! is exact, the golden ratio steps 1 + phi and 3 + sqrt(5) for functions that
+        ! reject the parabolic fits and the remaining ones reproduced with an
+        ! independent implementation of the bracketing algorithm
+        real(rp), parameter :: expected_n(n_cases) = &
+            [3.0_rp, 1.8567627457812104_rp, 4.141367271592155_rp, &
+             (3.0_rp + sqrt(5.0_rp)) / 2.0_rp, 3.0_rp + sqrt(5.0_rp), &
+             1000.0000000003488_rp, 1.0_rp, 0.0_rp, 0.0_rp]
 
         ! assume tests pass
         test_bracket = .true.
@@ -1424,39 +1809,45 @@ contains
         call setup_settings(settings)
 
         ! define procedure pointer
-        obj_func_funptr => obj_func
+        obj_func_funptr => bracket_obj_func
 
-        ! define direction
-        vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        ! bracket the minimum of one-dimensional functions which drive the bracketing
+        ! through its parabolic extrapolation steps, its golden ratio steps and its
+        ! error conditions and determine whether the expected multiplier or an error
+        ! is returned
+        do i = 1, n_cases
+            bracket_func_case = i
+            n = bracket(obj_func_funptr, direction, 0.0_rp, 1.0_rp, settings, error)
+            if (expect_error(i)) then
+                if (error == 0) then
+                    write(stderr, *) "test_bracket failed for "//trim(case_names(i))// &
+                        ": Did not return error."
+                    test_bracket = .false.
+                end if
+            else
+                if (error /= 0) then
+                    write(stderr, *) "test_bracket failed for "//trim(case_names(i))// &
+                        ": Produced error."
+                    test_bracket = .false.
+                end if
+                if (abs(n - expected_n(i)) > tol * abs(expected_n(i))) then
+                    write(stderr, *) "test_bracket failed for "//trim(case_names(i))// &
+                        ": Returned multiplier not correct."
+                    test_bracket = .false.
+                end if
+            end if
+        end do
 
-        ! define lower and upper bound
-        lower = 0.0_rp
-        upper = 0.5_rp
-
-        ! perform bracket and determine if new point decreases objective function in
-        ! comparison to lower and upper bound
-        n = bracket(obj_func_funptr, vars, lower, upper, settings, error)
+        ! swap lower and upper bound and determine whether the same minimum is found
+        bracket_func_case = 1
+        n = bracket(obj_func_funptr, direction, 1.0_rp, 0.0_rp, settings, error)
         if (error /= 0) then
-            write(stderr, *) "test_bracket failed: Produced error."
+            write(stderr, *) "test_bracket failed for swapped bounds: Produced error."
             test_bracket = .false.
         end if
-        if (hartmann6d_func(n * vars) >= hartmann6d_func(lower * vars) .and. &
-            hartmann6d_func(n * vars) >= hartmann6d_func(upper * vars)) then
-            write(stderr, *) "test_bracket failed: Line search does not produce "// &
-                "lower function value than starting points."
-            test_bracket = .false.
-        end if
-
-        ! try different order
-        n = bracket(obj_func_funptr, vars, upper, lower, settings, error)
-        if (error /= 0) then
-            write(stderr, *) "test_bracket failed: Produced error."
-            test_bracket = .false.
-        end if
-        if (hartmann6d_func(n * vars) >= hartmann6d_func(lower * vars) .and. &
-            hartmann6d_func(n * vars) >= hartmann6d_func(upper * vars)) then
-            write(stderr, *) "test_bracket failed: Line search does not produce "// &
-                "lower function value than starting points."
+        if (abs(n - expected_n(1)) > tol * abs(expected_n(1))) then
+            write(stderr, *) "test_bracket failed for swapped bounds: Returned "// &
+                "multiplier not correct."
             test_bracket = .false.
         end if
 
@@ -2455,6 +2846,21 @@ contains
             test_print_results = .false.
         end if
 
+        ! reset log message
+        log_message = ""
+
+        ! print row of results table with micro iterations but without Jacobi-Davidson
+        ! micro iterations
+        call settings%print_results(1_ip, 2.0_rp, 3.0_rp, level_shift=4.0_rp, &
+                                    n_micro=5_ip, trust_radius=7.0_rp, &
+                                    kappa_norm=8.0_rp)
+        if (log_message /= "        1   |     2.00000000000000E+00   "// &
+            "|   3.00E+00   |   4.00E+00  |         5  |    7.00E+00  |  8.00E+00") then
+            write(stderr, *) "test_print_results failed: Printed row without "// &
+                "Jacobi-Davidson micro iterations not correct."
+            test_print_results = .false.
+        end if
+
     end function test_print_results
 
     logical(c_bool) function test_print_message() bind(C)
@@ -3213,6 +3619,27 @@ contains
             test_truncated_conjugate_gradient .and. logical(call_counts_match( &
                 "truncated_conjugate_gradient", "for failing Hessian linear "// &
                 "transformation", n_hess_x=settings%n_hess_x), kind=c_bool)
+
+        ! evaluate an objective function which does not change with the step and
+        ! check that the calculation is reported as converged up to floating point
+        ! precision
+        func = 1.0_rp
+        trust_radius = 0.4_rp
+        obj_func_funptr => constant_obj_func
+        hess_x_funptr => hess_x_fun
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            trust_radius, solution, imicro, max_precision_reached, error)
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error when function value does not change."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (.not. max_precision_reached) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Maximum "// &
+                "precision not reached when function value does not change."
+            test_truncated_conjugate_gradient = .false.
+        end if
 
     end function test_truncated_conjugate_gradient
 
