@@ -102,7 +102,7 @@ module c_interface
         subroutine logger_c_type(message, context_c) bind(C)
             import :: c_char, c_ptr
 
-            character(c_char), intent(in) :: message(*)
+            character(kind=c_char), intent(in) :: message(*)
             type(c_ptr), intent(in), value :: context_c
         end subroutine logger_c_type
     end interface
@@ -127,7 +127,7 @@ module c_interface
         real(c_rp) :: conv_tol
         integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
                          verbose, n_hess_x
-        character(c_char) :: diag_solver(kw_len + 1)
+        character(kind=c_char) :: diag_solver(kw_len + 1)
         type(c_ptr) :: context
     end type
 
@@ -138,7 +138,7 @@ module c_interface
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
                          jacobi_davidson_start, seed, verbose, n_update_orbs, n_hess_x
-        character(c_char) :: subsystem_solver(kw_len + 1)
+        character(kind=c_char) :: subsystem_solver(kw_len + 1)
         type(stability_settings_type_c) :: stability_settings
         type(c_ptr) :: context
     end type
@@ -189,18 +189,17 @@ contains
         ! bundle the C function pointers
         call c_f_procpointer(cptr=update_orbs_c_funptr, fptr=callbacks%update_orbs)
         call c_f_procpointer(cptr=obj_func_c_funptr, fptr=callbacks%obj_func)
-        call store_optional_c_callbacks(callbacks, settings_c%initialized, &
-                                        settings_c%precond, settings_c%project, &
-                                        settings_c%conv_check, settings_c%logger, &
-                                        settings_c%context)
+        call store_optional_c_callbacks( &
+            callbacks, settings_c%initialized, settings_c%precond, settings_c%project, &
+            settings_c%conv_check, settings_c%logger, settings_c%context)
 
         ! the solver lets the internal stability check inherit its optional callback
         ! functions when the nested settings do not provide their own, so the nested
         ! bundle starts as a copy of the solver's and only the provided ones override
         stability_callbacks = callbacks
         call store_optional_c_callbacks( &
-            stability_callbacks, settings_c%initialized .and. &
-            settings_c%stability_settings%initialized, &
+            stability_callbacks, &
+            settings_c%initialized .and. settings_c%stability_settings%initialized, &
             settings_c%stability_settings%precond, &
             settings_c%stability_settings%project, c_null_funptr, &
             settings_c%stability_settings%logger, settings_c%stability_settings%context)
@@ -223,8 +222,8 @@ contains
         call solver(update_orbs, obj_func, n_param, error, settings)
 
         ! write output fields back into the C settings object directly
-        settings_c%max_precision_reached = logical(settings%max_precision_reached, &
-                                                   kind=c_bool)
+        settings_c%max_precision_reached = &
+            logical(settings%max_precision_reached, kind=c_bool)
         settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
         settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
         settings_c%stability_settings%n_hess_x = &
@@ -235,9 +234,9 @@ contains
 
     end function solver_c_wrapper
 
-    function stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, &
-                                       stable_c, settings_c, kappa_c_ptr) &                    
-        result(error_c) bind(C, name="stability_check")
+    function stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, stable_c, &
+                                       settings_c, kappa_c_ptr) result(error_c) &
+        bind(C, name="stability_check")
         !
         ! this function exposes a Fortran-implemented stability check subroutine to C
         !
@@ -261,10 +260,9 @@ contains
 
         ! bundle the C function pointers
         call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
-        call store_optional_c_callbacks(callbacks, settings_c%initialized, &
-                                        settings_c%precond, settings_c%project, &
-                                        c_null_funptr, settings_c%logger, &
-                                        settings_c%context)
+        call store_optional_c_callbacks( &
+            callbacks, settings_c%initialized, settings_c%precond, settings_c%project, &
+            c_null_funptr, settings_c%logger, settings_c%context)
 
         ! associate procedure pointer to wrapper function
         hess_x => hess_x_f_wrapper
@@ -411,7 +409,7 @@ contains
 
     subroutine hess_x_f_wrapper(x, hess_x, error, context)
         !
-        ! this subroutine exposes a C-implemented Hessian linear transformation to 
+        ! this subroutine exposes a C-implemented Hessian linear transformation to
         ! Fortran
         !
         real(rp), intent(in), target :: x(:)
@@ -599,7 +597,7 @@ contains
         !
         ! this subroutine exposes a C-implemented logger function to Fortran
         !
-        character(*), intent(in) :: message
+        character(len=*), intent(in) :: message
         class(*), intent(in), pointer :: context
 
         character(kind=c_char), allocatable :: message_c(:)
@@ -611,9 +609,9 @@ contains
         do i = 1, message_len
             message_c(i - 1) = message(i:i)
         end do
-        
+
         ! append null terminator
-        message_c(message_len) = c_null_char 
+        message_c(message_len) = c_null_char
 
         ! call logging C function
         select type (callbacks => context)
@@ -689,12 +687,12 @@ contains
             settings%local_red_factor = real(settings_c%local_red_factor, kind=rp)
 
             ! convert integers
-            settings%n_random_trial_vectors = int(settings_c%n_random_trial_vectors, &
-                                                  kind=ip)
+            settings%n_random_trial_vectors = &
+                int(settings_c%n_random_trial_vectors, kind=ip)
             settings%n_macro = int(settings_c%n_macro, kind=ip)
             settings%n_micro = int(settings_c%n_micro, kind=ip)
-            settings%jacobi_davidson_start = int(settings_c%jacobi_davidson_start, &
-                                                 kind=ip)
+            settings%jacobi_davidson_start = &
+                int(settings_c%jacobi_davidson_start, kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
             settings%n_update_orbs = int(settings_c%n_update_orbs, kind=ip)
@@ -748,11 +746,11 @@ contains
             settings%conv_tol = real(settings_c%conv_tol, kind=rp)
 
             ! convert integers
-            settings%n_random_trial_vectors = int(settings_c%n_random_trial_vectors, &
-                                                  kind=ip)
+            settings%n_random_trial_vectors = &
+                int(settings_c%n_random_trial_vectors, kind=ip)
             settings%n_iter = int(settings_c%n_iter, kind=ip)
-            settings%jacobi_davidson_start = int(settings_c%jacobi_davidson_start, &
-                                                 kind=ip)
+            settings%jacobi_davidson_start = &
+                int(settings_c%jacobi_davidson_start, kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
             settings%n_hess_x = int(settings_c%n_hess_x, kind=ip)
@@ -790,8 +788,8 @@ contains
             ! convert logicals
             settings_c%stability = logical(settings%stability, kind=c_bool)
             settings_c%line_search = logical(settings%line_search, kind=c_bool)
-            settings_c%max_precision_reached = logical(settings%max_precision_reached, &
-                                                       kind=c_bool)
+            settings_c%max_precision_reached = &
+                logical(settings%max_precision_reached, kind=c_bool)
 
             ! convert reals
             settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
@@ -800,12 +798,12 @@ contains
             settings_c%local_red_factor = real(settings%local_red_factor, kind=c_rp)
 
             ! convert integers
-            settings_c%n_random_trial_vectors = int(settings%n_random_trial_vectors, &
-                                                    kind=c_ip)
+            settings_c%n_random_trial_vectors = &
+                int(settings%n_random_trial_vectors, kind=c_ip)
             settings_c%n_macro = int(settings%n_macro, kind=c_ip)
             settings_c%n_micro = int(settings%n_micro, kind=c_ip)
-            settings_c%jacobi_davidson_start = int(settings%jacobi_davidson_start, &
-                                                   kind=c_ip)
+            settings_c%jacobi_davidson_start = &
+                int(settings%jacobi_davidson_start, kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
             settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
@@ -845,11 +843,11 @@ contains
             settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
 
             ! convert integers
-            settings_c%n_random_trial_vectors = int(settings%n_random_trial_vectors, &
-                                                    kind=c_ip)
+            settings_c%n_random_trial_vectors = &
+                int(settings%n_random_trial_vectors, kind=c_ip)
             settings_c%n_iter = int(settings%n_iter, kind=c_ip)
-            settings_c%jacobi_davidson_start = int(settings%jacobi_davidson_start, &
-                                                   kind=c_ip)
+            settings_c%jacobi_davidson_start = &
+                int(settings%jacobi_davidson_start, kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
             settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
@@ -868,11 +866,11 @@ contains
 
     function character_from_c(char_c) result(char_f)
         !
-        ! this function converts a C null-terminated character array to a Fortran 
+        ! this function converts a C null-terminated character array to a Fortran
         ! character
         !
-        character(c_char), intent(in) :: char_c(*)
-        character(:), allocatable :: char_f
+        character(kind=c_char), intent(in) :: char_c(*)
+        character(len=:), allocatable :: char_f
 
         integer(ip) :: n
 
@@ -881,7 +879,7 @@ contains
         do while (char_c(n) /= c_null_char)
             n = n + 1
         end do
-        allocate(character(n - 1) :: char_f)
+        allocate(character(len=n - 1) :: char_f)
 
         ! copy and convert each character
         char_f = transfer(char_c(1:n - 1), char_f)
@@ -890,11 +888,11 @@ contains
 
     function character_to_c(char_f) result(char_c)
         !
-        ! this function converts a Fortran character string to a C null-terminated 
+        ! this function converts a Fortran character string to a C null-terminated
         ! character array
         !
-        character(*), intent(in) :: char_f
-        character(c_char), allocatable :: char_c(:)
+        character(len=*), intent(in) :: char_f
+        character(kind=c_char), allocatable :: char_c(:)
 
         integer(ip) :: n
 

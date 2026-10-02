@@ -11,7 +11,7 @@ on:
 
 jobs:
   formatting:
-    name: "Formatting • black + clang-format"
+    name: "Formatting • black + clang-format + f90_layout"
     runs-on: ubuntu-latest
     steps:
     - name: Checkout OpenTrustRegion
@@ -26,13 +26,16 @@ jobs:
       run: pip install black
 
     - name: Check Python formatting
-      run: black --check --diff pyopentrustregion setup.py
+      run: black --check --diff pyopentrustregion setup.py tools
 
     - name: Install clang-format
       run: sudo apt-get update && sudo apt-get install -y clang-format
 
     - name: Check C formatting
       run: git ls-files '*.c' '*.h' | xargs clang-format --dry-run --Werror
+
+    - name: Check Fortran formatting
+      run: python3 tools/f90_layout.py --all
 
   build-test-repo:
     strategy:

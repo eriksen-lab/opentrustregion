@@ -14,7 +14,7 @@ module opentrustregion_mock
 
     logical :: test_passed
 
-    ! output values the mock solver writes into the settings object, so that a test can 
+    ! output values the mock solver writes into the settings object, so that a test can
     ! check the C wrapper hands them back
     integer(ip), parameter :: mock_n_update_orbs = 3, mock_n_hess_x = 5, &
                               mock_stability_n_hess_x = 2
@@ -58,7 +58,7 @@ contains
         ! check number of parameters
         if (n_param /= 3) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed number of "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed number of "// &
                 "parameters wrong."
         end if
 
@@ -68,7 +68,7 @@ contains
         ! check if optional preconditioner subroutine is correctly passed
         if (.not. associated(settings%precond)) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed preconditioner "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed preconditioner "// &
                 "function not associated with value."
         else
             test_passed = test_passed .and. test_precond_funptr( &
@@ -79,7 +79,7 @@ contains
         ! check if optional projection subroutine is correctly passed
         if (.not. associated(settings%project)) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed projection "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed projection "// &
                 "function not associated with value."
         else
             test_passed = test_passed .and. test_project_funptr( &
@@ -90,7 +90,7 @@ contains
         ! check if optional convergence check function is correctly passed
         if (.not. associated(settings%conv_check)) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed convergence "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed convergence "// &
                 "check function not associated with value."
         else
             test_passed = test_passed .and. test_conv_check_funptr( &
@@ -101,7 +101,7 @@ contains
         ! check if optional logging function is correctly passed
         if (.not. associated(settings%logger)) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed logging "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed logging "// &
                 "function not associated with value."
         else
             call settings%logger("test", settings%context)
@@ -121,7 +121,7 @@ contains
         ! check if optional settings are correctly passed
         if (settings /= ref_settings) then
             test_passed = .false.
-            write (stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
+            write(stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
                 "settings associated with wrong values."
         end if
 
@@ -136,7 +136,7 @@ contains
     subroutine mock_stability_check(h_diag, hess_x_funptr, stable, error, settings, &
                                     kappa)
         !
-        ! this subroutine is a mock routine for the stability check to test the C 
+        ! this subroutine is a mock routine for the stability check to test the C
         ! interface
         !
         use opentrustregion, only: stability_settings_type
@@ -156,7 +156,7 @@ contains
         ! check Hessian diagonal
         if (any(abs(h_diag - 3.0_rp) > tol)) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal wrong."
         end if
 
@@ -173,7 +173,7 @@ contains
         ! check if optional preconditioner subroutine is correctly passed
         if (.not. associated(settings%precond)) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "preconditioner function not associated with value."
         else
             test_passed = test_passed .and. test_precond_funptr( &
@@ -184,7 +184,7 @@ contains
         ! check if optional projection subroutine is correctly passed
         if (.not. associated(settings%project)) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "projection function not associated with value."
         else
             test_passed = test_passed .and. test_project_funptr( &
@@ -195,7 +195,7 @@ contains
         ! check if optional logging function is correctly passed
         if (.not. associated(settings%logger)) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "logging function not associated with value."
         else
             call settings%logger("test", settings%context)
@@ -204,7 +204,7 @@ contains
         ! check if optional settings are correctly passed
         if (settings /= ref_settings) then
             test_passed = .false.
-            write (stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "optional settings associated with wrong values."
         end if
 
