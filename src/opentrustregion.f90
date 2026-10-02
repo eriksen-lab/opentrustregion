@@ -1292,6 +1292,9 @@ contains
         ! initialize error flag
         error = 0
 
+        ! allocate the function result as an empty array
+        allocate(red_space_basis(size(grad), 0))
+
         ! get minimum Hessian diagonal element
         min_idx = minloc(h_diag, dim=1)
 
@@ -1320,6 +1323,7 @@ contains
             end if
         end if
 
+        deallocate(red_space_basis)
         allocate( &
             red_space_basis(size(grad), n_vectors + settings%n_random_trial_vectors))
         red_space_basis(:, 1) = grad / grad_norm
@@ -1955,6 +1959,9 @@ contains
         len_input = len_trim(input)
         start_pos = 1
 
+        ! start from an empty set of substrings
+        allocate(character(len=max_length) :: substrings(0))
+
         do while (start_pos <= len_input)
             end_pos = min(start_pos + max_length - 1, len_input)
             space_pos = 0
@@ -1977,15 +1984,11 @@ contains
             ! add substring
             temp_string = " "
             temp_string(1:space_pos - start_pos + 1) = input(start_pos:space_pos)
-            if (allocated(substrings)) then
-                allocate(temp_substrings(size(substrings) + 1))
-                temp_substrings(1:size(substrings)) = substrings
-                substrings = temp_substrings
-                deallocate(temp_substrings)
-            else
-                allocate(character(len=max_length) :: substrings(1))
-            end if
-            substrings(size(substrings)) = temp_string
+            allocate(temp_substrings(size(substrings) + 1))
+            temp_substrings(1:size(substrings)) = substrings
+            temp_substrings(size(substrings) + 1) = temp_string
+            substrings = temp_substrings
+            deallocate(temp_substrings)
             start_pos = space_pos + 1
         end do
 
@@ -2053,10 +2056,12 @@ contains
         call dgemm("T", "N", n_trial, n_trial, n_param, 1.0_rp, red_space_basis, &
                    n_param, h_basis, n_param, 0.0_rp, aug_hess(2, 2), n_trial + 1)
 
-        ! allocate space for reduced space solution and Hessian linear transformation
-        ! of basis vector
+        ! allocate space for reduced space solution and basis vector, Hessian linear
+        ! transformation of solution and basis vector, residual and the (last)
+        ! normalized solution
         allocate(red_space_solution(n_trial), h_solution(n_param), basis_vec(n_param), &
-                 h_basis_vec(n_param), last_solution_normalized(n_param))
+                 h_basis_vec(n_param), residual(n_param), &
+                 solution_normalized(n_param), last_solution_normalized(n_param))
 
         ! decrease trust radius until micro iterations converge and step is accepted
         last_solution_normalized = 0.0_rp
@@ -2590,6 +2595,15 @@ contains
         ! check that number of parameters is positive
         if (n_param < 1) then
             call settings%log("Number of parameters should be larger than 0.", &
+                              verbosity_error, .true.)
+            error = 1
+            return
+        end if
+
+        ! check that number of microiterations is positive since the subsystem
+        ! solvers assume that at least one microiteration is performed
+        if (settings%n_micro < 1) then
+            call settings%log("Number of microiterations should be larger than 0.", &
                               verbosity_error, .true.)
             error = 1
             return
