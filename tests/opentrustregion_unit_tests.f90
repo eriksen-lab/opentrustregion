@@ -907,6 +907,47 @@ contains
 
     end subroutine mock_project_error
 
+    subroutine mock_project_out_pair(vector, error, context)
+        !
+        ! this subroutine is a test subroutine for the projection subroutine which
+        ! removes the component along the symmetric combination of the first two unit
+        ! vectors
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector(1:2) = vector(1:2) - 0.5_rp * sum(vector(1:2))
+
+        error = 0
+
+    end subroutine mock_project_out_pair
+
+    subroutine mock_project_first_component(vector, error, context)
+        !
+        ! this subroutine is a test subroutine for the projection subroutine which
+        ! keeps only the first component
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector(2:) = 0.0_rp
+
+        error = 0
+
+    end subroutine mock_project_first_component
+
     function mock_conv_check(error, context) result(converged)
         !
         ! this function describes a convergence check which always passes
@@ -1844,6 +1885,23 @@ contains
             test_newton_step = .false.
         end if
 
+        ! use a vanishing reduced space Hessian for which the Newton equations cannot
+        ! be solved and check that an error is returned and an error message is printed
+        aug_hess = 0.0_rp
+        call setup_error_logging(settings, context)
+        call newton_step(aug_hess, grad_norm, red_space_basis, solution, &
+                         red_space_solution, settings, error)
+        if (error == 0) then
+            write(stderr, *) "test_newton_step failed: No error returned for "// &
+                "singular reduced space Hessian."
+            test_newton_step = .false.
+        end if
+        if (len_trim(context%log_message) == 0) then
+            write(stderr, *) "test_newton_step failed: No error message printed "// &
+                "for singular reduced space Hessian."
+            test_newton_step = .false.
+        end if
+
     end function test_newton_step
 
     logical(c_bool) function test_bisection() bind(C)
@@ -2460,7 +2518,8 @@ contains
 
         type(solver_settings_type) :: settings
         real(rp), allocatable :: red_space_basis(:, :)
-        real(rp) :: grad(n_param), h_diag(n_param), grad_norm, neg_curv_vec(n_param)
+        real(rp) :: grad(n_param), h_diag(n_param), grad_norm, neg_curv_vec(n_param), &
+                    grad_small(2), h_diag_small(2)
         integer(ip) :: error
         type(test_context_type), target :: context
 
@@ -2549,6 +2608,78 @@ contains
             test_generate_trial_vectors = .false.
         end if
 
+        ! project the direction of the negative Hessian diagonal element with a
+        ! projection which removes the component along the symmetric combination of the
+        ! first two unit vectors and determine whether the second vector is the
+        ! orthonormalized projected direction
+        settings%project => mock_project_out_pair
+        red_space_basis = &
+            generate_trial_vectors(grad, grad_norm, h_diag, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_generate_trial_vectors failed: Produced error "// &
+                "with projection."
+            test_generate_trial_vectors = .false.
+        end if
+        neg_curv_vec = 0.0_rp
+        neg_curv_vec(2) = 1.0_rp
+        neg_curv_vec(1:2) = neg_curv_vec(1:2) - 0.5_rp * sum(neg_curv_vec(1:2))
+        neg_curv_vec = neg_curv_vec - &
+                       dot_product(neg_curv_vec, grad) / grad_norm**2 * grad
+        neg_curv_vec = neg_curv_vec / norm2(neg_curv_vec)
+        if (any(abs(red_space_basis(:, 2) - neg_curv_vec) > tol)) then
+            write(stderr, *) "test_generate_trial_vectors failed: Second vector is "// &
+                "not the orthonormalized projected direction of the negative "// &
+                "Hessian diagonal element."
+            test_generate_trial_vectors = .false.
+        end if
+        settings%project => null()
+
+        ! choose the gradient along the direction of the negative Hessian diagonal
+        ! element, which is then linearly dependent on the gradient, and determine
+        ! whether only the normalized gradient is followed by the random trial vectors
+        grad = 0.0_rp
+        call random_number(grad(2))
+        grad(2) = grad(2) + 1.0_rp
+        grad_norm = norm2(grad)
+        red_space_basis = &
+            generate_trial_vectors(grad, grad_norm, h_diag, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_generate_trial_vectors failed: Produced error "// &
+                "for gradient along negative Hessian diagonal element."
+            test_generate_trial_vectors = .false.
+        end if
+        if (size(red_space_basis, 2) /= 1 + settings%n_random_trial_vectors) then
+            write(stderr, *) "test_generate_trial_vectors failed: Incorrect number "// &
+                "of vectors for gradient along negative Hessian diagonal element."
+            test_generate_trial_vectors = .false.
+        end if
+        if (any(abs(red_space_basis(:, 1) - grad / grad_norm) > tol)) then
+            write(stderr, *) "test_generate_trial_vectors failed: First vector is "// &
+                "not the normalized gradient for gradient along negative Hessian "// &
+                "diagonal element."
+            test_generate_trial_vectors = .false.
+        end if
+
+        ! use only two parameters with a negative Hessian diagonal element and
+        ! determine whether no direction of the negative Hessian diagonal element is
+        ! added
+        settings%n_random_trial_vectors = 1
+        call random_number(grad_small)
+        call random_number(h_diag_small)
+        h_diag_small(2) = -h_diag_small(2) - 1.0_rp
+        red_space_basis = generate_trial_vectors(grad_small, norm2(grad_small), &
+                                                 h_diag_small, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_generate_trial_vectors failed: Produced error "// &
+                "for two parameters."
+            test_generate_trial_vectors = .false.
+        end if
+        if (size(red_space_basis, 2) /= 1 + settings%n_random_trial_vectors) then
+            write(stderr, *) "test_generate_trial_vectors failed: Incorrect number "// &
+                "of vectors for two parameters."
+            test_generate_trial_vectors = .false.
+        end if
+
         ! deallocate reduced space basis
         deallocate(red_space_basis)
 
@@ -2621,6 +2752,47 @@ contains
                 end if
             end do
         end do
+
+        ! project the random trial vectors with a projection which removes the
+        ! component along the symmetric combination of the first two unit vectors,
+        ! starting from a first basis vector without this component, and determine
+        ! whether the generated vectors do not have this component
+        settings%project => mock_project_out_pair
+        call random_number(red_space_basis(:, 1))
+        red_space_basis(1:2, 1) = red_space_basis(1:2, 1) - &
+                                  0.5_rp * sum(red_space_basis(1:2, 1))
+        red_space_basis(:, 1) = red_space_basis(:, 1) / norm2(red_space_basis(:, 1))
+        call generate_random_trial_vectors(red_space_basis, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_generate_random_trial_vectors failed: Produced "// &
+                "error with projection."
+            test_generate_random_trial_vectors = .false.
+        end if
+        if (any(abs(sum(red_space_basis(1:2, 2:), dim=1)) > tol)) then
+            write(stderr, *) "test_generate_random_trial_vectors failed: Generated "// &
+                "vectors are not projected."
+            test_generate_random_trial_vectors = .false.
+        end if
+
+        ! project the random trial vectors onto the first unit vector, which is the
+        ! first basis vector, so that every attempt produces a linearly dependent
+        ! vector, and determine whether an error is returned and an error message is
+        ! printed once the maximum number of attempts is reached
+        settings%project => mock_project_first_component
+        red_space_basis(:, 1) = 0.0_rp
+        red_space_basis(1, 1) = 1.0_rp
+        call setup_error_logging(settings, context)
+        call generate_random_trial_vectors(red_space_basis, settings, error)
+        if (error == 0) then
+            write(stderr, *) "test_generate_random_trial_vectors failed: No error "// &
+                "returned when no linearly independent vector can be generated."
+            test_generate_random_trial_vectors = .false.
+        end if
+        if (len_trim(context%log_message) == 0) then
+            write(stderr, *) "test_generate_random_trial_vectors failed: No error "// &
+                "message printed when no linearly independent vector can be generated."
+            test_generate_random_trial_vectors = .false.
+        end if
 
         ! deallocate reduced space basis
         deallocate(red_space_basis)
@@ -2789,7 +2961,11 @@ contains
                                    default_settings => default_solver_settings
         use test_reference, only: operator(/=)
 
+        type, extends(solver_settings_type) :: extended_solver_settings_type
+        end type
+
         type(solver_settings_type) :: settings
+        type(extended_solver_settings_type) :: extended_settings
         integer(ip) :: error
 
         ! assume tests pass
@@ -2819,6 +2995,15 @@ contains
             test_init_solver_settings = .false.
         end if
 
+        ! initialize settings of a type extending the solver settings, which cannot be
+        ! set to the default values, and check that an error is returned
+        call extended_settings%init(error)
+        if (error == 0) then
+            write(stderr, *) "test_init_solver_settings failed: No error returned "// &
+                "for extended settings type."
+            test_init_solver_settings = .false.
+        end if
+
     end function test_init_solver_settings
 
     logical(c_bool) function test_init_stability_settings() bind(C)
@@ -2830,7 +3015,11 @@ contains
                                    default_settings => default_stability_settings
         use test_reference, only: operator(/=)
 
+        type, extends(stability_settings_type) :: extended_stability_settings_type
+        end type
+
         type(stability_settings_type) :: settings
+        type(extended_stability_settings_type) :: extended_settings
         integer(ip) :: error
 
         ! assume tests pass
@@ -2858,6 +3047,15 @@ contains
         if (settings /= default_settings) then
             write(stderr, *) "test_init_stability_settings failed: Settings not "// &
                 "initialized correctly."
+            test_init_stability_settings = .false.
+        end if
+
+        ! initialize settings of a type extending the stability settings, which cannot
+        ! be set to the default values, and check that an error is returned
+        call extended_settings%init(error)
+        if (error == 0) then
+            write(stderr, *) "test_init_stability_settings failed: No error "// &
+                "returned for extended settings type."
             test_init_stability_settings = .false.
         end if
 
@@ -3130,7 +3328,7 @@ contains
         type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp), dimension(n_param) :: vars, rhs, solution, vector, hess_vector, &
-                                        corr_vector
+                                        corr_vector, guess
         real(rp) :: mu
         real(rp), parameter :: rtol = 1e-14_rp
         integer(ip) :: error
@@ -3204,6 +3402,59 @@ contains
         if (sum(abs(hess_vector)) > tol) then
             write(stderr, *) "test_minres failed: Returned Hessian linear "// &
                 "transformation is not zero for a vanishing rhs."
+            test_minres = .false.
+        end if
+
+        ! run minimum residual method from an initial guess which only partially solves
+        ! the Jacobi-Davidson correction equation and check if the equation is solved
+        rhs = matmul(context%hess, solution) - mu * solution
+        call minres(-rhs, hess_x_funptr, solution, mu, rtol, guess, hess_vector, &
+                    settings, error)
+        guess = 0.5_rp * guess
+        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
+                    settings, error, guess=guess)
+        if (error /= 0) then
+            write(stderr, *) "test_minres failed: Returned error for initial guess."
+            test_minres = .false.
+        end if
+        corr_vector = vector - dot_product(vector, solution) * solution
+        corr_vector = matmul(context%hess, corr_vector) - mu * corr_vector
+        corr_vector = corr_vector - dot_product(corr_vector, solution) * solution
+        if (sum(abs(corr_vector + rhs)) > tol) then
+            write(stderr, *) "test_minres failed: Returned solution does not solve "// &
+                "Jacobi-Davidson correction equation for initial guess."
+            test_minres = .false.
+        end if
+
+        ! allow only a single iteration and check that an error is returned and an
+        ! error message is printed when the iteration limit is reached
+        call setup_error_logging(settings, context)
+        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
+                    settings, error, max_iter=1_ip)
+        if (error == 0) then
+            write(stderr, *) "test_minres failed: No error returned when iteration "// &
+                "limit is reached."
+            test_minres = .false.
+        end if
+        if (len_trim(context%log_message) == 0) then
+            write(stderr, *) "test_minres failed: No error message printed when "// &
+                "iteration limit is reached."
+            test_minres = .false.
+        end if
+
+        ! run minimum residual method from an initial guess for a vanishing right hand
+        ! side and check that the solution and its Hessian linear transformation vanish
+        rhs = 0.0_rp
+        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
+                    settings, error, guess=guess)
+        if (error /= 0) then
+            write(stderr, *) "test_minres failed: Returned error for initial guess "// &
+                "and vanishing rhs."
+            test_minres = .false.
+        end if
+        if (sum(abs(vector)) > tol .or. sum(abs(hess_vector)) > tol) then
+            write(stderr, *) "test_minres failed: Returned solution or its Hessian "// &
+                "linear transformation is not zero for initial guess and vanishing rhs."
             test_minres = .false.
         end if
 
@@ -3464,6 +3715,17 @@ contains
             write(stderr, *) "test_accept_trust_region_step failed: Step not "// &
                 "accepted or trust radius not correctly expanded when ratio is too "// &
                 "large."
+            test_accept_trust_region_step = .false.
+        end if
+
+        ! check if step is rejected and maximum precision is reported as reached if the
+        ! reduced trust radius falls below numerical zero
+        trust_radius = 1e-14_rp
+        accept_step = accept_trust_region_step(solution, -1.0_rp, .true., settings, &
+                                               trust_radius, max_precision_reached)
+        if (accept_step .or. .not. max_precision_reached) then
+            write(stderr, *) "test_accept_trust_region_step failed: Step accepted "// &
+                "or maximum precision not reached when trust radius becomes too small."
             test_accept_trust_region_step = .false.
         end if
 
