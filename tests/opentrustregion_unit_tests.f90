@@ -1586,6 +1586,24 @@ contains
             test_solver = .false.
         end if
 
+        ! switch to Jacobi-Davidson from the first micro iteration and check that the
+        ! printed iterations split the micro iterations into Davidson and
+        ! Jacobi-Davidson ones, which shows as zero Davidson micro iterations
+        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        call setup_settings(settings, context)
+        settings%subsystem_solver = "jacobi-davidson"
+        settings%jacobi_davidson_start = 0
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error with Jacobi-Davidson."
+            test_solver = .false.
+        end if
+        if (index(context%log_message, "|   0  |") == 0) then
+            write(stderr, *) "test_solver failed: Printed iterations do not split "// &
+                "micro iterations with Jacobi-Davidson."
+            test_solver = .false.
+        end if
+
         ! check that the truncated conjugate gradient solver is used instead of the
         ! Davidson solvers, whose first trial vector is the normalized gradient, and
         ! that the reported step size is measured with the preconditioner
