@@ -58,6 +58,7 @@ module test_reference
     ! check the context reached all of them unchanged
     type :: host_context_type
         integer(ip) :: n_calls = 0
+        logical :: logger_called = .false.
     end type
     type(host_context_type), target :: host_context, stability_host_context
 
@@ -153,6 +154,8 @@ contains
         !
         host_context%n_calls = 0
         stability_host_context%n_calls = 0
+        host_context%logger_called = .false.
+        stability_host_context%logger_called = .false.
         host_context_armed = .true.
         host_context_wrong = .false.
         host_context_missing = .false.

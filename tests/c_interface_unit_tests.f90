@@ -14,16 +14,9 @@ module c_interface_unit_tests
                               arm_host_context_c, host_context_reached
     use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_loc, c_funptr, c_funloc, &
                                            c_char, c_associated, c_null_ptr, &
-                                           c_null_char, c_null_funptr
+                                           c_null_char, c_null_funptr, c_f_pointer
 
     implicit none
-
-    ! logical to test logging function
-    logical :: test_logger
-
-    ! a target of a type no callback bundle can hold, used to drive the guard the
-    ! wrappers raise when they are handed a context they did not create
-    real(rp), target :: foreign_context_target = 0.0_rp
 
     ! create function pointers to ensure that routines comply with interface
     procedure(update_orbs_c_type), pointer :: mock_update_orbs_ptr => mock_update_orbs
@@ -175,15 +168,23 @@ contains
         !
         ! this function is a test function for the C logging function
         !
+        use test_reference, only: host_context_type
+
         character(kind=c_char), intent(in) :: message_c(*)
         type(c_ptr), intent(in), value :: context_c
+
         character(len=4) :: message
+        type(host_context_type), pointer :: context
 
         ! check host context
         call check_host_context_c(context_c)
 
+        ! record call with test message in host context
         message = transfer(message_c(1:4), message)
-        if (message == "test") test_logger = .true.
+        if (message == "test" .and. c_associated(context_c)) then
+            call c_f_pointer(context_c, context)
+            context%logger_called = .true.
+        end if
 
     end subroutine mock_logger
 
@@ -195,7 +196,8 @@ contains
         use opentrustregion, only: standard_solver => solver
         use opentrustregion_mock, only: mock_solver, test_passed, mock_n_update_orbs, &
                                         mock_n_hess_x, mock_stability_n_hess_x
-        use test_reference, only: assignment(=), ref_settings, stability_host_context
+        use test_reference, only: assignment(=), ref_settings, stability_host_context, &
+                                  host_context
 
         type(c_funptr) :: update_orbs_c_funptr, obj_func_c_funptr
         type(solver_settings_type_c) :: settings
@@ -230,15 +232,12 @@ contains
             if (icase == 2) &
                 settings%stability_settings%context = c_loc(stability_host_context)
 
-            ! initialize logger logical
-            test_logger = .false.
-
             ! call solver
             error = solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, &
                                      n_param_c, settings)
 
             ! check if logging subroutine was correctly called
-            if (.not. test_logger) then
+            if (.not. host_context%logger_called) then
                 test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Called logging "// &
                     "subroutine wrong "//trim(case_names(icase))//"."
@@ -306,7 +305,7 @@ contains
                                stability_check_c_wrapper
         use opentrustregion, only: standard_stability_check => stability_check
         use opentrustregion_mock, only: mock_stability_check, test_passed
-        use test_reference, only: assignment(=), ref_settings
+        use test_reference, only: assignment(=), ref_settings, host_context
 
         type(c_funptr) :: hess_x_c_funptr
         real(c_rp), allocatable :: h_diag(:)
@@ -355,7 +354,7 @@ contains
                                          test_passed
 
         ! check if logging subroutine was correctly called
-        if (.not. test_logger) then
+        if (.not. host_context%logger_called) then
             test_stability_check_c_wrapper = .false.
             write(stderr, *) "test_stability_check_c_wrapper failed: Called "// &
                 "logging subroutine wrong."
@@ -378,15 +377,15 @@ contains
         allocate(kappa(n_param))
         kappa_c_ptr = c_loc(kappa)
 
-        ! initialize logger logical
-        test_logger = .true.
+        ! reset logger record
+        host_context%logger_called = .false.
 
-        ! call stability check with initilized returned direction
+        ! call stability check with initialized returned direction
         error = stability_check_c_wrapper(h_diag, hess_x_c_funptr, n_param_c, stable, &
                                           settings, kappa_c_ptr)
 
         ! check if logging subroutine was correctly called
-        if (.not. test_logger) then
+        if (.not. host_context%logger_called) then
             test_stability_check_c_wrapper = .false.
             write(stderr, *) "test_stability_check_c_wrapper failed: Called "// &
                 "logging subroutine wrong."
@@ -502,6 +501,7 @@ contains
         procedure(update_orbs_type), pointer :: update_orbs_funptr
         type(c_callbacks_type), target :: callbacks
         class(*), pointer :: context, foreign_context
+        real(rp), target :: foreign_context_target
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp) :: kappa(n_param), func, grad(n_param), h_diag(n_param)
         integer(ip) :: error
@@ -535,6 +535,7 @@ contains
         end if
 
         ! a context this module did not create is reported rather than dereferenced
+        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         kappa = 1.0_rp
         call update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x_funptr, error, &
@@ -558,6 +559,7 @@ contains
         procedure(hess_x_type), pointer :: hess_x_funptr
         type(c_callbacks_type), target :: callbacks
         class(*), pointer :: context, foreign_context
+        real(rp), target :: foreign_context_target
         real(rp) :: x(n_param), hess_x(n_param)
         integer(ip) :: error
 
@@ -579,6 +581,7 @@ contains
 
         ! a context this module did not create is reported rather than dereferenced
         x = 1.0_rp
+        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         call hess_x_f_wrapper(x, hess_x, error, foreign_context)
         if (error /= 1) then
@@ -600,6 +603,7 @@ contains
         procedure(obj_func_type), pointer :: obj_func_funptr
         type(c_callbacks_type), target :: callbacks
         class(*), pointer :: context, foreign_context
+        real(rp), target :: foreign_context_target
         real(rp) :: kappa(n_param), func
         integer(ip) :: error
 
@@ -620,6 +624,7 @@ contains
             host_context_reached("obj_func_f_wrapper"), kind=c_bool)
 
         ! a context this module did not create is reported rather than dereferenced
+        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         kappa = 1.0_rp
         func = obj_func_f_wrapper(kappa, error, foreign_context)
@@ -642,6 +647,7 @@ contains
         procedure(precond_type), pointer :: precond_funptr
         type(c_callbacks_type), target :: callbacks
         class(*), pointer :: context, foreign_context
+        real(rp), target :: foreign_context_target
         real(rp) :: residual(n_param), precond_residual(n_param)
         integer(ip) :: error
 
@@ -662,6 +668,7 @@ contains
             host_context_reached("precond_f_wrapper"), kind=c_bool)
 
         ! a context this module did not create is reported rather than dereferenced
+        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         residual = 1.0_rp
         call precond_f_wrapper(residual, 1.0_rp, precond_residual, error, &
@@ -685,6 +692,7 @@ contains
         procedure(project_type), pointer :: project_funptr
         type(c_callbacks_type), target :: callbacks
         class(*), pointer :: context, foreign_context
+        real(rp), target :: foreign_context_target
         real(rp) :: vector(n_param)
         integer(ip) :: error
 
@@ -705,6 +713,7 @@ contains
             host_context_reached("project_f_wrapper"), kind=c_bool)
 
         ! a context this module did not create is reported rather than dereferenced
+        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         vector = 1.0_rp
         call project_f_wrapper(vector, error, foreign_context)
@@ -727,6 +736,7 @@ contains
         procedure(conv_check_type), pointer :: conv_check_funptr
         type(c_callbacks_type), target :: callbacks
         class(*), pointer :: context, foreign_context
+        real(rp), target :: foreign_context_target
         logical :: converged
         integer(ip) :: error
 
@@ -747,6 +757,7 @@ contains
             host_context_reached("conv_check_f_wrapper"), kind=c_bool)
 
         ! a context this module did not create is reported rather than dereferenced
+        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         converged = conv_check_f_wrapper(error, foreign_context)
         if (error /= 1) then
@@ -762,9 +773,11 @@ contains
         ! this function tests the Fortran wrapper for the logging function
         !
         use c_interface, only: c_callbacks_type, logger_f_wrapper
+        use test_reference, only: host_context
 
         type(c_callbacks_type), target :: callbacks
         class(*), pointer :: context, foreign_context
+        real(rp), target :: foreign_context_target
 
         ! assume tests pass
         test_logger_f_wrapper = .true.
@@ -775,11 +788,10 @@ contains
         context => callbacks
 
         ! call subroutine
-        test_logger = .false.
         call logger_f_wrapper("test", context)
 
         ! check if logging test boolean is as expected
-        if (.not. test_logger) then
+        if (.not. host_context%logger_called) then
             test_logger_f_wrapper = .false.
             write(stderr, *) "test_logger_f_wrapper failed: Returned logging "// &
                 "subroutine wrong."
@@ -791,10 +803,11 @@ contains
 
         ! a context this module did not create is dropped rather than dereferenced,
         ! the logger has no error channel so it must simply not be called
+        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
-        test_logger = .false.
+        host_context%logger_called = .false.
         call logger_f_wrapper("test", foreign_context)
-        if (test_logger) then
+        if (host_context%logger_called) then
             test_logger_f_wrapper = .false.
             write(stderr, *) "test_logger_f_wrapper failed: Called logging "// &
                 "subroutine with an invalid context."
@@ -879,7 +892,7 @@ contains
         use opentrustregion, only: solver_settings_type, default_solver_settings
         use test_reference, only: assignment(=), ref_settings, test_precond_funptr, &
                                   test_project_funptr, test_conv_check_funptr, &
-                                  operator(/=)
+                                  operator(/=), host_context
 
         type(solver_settings_type_c) :: settings_c
         type(solver_settings_type) :: settings
@@ -901,6 +914,7 @@ contains
         callbacks%project => mock_project
         callbacks%conv_check => mock_conv_check
         callbacks%logger => mock_logger
+        call arm_host_context_c(callbacks%host_context)
         settings%context => callbacks
 
         ! check preconditioner function
@@ -943,14 +957,17 @@ contains
             write(stderr, *) "test_assign_solver_f_c failed: Logging function not "// &
                 "associated with value."
         else
-            test_logger = .false.
             call settings%logger("test", settings%context)
-            if (.not. test_logger) then
+            if (.not. host_context%logger_called) then
                 test_assign_solver_f_c = .false.
                 write(stderr, *) "test_assign_solver_f_c failed: Called logging "// &
                     "subroutine wrong."
             end if
         end if
+
+        ! check that the host context reached the callback functions unchanged
+        test_assign_solver_f_c = test_assign_solver_f_c .and. logical( &
+            host_context_reached("assign_solver_f_c"), kind=c_bool)
 
         ! check against reference values
         if (settings /= ref_settings) then
@@ -963,6 +980,20 @@ contains
         if (.not. settings%initialized) then
             write(stderr, *) "test_assign_solver_f_c failed: Settings not marked "// &
                 "as initialized."
+            test_assign_solver_f_c = .false.
+        end if
+
+        ! convert initialized C settings without callback functions and check that no
+        ! callback functions are associated
+        settings_c%precond = c_null_funptr
+        settings_c%project = c_null_funptr
+        settings_c%conv_check = c_null_funptr
+        settings_c%logger = c_null_funptr
+        settings = settings_c
+        if (associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%conv_check) .or. associated(settings%logger)) then
+            write(stderr, *) "test_assign_solver_f_c failed: Function pointers "// &
+                "associated for callback functions that were not provided."
             test_assign_solver_f_c = .false.
         end if
 
@@ -997,7 +1028,7 @@ contains
                                assignment(=)
         use opentrustregion, only: stability_settings_type, default_stability_settings
         use test_reference, only: assignment(=), ref_settings, test_precond_funptr, &
-                                  test_project_funptr, operator(/=)
+                                  test_project_funptr, operator(/=), host_context
 
         type(stability_settings_type_c) :: settings_c
         type(stability_settings_type) :: settings
@@ -1017,6 +1048,7 @@ contains
         callbacks%precond => mock_precond
         callbacks%project => mock_project
         callbacks%logger => mock_logger
+        call arm_host_context_c(callbacks%host_context)
         settings%context => callbacks
 
         ! check preconditioner function
@@ -1049,14 +1081,17 @@ contains
             write(stderr, *) "test_assign_stability_f_c failed: Logging function "// &
                 "not associated with value."
         else
-            test_logger = .false.
             call settings%logger("test", settings%context)
-            if (.not. test_logger) then
+            if (.not. host_context%logger_called) then
                 test_assign_stability_f_c = .false.
                 write(stderr, *) "test_assign_stability_f_c failed: Logging "// &
                     "callback did not trigger."
             end if
         end if
+
+        ! check that the host context reached the callback functions unchanged
+        test_assign_stability_f_c = test_assign_stability_f_c .and. logical( &
+            host_context_reached("assign_stability_f_c"), kind=c_bool)
 
         ! check against reference values
         if (settings /= ref_settings) then
@@ -1070,6 +1105,19 @@ contains
             test_assign_stability_f_c = .false.
             write(stderr, *) "test_assign_stability_f_c failed: Settings not "// &
                 "marked as initialized."
+        end if
+
+        ! convert initialized C settings without callback functions and check that no
+        ! callback functions are associated
+        settings_c%precond = c_null_funptr
+        settings_c%project = c_null_funptr
+        settings_c%logger = c_null_funptr
+        settings = settings_c
+        if (associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%logger)) then
+            write(stderr, *) "test_assign_stability_f_c failed: Function pointers "// &
+                "associated for callback functions that were not provided."
+            test_assign_stability_f_c = .false.
         end if
 
         ! convert C settings that were not initialized, the custom values they still
