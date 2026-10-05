@@ -50,14 +50,6 @@ module opentrustregion
         random_trial_vector_warning_msg = "Number of random trial vectors should "// &
                                           "be smaller than half the number of "// &
                                           "parameters.", &
-        gram_schmidt_zero_vector_error_msg = &
-            "Vector passed to Gram-Schmidt procedure is numerically zero.", &
-        gram_schmidt_too_many_vectors_error_msg = "Number of vectors in "// &
-                                                  "Gram-Schmidt procedure larger "// &
-                                                  "than dimension of vector space.", &
-        gram_schmidt_lin_dep_error_msg = "Vector passed to Gram-Schmidt procedure "// &
-                                         "is linearly dependent on previously "// &
-                                         "orthonormalized vectors.", &
         project_warning_msg = &
             "Custom projection is provided. To optimize performance, OTR assumes "// &
             "that all other provided routines (update_orbs, hess_x, precond) are "// &
@@ -409,7 +401,7 @@ contains
                                               "algorithm will continue by moving "// &
                                               "along eigenvector direction "// &
                                               "corresponding to negative eigenvalue.", &
-                                              verbosity_error, .true.)
+                                              verbosity_warning)
                         else
                             call settings%log( &
                                 "Reached saddle point. This is likely due to "// &
@@ -417,7 +409,7 @@ contains
                                 "number of random trial vectors. The algorithm "// &
                                 "will continue by moving along eigenvector "// &
                                 "direction corresponding to negative eigenvalue.", &
-                                verbosity_error, .true.)
+                                verbosity_warning)
                         end if
                         max_precision_reached = .false.
                         cycle
@@ -717,7 +709,7 @@ contains
         else
             if (present(kappa)) kappa = solution
             write(msg, '(A, F0.4)') "Solution not stable. Lowest eigenvalue: ", eigval
-            call settings%log(msg, verbosity_error, .true.)
+            call settings%log(msg, verbosity_warning)
         end if
 
         ! deallocate quantities from Davidson iterations
@@ -1452,6 +1444,7 @@ contains
         real(rp), allocatable :: orth(:)
         real(rp) :: norm
         integer(ip) :: n_param, n_vectors, iter, i
+        logical :: log_error
         real(rp), parameter :: zero_thres = 1e-16_rp, orth_thres = 1e-14_rp
         real(rp), external :: ddot, dnrm2
         external :: dgemv
@@ -1466,13 +1459,14 @@ contains
         n_vectors = size(space, 2)
 
         if (dnrm2(n_param, vector, 1_ip) < zero_thres) then
-            call settings%log(gram_schmidt_zero_vector_error_msg, verbosity_error, &
-                              .true.)
+            call settings%log("Vector passed to Gram-Schmidt procedure is "// &
+                              "numerically zero.", verbosity_error, .true.)
             error = 1
             return
         else if (n_vectors > n_param - 1) then
-            call settings%log(gram_schmidt_too_many_vectors_error_msg, &
-                              verbosity_error, .true.)
+            call settings%log("Number of vectors in Gram-Schmidt procedure larger "// &
+                              "than dimension of vector space.", verbosity_error, &
+                              .true.)
             error = 1
             return
         end if
@@ -1493,13 +1487,11 @@ contains
             norm = dnrm2(n_param, vector, 1_ip)
             if (norm < numerical_zero) then
                 error = error_gram_schmidt_lin_dep
-                if (present(silent_on_error)) then
-                    if (.not. silent_on_error) call settings%log( &
-                        gram_schmidt_lin_dep_error_msg, verbosity_error, .true.)
-                else
-                    call settings%log(gram_schmidt_lin_dep_error_msg, verbosity_error, &
-                                      .true.)
-                end if
+                log_error = .true.
+                if (present(silent_on_error)) log_error = .not. silent_on_error
+                if (log_error) call settings%log( &
+                    "Vector passed to Gram-Schmidt procedure is linearly dependent "// &
+                    "on previously orthonormalized vectors.", verbosity_error, .true.)
                 return
             end if
             vector = vector / norm
@@ -2566,7 +2558,7 @@ contains
             call settings%log("Function value barely changed. Convergence "// &
                               "criterion is not fulfilled but calculation should "// &
                               "be converged up to floating point precision.", &
-                              verbosity_error, .true.)
+                              verbosity_warning)
             max_precision_reached = .true.
         end if
 
@@ -2601,7 +2593,7 @@ contains
                 call settings%log("Trust radius too small. Convergence criterion "// &
                                   "is not fulfilled but calculation should be "// &
                                   "converged up to floating point precision.", &
-                                  verbosity_error, .true.)
+                                  verbosity_warning)
                 max_precision_reached = .true.
                 return
             end if

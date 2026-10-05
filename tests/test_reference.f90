@@ -111,7 +111,7 @@ contains
         end if
 
         select type (context)
-        type is (host_context_type)
+        class is (host_context_type)
             context%n_calls = context%n_calls + 1
         class default
             host_context_wrong = .true.
@@ -159,17 +159,23 @@ contains
 
     end subroutine reset_host_context
 
-    subroutine arm_host_context(settings)
+    subroutine arm_host_context(settings, context)
         !
         ! this subroutine points a settings object at the host context the callback
-        ! functions expect and clears their bookkeeping
+        ! functions expect, by default the global one, and clears their bookkeeping
         !
         use opentrustregion, only: settings_type
 
         class(settings_type), intent(inout) :: settings
+        class(host_context_type), intent(inout), target, optional :: context
 
-        settings%context => host_context
         call reset_host_context()
+        if (present(context)) then
+            context%n_calls = 0
+            settings%context => context
+        else
+            settings%context => host_context
+        end if
 
     end subroutine arm_host_context
 
@@ -185,12 +191,15 @@ contains
 
     end subroutine arm_host_context_c
 
-    logical function host_context_reached(test_name)
+    logical function host_context_reached(test_name, context)
         !
         ! this function checks that the callback functions all received the host
-        ! context they were armed with, and disarms it again
+        ! context they were armed with, by default the global one, and disarms it again
         !
         character(len=*), intent(in) :: test_name
+        class(host_context_type), intent(in), optional :: context
+
+        integer(ip) :: n_calls
 
         ! assume test passes
         host_context_reached = .true.
@@ -205,7 +214,12 @@ contains
             write(stderr, *) "test_"//test_name//" failed: A callback function was "// &
                 "reached without the host context that was set."
         end if
-        if (host_context%n_calls == 0) then
+        if (present(context)) then
+            n_calls = context%n_calls
+        else
+            n_calls = host_context%n_calls
+        end if
+        if (n_calls == 0) then
             host_context_reached = .false.
             write(stderr, *) "test_"//test_name//" failed: No callback function "// &
                 "received the host context that was set."

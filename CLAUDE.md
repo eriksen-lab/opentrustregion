@@ -93,9 +93,11 @@ A `logical(c_bool) function test_<routine>() bind(C)` is only reachable once wir
 
 A name in the list with no matching Fortran symbol fails when that test runs, with `AttributeError: dlsym(...): symbol not found`.
 
-**Exactly one registered test per production routine** — never `test_<routine>_<case_a>`, `test_<routine>_<case_b>`. Cover multiple configurations as cases *inside* that one test: loop where setup can be shared, or call a per-case `check_*` helper that is deliberately not `bind(C)` and not registered. Keep the case name in the failure message (`"test_<routine> failed for <case>: ..."`) since the harness only reports the registered name.
+**Exactly one registered test per production routine** — never `test_<routine>_<case_a>`, `test_<routine>_<case_b>`. Cover multiple configurations as cases *inside* that one test: loop where setup can be shared, or call a per-case `check_*` helper that is deliberately not `bind(C)` and not registered. Keep the case name in the failure message (`"test_<routine> failed: ... for <case>."`) since the harness only reports the registered name.
 
 Because a routine's cases live behind one entry, a silently-skipped case is invisible in suite output — have the driving test run every case unconditionally and `and` the results together, rather than returning early on the first failure.
+
+**Check that an error message was printed, not its text.** When the routine under test detects an error itself, assert the error code and, separately, that an error message was printed, with only error messages passed to the logger and the log cleared beforehand (`setup_error_logging` in `opentrustregion_unit_tests.f90`). Since the routine returns right after printing it, a non-empty log can only be that message; don't compare its text. An error a routine merely propagates from a failing callback prints nothing, so there is no message to check. Warnings keep their exact-text comparison: the routine continues after a warning, so other messages can follow it in the same log.
 
 **Helper procedures in test files.**
 - A `check_*` (or other non-`bind(C)`) helper earns its existence by eliminating real duplication, never merely to keep one case's code out of the registered test's body — five near-identical one-case functions just relocate the duplication; write one function parameterized over the case, or a loop with a shared body.
