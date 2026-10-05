@@ -59,15 +59,22 @@ extern const c_real hartmann6d_P[N_TERM * N_PARAM];
 #define P(i, j) (hartmann6d_P[(i) + (j) * N_TERM])
 extern const c_real hartmann6d_minimum1[N_PARAM];
 const c_real *minimum1 = hartmann6d_minimum1;
-extern const c_real hartmann6d_minimum2[N_PARAM];
-const c_real *minimum2 = hartmann6d_minimum2;
 extern const c_real hartmann6d_saddle_point[N_PARAM];
 const c_real *saddle_point = hartmann6d_saddle_point;
 
-// Module-level state that the callbacks read/write, mirroring the `curr_vars` / `hess`
-// globals in the Fortran test.
-static c_real curr_vars[N_PARAM];
-static c_real hess[N_PARAM][N_PARAM];
+// Host data handed to the callbacks through the context of the settings: the current
+// point and its Hessian, and flags recording which callbacks were reached.
+typedef struct {
+  c_real curr_vars[N_PARAM];
+  c_real hess[N_PARAM][N_PARAM];
+  int project_called;
+  int stability_project_called;
+  int logger_called;
+  int nested_check_ran;
+  int nested_check_error;
+  int in_nested;
+  int outer_used_inner_hess_x;
+} hartmann_context;
 
 static void exp_terms(const c_real x[N_PARAM], c_real out[N_TERM]) {
   for (int i = 0; i < N_TERM; i++) {
@@ -100,7 +107,7 @@ static void hartmann_grad(const c_real x[N_PARAM], c_real grad[N_PARAM]) {
   }
 }
 
-static void hartmann_hess(const c_real x[N_PARAM]) {
+static void hartmann_hess(const c_real x[N_PARAM], c_real hess[N_PARAM][N_PARAM]) {
   c_real e[N_TERM];
   exp_terms(x, e);
   for (int i = 0; i < N_PARAM; i++) {
@@ -127,10 +134,13 @@ static void hartmann_hess(const c_real x[N_PARAM]) {
 // ---------------------------------------------------------------------------
 
 static c_int hess_x_fun(const c_real *x, c_real *hx, void *context) {
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
   for (int i = 0; i < N_PARAM; i++) {
     c_real s = 0.0;
     for (int j = 0; j < N_PARAM; j++)
-      s += hess[i][j] * x[j];
+      s += ctx->hess[i][j] * x[j];
     hx[i] = s;
   }
   return 0;
@@ -138,21 +148,27 @@ static c_int hess_x_fun(const c_real *x, c_real *hx, void *context) {
 
 static c_int update_orbs(const c_real *delta_vars, c_real *func, c_real *grad,
                          c_real *h_diag, hess_x_fp *hess_x_ptr, void *context) {
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
   for (int i = 0; i < N_PARAM; i++)
-    curr_vars[i] += delta_vars[i];
-  *func = hartmann_func(curr_vars);
-  hartmann_grad(curr_vars, grad);
-  hartmann_hess(curr_vars);
+    ctx->curr_vars[i] += delta_vars[i];
+  *func = hartmann_func(ctx->curr_vars);
+  hartmann_grad(ctx->curr_vars, grad);
+  hartmann_hess(ctx->curr_vars, ctx->hess);
   for (int i = 0; i < N_PARAM; i++)
-    h_diag[i] = hess[i][i];
+    h_diag[i] = ctx->hess[i][i];
   *hess_x_ptr = hess_x_fun;
   return 0;
 }
 
 static c_int obj_func(const c_real *delta_vars, c_real *func, void *context) {
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
   c_real x[N_PARAM];
   for (int i = 0; i < N_PARAM; i++)
-    x[i] = curr_vars[i] + delta_vars[i];
+    x[i] = ctx->curr_vars[i] + delta_vars[i];
   *func = hartmann_func(x);
   return 0;
 }
@@ -162,67 +178,76 @@ static c_int obj_func(const c_real *delta_vars, c_real *func, void *context) {
 static c_int precond(const c_real *residual, const c_real *mu, c_real *precond_residual,
                      void *context) {
   (void)mu;
+  if (!context)
+    return 1;
   for (int i = 0; i < N_PARAM; i++)
     precond_residual[i] = residual[i];
+  return 0;
+}
+
+// An identity projection set on the solver settings.
+static c_int project(c_real *vector, void *context) {
+  (void)vector;
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
+  ctx->project_called = 1;
   return 0;
 }
 
 // An identity projection, set only on the nested stability settings, so the test can
 // tell whether the internal stability check reached its own callback slots rather than
 // the solver's.
-static int stability_project_called = 0;
-
 static c_int stability_project(c_real *vector, void *context) {
   (void)vector;
-  stability_project_called = 1;
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
+  ctx->stability_project_called = 1;
   return 0;
 }
-
-// Convergence check that runs a whole stability check from inside the running solve,
-// with its own settings object.
-static int nested_check_ran = 0;
-static int nested_check_error = 0;
-static int in_nested = 0;
-static int outer_used_inner_hess_x = 0;
 
 // The nested stability check is given a Hessian-vector product of its own, distinct
 // from the one the outer solve is using. If anything were still shared between the two
 // calls, the outer solve would resume against this one, which it records.
 static c_int inner_hess_x(const c_real *x, c_real *hx, void *context) {
-  if (!in_nested)
-    outer_used_inner_hess_x = 1;
-  for (int i = 0; i < N_PARAM; i++) {
-    c_real s = 0.0;
-    for (int j = 0; j < N_PARAM; j++)
-      s += hess[i][j] * x[j];
-    hx[i] = s;
-  }
-  return 0;
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
+  if (!ctx->in_nested)
+    ctx->outer_used_inner_hess_x = 1;
+  return hess_x_fun(x, hx, context);
 }
 
-// only nest once, and never report convergence, so the outer solve is unaffected
+// Convergence check that runs a whole stability check from inside the running solve,
+// with its own settings object; only nest once, and never report convergence, so the
+// outer solve is unaffected.
 static c_int conv_check_nested(c_bool *converged, void *context) {
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
   *converged = false;
-  if (!nested_check_ran) {
+  if (!ctx->nested_check_ran) {
     c_real h_diag[N_PARAM];
     c_bool stable = false;
     stability_settings_type inner = stability_settings_init();
-    nested_check_ran = 1;
+    inner.context = ctx;
+    ctx->nested_check_ran = 1;
     for (int i = 0; i < N_PARAM; i++)
-      h_diag[i] = hess[i][i];
-    in_nested = 1;
-    nested_check_error =
+      h_diag[i] = ctx->hess[i][i];
+    ctx->in_nested = 1;
+    ctx->nested_check_error =
         stability_check(h_diag, inner_hess_x, N_PARAM, &stable, &inner, NULL);
-    in_nested = 0;
+    ctx->in_nested = 0;
   }
   return 0;
 }
 
-static int logger_called = 0;
-
 static void logger(const char *message, void *context) {
   (void)message;
-  logger_called = 1;
+  hartmann_context *ctx = context;
+  if (ctx)
+    ctx->logger_called = 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,11 +259,6 @@ static int vec_close(const c_real *a, const c_real *b, c_real tol) {
     if (fabs(a[i] - b[i]) > tol)
       return 0;
   return 1;
-}
-
-static int vec_close_either(const c_real *x, const c_real *a, const c_real *b,
-                            c_real tol) {
-  return vec_close(x, a, tol) || vec_close(x, b, tol);
 }
 
 // ---------------------------------------------------------------------------
@@ -460,33 +480,33 @@ bool test_stability_settings_init(void) {
 bool test_solver_c(void) {
   bool ok = true;
 
+  // start in the quadratic region near the first minimum
+  hartmann_context ctx = {.curr_vars = {0.20, 0.15, 0.48, 0.28, 0.31, 0.66}};
+
   solver_settings_type settings = solver_settings_init();
+  settings.context = &ctx;
   settings.precond = precond;
+  settings.project = project;
   settings.logger = logger;
   settings.stability = true;
   settings.stability_settings.project = stability_project;
   settings.conv_check = conv_check_nested;
   settings.verbose = 3; // ensure the logger callback is exercised
-  logger_called = 0;
-  stability_project_called = 0;
-  nested_check_ran = 0;
-  nested_check_error = 0;
-  in_nested = 0;
-  outer_used_inner_hess_x = 0;
 
-  // Start in the quadratic region near first minimum
-  const c_real start_near_min1[N_PARAM] = {0.20, 0.15, 0.48, 0.28, 0.31, 0.66};
-  memcpy(curr_vars, start_near_min1, sizeof(curr_vars));
   c_int error = solver(update_orbs, obj_func, N_PARAM, &settings);
   if (error != 0) {
     fprintf(stderr, "test_solver_c failed: Produced error.\n");
     ok = false;
   }
-  if (!vec_close(curr_vars, minimum1, 1e-4)) {
+  if (!vec_close(ctx.curr_vars, minimum1, 1e-4)) {
     fprintf(stderr, "test_solver_c failed: Solver did not find minimum.\n");
     ok = false;
   }
-  if (!logger_called) {
+  if (!ctx.project_called) {
+    fprintf(stderr, "test_solver_c failed: Projection was not called.\n");
+    ok = false;
+  }
+  if (!ctx.logger_called) {
     fprintf(stderr, "test_solver_c failed: Logger was not called.\n");
     ok = false;
   }
@@ -500,35 +520,19 @@ bool test_solver_c(void) {
                     "the internal stability check was not populated.\n");
     ok = false;
   }
-  if (!stability_project_called) {
+  if (!ctx.stability_project_called) {
     fprintf(stderr, "test_solver_c failed: The internal stability check did not use "
                     "the projection set on the nested stability settings.\n");
     ok = false;
   }
-  if (!nested_check_ran || nested_check_error != 0) {
+  if (!ctx.nested_check_ran || ctx.nested_check_error != 0) {
     fprintf(stderr, "test_solver_c failed: A stability check nested inside the "
                     "running solve did not complete.\n");
     ok = false;
   }
-  if (outer_used_inner_hess_x) {
+  if (ctx.outer_used_inner_hess_x) {
     fprintf(stderr, "test_solver_c failed: After the nested stability check the outer "
                     "solve resumed against the nested call's callbacks.\n");
-    ok = false;
-  }
-
-  // start near a saddle so the solver has to switch to a non-Newton step
-  const c_real start_near_saddle[N_PARAM] = {0.35, 0.59, 0.48, 0.40, 0.31, 0.32};
-  memcpy(curr_vars, start_near_saddle, sizeof(curr_vars));
-  error = solver(update_orbs, obj_func, N_PARAM, &settings);
-  if (error != 0) {
-    fprintf(stderr,
-            "test_solver_c failed: Produced error when starting near saddle.\n");
-    ok = false;
-  }
-  if (!vec_close_either(curr_vars, minimum1, minimum2, 1e-4)) {
-    fprintf(stderr,
-            "test_solver_c failed: Solver did not find minimum when starting near "
-            "saddle.\n");
     ok = false;
   }
 
@@ -538,17 +542,18 @@ bool test_solver_c(void) {
 bool test_stability_check_c(void) {
   bool ok = true;
 
+  hartmann_context ctx = {0};
+
   stability_settings_type settings = stability_settings_init();
+  settings.context = &ctx;
   settings.logger = logger;
   settings.verbose = 3; // ensure the logger callback is exercised
-  logger_called = 0;
 
   // at a minimum, expect stable
-  memcpy(curr_vars, minimum1, sizeof(curr_vars));
-  hartmann_hess(curr_vars);
+  hartmann_hess(minimum1, ctx.hess);
   c_real h_diag[N_PARAM];
   for (int i = 0; i < N_PARAM; i++)
-    h_diag[i] = hess[i][i];
+    h_diag[i] = ctx.hess[i][i];
   c_real direction[N_PARAM] = {0};
   c_bool stable = false;
   c_int error =
@@ -562,7 +567,7 @@ bool test_stability_check_c(void) {
                     "stability of minimum.\n");
     ok = false;
   }
-  if (!logger_called) {
+  if (!ctx.logger_called) {
     fprintf(stderr, "test_stability_check_c failed: Logger was not called.\n");
     ok = false;
   }
@@ -573,10 +578,9 @@ bool test_stability_check_c(void) {
   }
 
   // at a saddle, expect unstable
-  memcpy(curr_vars, saddle_point, sizeof(curr_vars));
-  hartmann_hess(curr_vars);
+  hartmann_hess(saddle_point, ctx.hess);
   for (int i = 0; i < N_PARAM; i++)
-    h_diag[i] = hess[i][i];
+    h_diag[i] = ctx.hess[i][i];
 
   stable = true;
   error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, direction);

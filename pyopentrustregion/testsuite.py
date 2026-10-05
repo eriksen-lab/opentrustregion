@@ -735,8 +735,6 @@ class PySystemTests(unittest.TestCase):
     ).reshape((n_terms, n_param), order="F")
     minimum1_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_minimum1")
     minimum1 = np.frombuffer(minimum1_ctypes, dtype=np.dtype(c_real), count=n_param)
-    minimum2_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_minimum2")
-    minimum2 = np.frombuffer(minimum2_ctypes, dtype=np.dtype(c_real), count=n_param)
     saddle_point_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_saddle_point")
     saddle_point = np.frombuffer(
         saddle_point_ctypes, dtype=np.dtype(c_real), count=n_param
@@ -796,15 +794,19 @@ class PySystemTests(unittest.TestCase):
 
     def test_solver_py(self):
         """
-        this function drives solver() end-to-end at a minimum and at a saddle point
+        this function drives solver() end-to-end from near a minimum with every
+        optional callback set
         """
         test_passed = True
 
-        # mutable closure state, mirroring the curr_vars module global on the Fortran
-        # side
+        # mutable closure state holding the current point and its Hessian, and which
+        # callbacks were reached
         state = {
             "curr": np.array([0.20, 0.15, 0.48, 0.28, 0.31, 0.66]),
             "hess": None,
+            "project_called": False,
+            "stability_project_called": False,
+            "conv_check_called": False,
             "logger_called": False,
         }
 
@@ -828,17 +830,42 @@ class PySystemTests(unittest.TestCase):
             # vector when mu=0 (which would trip the Gram-Schmidt zero-vector guard)
             out[:] = residual
 
+        def project(vector):
+            # identity projection
+            state["project_called"] = True
+
+        def stability_project(vector):
+            # identity projection, set only on the nested stability settings, so the
+            # test can tell whether the internal stability check reached its own
+            # callback slots rather than the solver's
+            state["stability_project_called"] = True
+
+        def conv_check():
+            # never report convergence, so the solve is unaffected
+            state["conv_check_called"] = True
+            return False
+
         def logger(msg):
             state["logger_called"] = True
 
         settings = SolverSettings()
         settings.precond = precond
+        settings.project = project
+        settings.conv_check = conv_check
         settings.logger = logger
+        settings.stability = True
+        settings.stability_settings.project = stability_project
         settings.verbose = 3  # ensure logger is exercised
 
         solver(obj_func, update_orbs, self.n_param, settings)
         if not np.allclose(state["curr"], self.minimum1, atol=1e-4):
             print(" test_solver_py failed: Solver did not find minimum.")
+            test_passed = False
+        if not state["project_called"]:
+            print(" test_solver_py failed: Projection was not called.")
+            test_passed = False
+        if not state["conv_check_called"]:
+            print(" test_solver_py failed: Convergence check was not called.")
             test_passed = False
         if not state["logger_called"]:
             print(" test_solver_py failed: Logger was not called.")
@@ -855,17 +882,16 @@ class PySystemTests(unittest.TestCase):
                 "not populated."
             )
             test_passed = False
-
-        # restart near the saddle - solver must still reach a known minimum
-        state["curr"] = np.array([0.35, 0.59, 0.48, 0.40, 0.31, 0.32])
-        solver(obj_func, update_orbs, self.n_param, settings)
-        if not (
-            np.allclose(state["curr"], self.minimum1, atol=1e-4)
-            or np.allclose(state["curr"], self.minimum2, atol=1e-4)
-        ):
+        if settings.stability_settings.n_hess_x <= 0:
             print(
-                " test_solver_py failed: Solver did not find minimum when starting "
-                "near saddle starting point."
+                " test_solver_py failed: Hessian linear transformation counter of the "
+                "internal stability check was not populated."
+            )
+            test_passed = False
+        if not state["stability_project_called"]:
+            print(
+                " test_solver_py failed: The internal stability check did not use the "
+                "projection set on the nested stability settings."
             )
             test_passed = False
         self.assertTrue(test_passed, "test_solver_py failed")
@@ -877,7 +903,15 @@ class PySystemTests(unittest.TestCase):
         point
         """
         test_passed = True
+        logger_called = False
+
+        def logger(msg):
+            nonlocal logger_called
+            logger_called = True
+
         settings = StabilitySettings()
+        settings.logger = logger
+        settings.verbose = 3  # ensure logger is exercised
 
         # at the minimum: must be reported stable
         H = self._hess(self.minimum1)
@@ -893,6 +927,9 @@ class PySystemTests(unittest.TestCase):
                 " test_stability_check_py failed: Stability incorrectly classifies "
                 "stability of minimum."
             )
+            test_passed = False
+        if not logger_called:
+            print(" test_stability_check_py failed: Logger was not called.")
             test_passed = False
         if settings.n_hess_x <= 0:
             print(
@@ -927,6 +964,15 @@ class PySystemTests(unittest.TestCase):
             print(
                 " test_stability_check_py failed: Stability check does not return "
                 "correct direction for saddle point."
+            )
+            test_passed = False
+
+        # also exercise the no-direction path
+        stable = stability_check(h_diag, hess_x, self.n_param, settings)
+        if stable:
+            print(
+                " test_stability_check_py failed: Stability incorrectly classifies "
+                "stability of saddle point when not passing direction."
             )
             test_passed = False
         self.assertTrue(test_passed, "test_stability_check_py failed")

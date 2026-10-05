@@ -47,7 +47,6 @@ module opentrustregion_unit_tests
         [0.35278250_rp, 0.59374767_rp, 0.47631257_rp, 0.40058250_rp, 0.31111531_rp, &
          0.32397158_rp]
     real(c_rp), bind(C, name="hartmann6d_minimum1") :: minimum1_c(n_param) = minimum1
-    real(c_rp), bind(C, name="hartmann6d_minimum2") :: minimum2_c(n_param) = minimum2
     real(c_rp), bind(C, name="hartmann6d_saddle_point") :: saddle_point_c(n_param) = &
         saddle_point
 
