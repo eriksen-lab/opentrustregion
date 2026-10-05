@@ -2769,6 +2769,28 @@ contains
         ! deallocate reduced space basis
         deallocate(red_space_basis)
 
+        ! project the direction of the negative Hessian diagonal element, which is the
+        ! second unit vector, with a projection which keeps only the first component so
+        ! that it vanishes, and check that the error of its orthonormalization is
+        ! returned and the function result is still allocated
+        settings%project => mock_project_first_component
+        red_space_basis = &
+            generate_trial_vectors(grad, grad_norm, h_diag, settings, error)
+        if (error == 0) then
+            write(stderr, *) "test_generate_trial_vectors failed: Error not "// &
+                "produced for vanishing projected direction."
+            test_generate_trial_vectors = .false.
+        end if
+        if (.not. allocated(red_space_basis)) then
+            write(stderr, *) "test_generate_trial_vectors failed: Reduced space "// &
+                "basis not allocated for vanishing projected direction."
+            test_generate_trial_vectors = .false.
+            return
+        end if
+
+        ! deallocate reduced space basis
+        deallocate(red_space_basis)
+
     end function test_generate_trial_vectors
 
     logical(c_bool) function test_generate_random_trial_vectors() bind(C)
