@@ -372,6 +372,24 @@ contains
 
     end subroutine mock_project
 
+    subroutine mock_project_error(vector, error, context)
+        !
+        ! this subroutine is a test subroutine for a projection subroutine which
+        ! produces an error
+        !
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector = 2 * vector
+
+        error = 1
+
+    end subroutine mock_project_error
+
     function mock_conv_check(error, context) result(converged)
         !
         ! this function describes a convergence check which always passes
@@ -1713,6 +1731,26 @@ contains
         ! deallocate reduced space basis
         deallocate(red_space_basis)
 
+        ! check that the function result is allocated even when the projection function
+        ! produces an error before the reduced space basis is constructed
+        settings%project => mock_project_error
+        red_space_basis = &
+            generate_trial_vectors(grad, grad_norm, h_diag, settings, error)
+        if (error == 0) then
+            write(stderr, *) "test_generate_trial_vectors failed: Error not "// &
+                "produced for failing projection function."
+            test_generate_trial_vectors = .false.
+        end if
+        if (.not. allocated(red_space_basis)) then
+            write(stderr, *) "test_generate_trial_vectors failed: Reduced space "// &
+                "basis not allocated for failing projection function."
+            test_generate_trial_vectors = .false.
+            return
+        end if
+
+        ! deallocate reduced space basis
+        deallocate(red_space_basis)
+
     end function test_generate_trial_vectors
 
     logical(c_bool) function test_generate_random_trial_vectors() bind(C)
@@ -2392,6 +2430,15 @@ contains
             test_print_message = .false.
         end if
 
+        ! check that a blank message does not abort
+        log_message = ""
+        call print_message(settings, "   ", verbosity_warning)
+        if (trim(log_message) /= "") then
+            write(stderr, *) "test_print_message failed: Blank message is not "// &
+                "logged correctly."
+            test_print_message = .false.
+        end if
+
     end function test_print_message
 
     logical(c_bool) function test_split_string_by_space() bind(C)
@@ -2436,6 +2483,18 @@ contains
         else
             write(stderr, *) "test_split_string_by_space failed: Number of "// &
                 "substrings incorrect."
+            test_split_string_by_space = .false.
+        end if
+
+        ! check that a blank string produces an allocated array of zero substrings
+        call split_string_by_space("   ", 8_ip, substrings)
+        if (.not. allocated(substrings)) then
+            write(stderr, *) "test_split_string_by_space failed: Substrings not "// &
+                "allocated for blank string."
+            test_split_string_by_space = .false.
+        else if (size(substrings) /= 0) then
+            write(stderr, *) "test_split_string_by_space failed: Number of "// &
+                "substrings incorrect for blank string."
             test_split_string_by_space = .false.
         end if
 
@@ -2586,6 +2645,16 @@ contains
                 "for negative number of parameters."
             test_solver_sanity_check = .false.
         end if
+
+        ! check if error is correctly thrown for vanishing number of microiterations
+        settings%n_micro = 0
+        call solver_sanity_check(settings, 3_ip, grad, error)
+        if (error == 0) then
+            write(stderr, *) "test_solver_sanity_check failed: Error not thrown "// &
+                "for vanishing number of microiterations."
+            test_solver_sanity_check = .false.
+        end if
+        settings%n_micro = 50
 
         ! check if number of random trial vectors is reduced correctly
         settings%n_random_trial_vectors = 3
