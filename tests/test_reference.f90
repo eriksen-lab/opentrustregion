@@ -1025,6 +1025,98 @@ contains
 
     end subroutine get_default_stability_values
 
+    subroutine get_sentinel_solver_values(values_out, true_logical) bind(C)
+        !
+        ! this subroutine exports solver settings whose fields are set one by one to
+        ! distinct sentinel values, so that the C tests can check that every field is
+        ! read back under its own name, the logical numbered true_logical is set
+        ! so that swapped logicals can also be told apart
+        !
+        use c_interface, only: solver_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr, &
+                                               c_null_char
+
+        type(solver_settings_type_c), intent(out) :: values_out
+        integer(c_ip), value, intent(in) :: true_logical
+
+        ! set callback function pointers and host context to distinct addresses
+        values_out%precond = transfer(1_c_intptr_t, c_null_funptr)
+        values_out%project = transfer(2_c_intptr_t, c_null_funptr)
+        values_out%conv_check = transfer(3_c_intptr_t, c_null_funptr)
+        values_out%logger = transfer(4_c_intptr_t, c_null_funptr)
+        values_out%context = transfer(5_c_intptr_t, c_null_ptr)
+
+        ! set logicals
+        values_out%stability = true_logical == 1
+        values_out%line_search = true_logical == 2
+        values_out%initialized = true_logical == 3
+        values_out%max_precision_reached = true_logical == 4
+
+        ! set reals
+        values_out%conv_tol = 1.5_c_rp
+        values_out%start_trust_radius = 2.5_c_rp
+        values_out%global_red_factor = 3.5_c_rp
+        values_out%local_red_factor = 4.5_c_rp
+
+        ! set integers
+        values_out%n_random_trial_vectors = 11
+        values_out%n_macro = 12
+        values_out%n_micro = 13
+        values_out%jacobi_davidson_start = 14
+        values_out%seed = 15
+        values_out%verbose = 16
+        values_out%n_update_orbs = 17
+        values_out%n_hess_x = 18
+
+        ! set keyword
+        values_out%subsystem_solver = c_null_char
+        values_out%subsystem_solver(1:6) = transfer("solver", &
+                                                    values_out%subsystem_solver(1:6))
+
+        ! set nested stability settings
+        call get_sentinel_stability_values(values_out%stability_settings)
+
+    end subroutine get_sentinel_solver_values
+
+    subroutine get_sentinel_stability_values(values_out)
+        !
+        ! this subroutine sets the fields of stability check settings one by one to
+        ! distinct sentinel values, which also differ from those of the solver 
+        ! settings, for the nested stability settings exported by 
+        ! get_sentinel_solver_values
+        !
+        use c_interface, only: stability_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr, &
+                                               c_null_char
+
+        type(stability_settings_type_c), intent(out) :: values_out
+
+        ! set callback function pointers and host context to distinct addresses
+        values_out%precond = transfer(6_c_intptr_t, c_null_funptr)
+        values_out%project = transfer(7_c_intptr_t, c_null_funptr)
+        values_out%logger = transfer(8_c_intptr_t, c_null_funptr)
+        values_out%context = transfer(9_c_intptr_t, c_null_ptr)
+
+        ! set logical
+        values_out%initialized = .true.
+
+        ! set real
+        values_out%conv_tol = 5.5_c_rp
+
+        ! set integers
+        values_out%n_random_trial_vectors = 21
+        values_out%n_iter = 22
+        values_out%jacobi_davidson_start = 23
+        values_out%seed = 24
+        values_out%verbose = 25
+        values_out%n_hess_x = 26
+
+        ! set keyword
+        values_out%diag_solver = c_null_char
+        values_out%diag_solver(1:9) = transfer("stability", values_out%diag_solver(1:9))
+
+    end subroutine get_sentinel_stability_values
+
     subroutine assign_ref_to_solver(lhs, rhs)
         !
         ! this subroutine overloads the assignment operator to set solver settings to

@@ -214,7 +214,7 @@ if (${otr}_BUILD_TESTING AND NOT ${otr}_HOST_PROVIDES_BLAS)
         tests/opentrustregion_mock.f90
         tests/c_interface_mock.f90
         tests/opentrustregion_system_tests.f90
-        tests/c_system_tests.c)
+        tests/c_integration_tests.c)
 
     # create shared test library which is then called from Python for testing
     add_library(otrtestsuite SHARED ${OPENTRUSTREGION_TESTS})

@@ -3,13 +3,13 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
-//
-// Pure-C system test for the public C interface declared in opentrustregion.h.
-//
-// The Fortran-side c_interface_unit_tests cover the bind(C) wrappers but never compile
-// against the C header itself. This test does, so any drift between
-// solver_settings_type_c (Fortran) and solver_settings_type (C) is caught here.
-//
+
+/* Pure-C integration tests for the public C interface declared in opentrustregion.h
+ *
+ * The Fortran-side c_interface_unit_tests cover the bind(C) wrappers but never compile
+ * against the C header itself. These tests do, and test_settings_layout checks that
+ * every settings field is read back under its own name, so any drift between the
+ * bind(C) settings types (Fortran) and the settings structs (C) is caught here. */
 
 #include <math.h>
 #include <stddef.h>
@@ -19,14 +19,14 @@
 
 #include "opentrustregion.h"
 
-// ---------------------------------------------------------------------------
-// Compile-time layout checks for the C structs.
-//
-// These only verify that the C header is self-consistent: each field sits where the
-// field order claims it does, with no surprise padding before the pointer block.
-// Cross-language drift (Fortran vs. C) is caught at runtime by the default-value test
-// below.
-// ---------------------------------------------------------------------------
+/* ------------------------------------------------------------------
+ * Compile-time layout checks for the C structs
+ *
+ * These only verify that the C header is self-consistent: each field sits where the
+ * field order claims it does, with no surprise padding before the pointer block.
+ * Cross-language drift (Fortran vs. C) is caught at runtime by test_settings_layout
+ * below.
+ * ------------------------------------------------------------------ */
 
 _Static_assert(offsetof(solver_settings_type, precond) == 0,
                "solver_settings_type: precond must be the first field");
@@ -44,9 +44,9 @@ _Static_assert(offsetof(stability_settings_type, project) == 1 * sizeof(void *),
 _Static_assert(offsetof(stability_settings_type, logger) == 2 * sizeof(void *),
                "stability_settings_type: logger must follow project");
 
-// ---------------------------------------------------------------------------
-// Hartmann 6D function
-// ---------------------------------------------------------------------------
+/* ------------------------------------------------------------------
+ * Hartmann 6D function
+ * ------------------------------------------------------------------ */
 
 #define N_PARAM 6
 #define N_TERM 4
@@ -62,14 +62,17 @@ const c_real *minimum1 = hartmann6d_minimum1;
 extern const c_real hartmann6d_saddle_point[N_PARAM];
 const c_real *saddle_point = hartmann6d_saddle_point;
 
-// Host data handed to the callbacks through the context of the settings: the current
-// point and its Hessian, and flags recording which callbacks were reached.
+/* Host data handed to the callbacks through the context of the settings: the current
+ * point and its Hessian, and flags recording which callbacks were reached. */
 typedef struct {
   c_real curr_vars[N_PARAM];
   c_real hess[N_PARAM][N_PARAM];
+  int precond_called;
   int project_called;
-  int stability_project_called;
   int logger_called;
+  int stability_precond_called;
+  int stability_project_called;
+  int stability_logger_called;
   int nested_check_ran;
   int nested_check_error;
   int in_nested;
@@ -129,9 +132,9 @@ static void hartmann_hess(const c_real x[N_PARAM], c_real hess[N_PARAM][N_PARAM]
   }
 }
 
-// ---------------------------------------------------------------------------
-// Callbacks exposed to the Fortran solver via the C ABI.
-// ---------------------------------------------------------------------------
+/* ------------------------------------------------------------------
+ * Callbacks exposed to the Fortran solver via the C ABI
+ * ------------------------------------------------------------------ */
 
 static c_int hess_x_fun(const c_real *x, c_real *hx, void *context) {
   hartmann_context *ctx = context;
@@ -173,19 +176,36 @@ static c_int obj_func(const c_real *delta_vars, c_real *func, void *context) {
   return 0;
 }
 
-// Identity preconditioner — exercises the precond callback slot without risking a zero
-// vector when mu=0 (which would trip the Gram-Schmidt zero-vector guard).
+/* Identity preconditioners exercise the precond callback slots without risking a zero
+ * vector when mu=0 (which would trip the Gram-Schmidt zero-vector guard). The
+ * stability variant is set only on the nested stability settings, so the test can tell
+ * whether the internal stability check reached its own callback slots rather than the
+ * solver's. */
 static c_int precond(const c_real *residual, const c_real *mu, c_real *precond_residual,
                      void *context) {
   (void)mu;
-  if (!context)
+  hartmann_context *ctx = context;
+  if (!ctx)
     return 1;
+  ctx->precond_called = 1;
   for (int i = 0; i < N_PARAM; i++)
     precond_residual[i] = residual[i];
   return 0;
 }
 
-// An identity projection set on the solver settings.
+static c_int stability_precond(const c_real *residual, const c_real *mu,
+                               c_real *precond_residual, void *context) {
+  (void)mu;
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
+  ctx->stability_precond_called = 1;
+  for (int i = 0; i < N_PARAM; i++)
+    precond_residual[i] = residual[i];
+  return 0;
+}
+
+/* Identity projections, the stability variant again only for the nested settings. */
 static c_int project(c_real *vector, void *context) {
   (void)vector;
   hartmann_context *ctx = context;
@@ -195,9 +215,6 @@ static c_int project(c_real *vector, void *context) {
   return 0;
 }
 
-// An identity projection, set only on the nested stability settings, so the test can
-// tell whether the internal stability check reached its own callback slots rather than
-// the solver's.
 static c_int stability_project(c_real *vector, void *context) {
   (void)vector;
   hartmann_context *ctx = context;
@@ -207,9 +224,9 @@ static c_int stability_project(c_real *vector, void *context) {
   return 0;
 }
 
-// The nested stability check is given a Hessian-vector product of its own, distinct
-// from the one the outer solve is using. If anything were still shared between the two
-// calls, the outer solve would resume against this one, which it records.
+/* The nested stability check is given a Hessian-vector product of its own, distinct
+ * from the one the outer solve is using. If anything were still shared between the two
+ * calls, the outer solve would resume against this one, which it records. */
 static c_int inner_hess_x(const c_real *x, c_real *hx, void *context) {
   hartmann_context *ctx = context;
   if (!ctx)
@@ -219,9 +236,9 @@ static c_int inner_hess_x(const c_real *x, c_real *hx, void *context) {
   return hess_x_fun(x, hx, context);
 }
 
-// Convergence check that runs a whole stability check from inside the running solve,
-// with its own settings object; only nest once, and never report convergence, so the
-// outer solve is unaffected.
+/* Convergence check that runs a whole stability check from inside the running solve,
+ * with its own settings object; only nest once, and never report convergence, so the
+ * outer solve is unaffected. */
 static c_int conv_check_nested(c_bool *converged, void *context) {
   hartmann_context *ctx = context;
   if (!ctx)
@@ -243,16 +260,34 @@ static c_int conv_check_nested(c_bool *converged, void *context) {
   return 0;
 }
 
+/* Loggers, the stability variant again only for the nested settings. A logger cannot
+ * return an error, so a call without the host context is recorded here instead, since
+ * there is no context to record it in. */
+static int logger_without_context = 0;
+
 static void logger(const char *message, void *context) {
   (void)message;
   hartmann_context *ctx = context;
-  if (ctx)
-    ctx->logger_called = 1;
+  if (!ctx) {
+    logger_without_context = 1;
+    return;
+  }
+  ctx->logger_called = 1;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+static void stability_logger(const char *message, void *context) {
+  (void)message;
+  hartmann_context *ctx = context;
+  if (!ctx) {
+    logger_without_context = 1;
+    return;
+  }
+  ctx->stability_logger_called = 1;
+}
+
+/* ------------------------------------------------------------------
+ * Helpers
+ * ------------------------------------------------------------------ */
 
 static int vec_close(const c_real *a, const c_real *b, c_real tol) {
   for (int i = 0; i < N_PARAM; i++)
@@ -261,20 +296,98 @@ static int vec_close(const c_real *a, const c_real *b, c_real tol) {
   return 1;
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+/* ------------------------------------------------------------------
+ * Tests
+ * ------------------------------------------------------------------ */
+
+bool test_settings_layout(void) {
+  /* get settings with a distinct sentinel value in every field */
+  void get_sentinel_solver_values(solver_settings_type * settings, c_int true_logical);
+
+  bool ok = true;
+
+  /* check that every logical is read back under its own name, only one is set at a
+   * time so that swapped logicals can be told apart */
+  for (c_int i = 1; i <= 4; i++) {
+    solver_settings_type s = {0};
+    get_sentinel_solver_values(&s, i);
+    if (s.stability != (i == 1) || s.line_search != (i == 2) ||
+        s.initialized != (i == 3) || s.max_precision_reached != (i == 4)) {
+      fprintf(stderr, "test_settings_layout failed: Logical fields misplaced.\n");
+      ok = false;
+    }
+  }
+
+  /* check that every other field is read back under its own name */
+  solver_settings_type s = {0};
+  get_sentinel_solver_values(&s, 1);
+  if ((uintptr_t)s.precond != 1 || (uintptr_t)s.project != 2 ||
+      (uintptr_t)s.conv_check != 3 || (uintptr_t)s.logger != 4 ||
+      (uintptr_t)s.context != 5) {
+    fprintf(stderr, "test_settings_layout failed: Pointer fields misplaced.\n");
+    ok = false;
+  }
+  if (s.conv_tol != 1.5 || s.start_trust_radius != 2.5 || s.global_red_factor != 3.5 ||
+      s.local_red_factor != 4.5) {
+    fprintf(stderr, "test_settings_layout failed: Real fields misplaced.\n");
+    ok = false;
+  }
+  if (s.n_random_trial_vectors != 11 || s.n_macro != 12 || s.n_micro != 13 ||
+      s.jacobi_davidson_start != 14 || s.seed != 15 || s.verbose != 16 ||
+      s.n_update_orbs != 17 || s.n_hess_x != 18) {
+    fprintf(stderr, "test_settings_layout failed: Integer fields misplaced.\n");
+    ok = false;
+  }
+  if (strcmp(s.subsystem_solver, "solver") != 0) {
+    fprintf(stderr, "test_settings_layout failed: Keyword field misplaced.\n");
+    ok = false;
+  }
+
+  /* check the nested stability settings, which share their type with the settings
+   * of a standalone stability check */
+  stability_settings_type ss = s.stability_settings;
+  if ((uintptr_t)ss.precond != 6 || (uintptr_t)ss.project != 7 ||
+      (uintptr_t)ss.logger != 8 || (uintptr_t)ss.context != 9) {
+    fprintf(stderr, "test_settings_layout failed: Nested stability pointer fields "
+                    "misplaced.\n");
+    ok = false;
+  }
+  if (!ss.initialized) {
+    fprintf(stderr, "test_settings_layout failed: Nested stability logical field "
+                    "misplaced.\n");
+    ok = false;
+  }
+  if (ss.conv_tol != 5.5) {
+    fprintf(stderr, "test_settings_layout failed: Nested stability real field "
+                    "misplaced.\n");
+    ok = false;
+  }
+  if (ss.n_random_trial_vectors != 21 || ss.n_iter != 22 ||
+      ss.jacobi_davidson_start != 23 || ss.seed != 24 || ss.verbose != 25 ||
+      ss.n_hess_x != 26) {
+    fprintf(stderr, "test_settings_layout failed: Nested stability integer fields "
+                    "misplaced.\n");
+    ok = false;
+  }
+  if (strcmp(ss.diag_solver, "stability") != 0) {
+    fprintf(stderr, "test_settings_layout failed: Nested stability keyword field "
+                    "misplaced.\n");
+    ok = false;
+  }
+
+  return ok;
+}
 
 bool test_solver_settings_init(void) {
-  // get defaults
+  /* get defaults */
   void get_default_solver_values(solver_settings_type * settings);
   solver_settings_type defaults = {0};
   get_default_solver_values(&defaults);
 
-  // call function
+  /* call function */
   solver_settings_type s = solver_settings_init();
 
-  // compare values
+  /* compare values */
   bool ok = true;
   if (!s.initialized) {
     fprintf(stderr, "test_solver_settings_init failed: Settings not initialized.\n");
@@ -296,6 +409,16 @@ bool test_solver_settings_init(void) {
   if (fabs(s.start_trust_radius - defaults.start_trust_radius) > 1e-15) {
     fprintf(stderr, "test_solver_settings_init failed: Starting trust radius parameter "
                     "wrong.\n");
+    ok = false;
+  }
+  if (fabs(s.global_red_factor - defaults.global_red_factor) > 1e-15) {
+    fprintf(stderr, "test_solver_settings_init failed: Global reduction factor "
+                    "parameter wrong.\n");
+    ok = false;
+  }
+  if (fabs(s.local_red_factor - defaults.local_red_factor) > 1e-15) {
+    fprintf(stderr, "test_solver_settings_init failed: Local reduction factor "
+                    "parameter wrong.\n");
     ok = false;
   }
   if (s.n_macro != defaults.n_macro) {
@@ -337,8 +460,13 @@ bool test_solver_settings_init(void) {
                     "NULL.\n");
     ok = false;
   }
+  if (s.context) {
+    fprintf(stderr, "test_solver_settings_init failed: Host context should be "
+                    "NULL.\n");
+    ok = false;
+  }
 
-  // compare nested stability check values
+  /* compare nested stability check values */
   stability_settings_type stability_defaults = defaults.stability_settings;
   stability_settings_type ss = s.stability_settings;
   if (!ss.initialized) {
@@ -358,7 +486,7 @@ bool test_solver_settings_init(void) {
   }
   if (ss.n_iter != stability_defaults.n_iter) {
     fprintf(stderr, "test_solver_settings_init failed: Nested stability number of "
-                    "parameter wrong.\n");
+                    "iterations parameter wrong.\n");
     ok = false;
   }
   if (ss.jacobi_davidson_start != stability_defaults.jacobi_davidson_start) {
@@ -392,6 +520,11 @@ bool test_solver_settings_init(void) {
                     "pointers should be NULL.\n");
     ok = false;
   }
+  if (ss.context) {
+    fprintf(stderr, "test_solver_settings_init failed: Nested stability host context "
+                    "should be NULL.\n");
+    ok = false;
+  }
   if (s.max_precision_reached != defaults.max_precision_reached) {
     fprintf(stderr, "test_solver_settings_init failed: Maximum precision reached "
                     "parameter wrong.\n");
@@ -412,15 +545,15 @@ bool test_solver_settings_init(void) {
 }
 
 bool test_stability_settings_init(void) {
-  // get defaults
+  /* get defaults */
   void get_default_stability_values(stability_settings_type * settings);
   stability_settings_type defaults = {0};
   get_default_stability_values(&defaults);
 
-  // call function
+  /* call function */
   stability_settings_type s = stability_settings_init();
 
-  // compare values
+  /* compare values */
   bool ok = true;
   if (!s.initialized) {
     fprintf(stderr, "test_stability_settings_init failed: Settings not initialized.\n");
@@ -473,6 +606,11 @@ bool test_stability_settings_init(void) {
                     "NULL.\n");
     ok = false;
   }
+  if (s.context) {
+    fprintf(stderr, "test_stability_settings_init failed: Host context should be "
+                    "NULL.\n");
+    ok = false;
+  }
 
   return ok;
 }
@@ -480,7 +618,7 @@ bool test_stability_settings_init(void) {
 bool test_solver_c(void) {
   bool ok = true;
 
-  // start in the quadratic region near the first minimum
+  /* start in the quadratic region near the first minimum */
   hartmann_context ctx = {.curr_vars = {0.20, 0.15, 0.48, 0.28, 0.31, 0.66}};
 
   solver_settings_type settings = solver_settings_init();
@@ -488,10 +626,13 @@ bool test_solver_c(void) {
   settings.precond = precond;
   settings.project = project;
   settings.logger = logger;
-  settings.stability = true;
-  settings.stability_settings.project = stability_project;
   settings.conv_check = conv_check_nested;
-  settings.verbose = 3; // ensure the logger callback is exercised
+  settings.stability = true;
+  settings.stability_settings.precond = stability_precond;
+  settings.stability_settings.project = stability_project;
+  settings.stability_settings.logger = stability_logger;
+  settings.verbose = 3; /* ensure the logger callbacks are exercised */
+  logger_without_context = 0;
 
   c_int error = solver(update_orbs, obj_func, N_PARAM, &settings);
   if (error != 0) {
@@ -502,6 +643,10 @@ bool test_solver_c(void) {
     fprintf(stderr, "test_solver_c failed: Solver did not find minimum.\n");
     ok = false;
   }
+  if (!ctx.precond_called) {
+    fprintf(stderr, "test_solver_c failed: Preconditioner was not called.\n");
+    ok = false;
+  }
   if (!ctx.project_called) {
     fprintf(stderr, "test_solver_c failed: Projection was not called.\n");
     ok = false;
@@ -510,9 +655,19 @@ bool test_solver_c(void) {
     fprintf(stderr, "test_solver_c failed: Logger was not called.\n");
     ok = false;
   }
-  if (settings.n_update_orbs <= 0 || settings.n_hess_x <= 0) {
-    fprintf(stderr, "test_solver_c failed: Orbital update / Hessian linear "
-                    "transformation counters were not populated.\n");
+  if (logger_without_context) {
+    fprintf(stderr, "test_solver_c failed: Logger was called without the host "
+                    "context.\n");
+    ok = false;
+  }
+  if (settings.n_update_orbs <= 0) {
+    fprintf(stderr, "test_solver_c failed: Orbital update counter was not "
+                    "populated.\n");
+    ok = false;
+  }
+  if (settings.n_hess_x <= 0) {
+    fprintf(stderr, "test_solver_c failed: Hessian linear transformation counter was "
+                    "not populated.\n");
     ok = false;
   }
   if (settings.stability_settings.n_hess_x <= 0) {
@@ -520,9 +675,10 @@ bool test_solver_c(void) {
                     "the internal stability check was not populated.\n");
     ok = false;
   }
-  if (!ctx.stability_project_called) {
+  if (!ctx.stability_precond_called || !ctx.stability_project_called ||
+      !ctx.stability_logger_called) {
     fprintf(stderr, "test_solver_c failed: The internal stability check did not use "
-                    "the projection set on the nested stability settings.\n");
+                    "the callbacks set on the nested stability settings.\n");
     ok = false;
   }
   if (!ctx.nested_check_ran || ctx.nested_check_error != 0) {
@@ -546,10 +702,13 @@ bool test_stability_check_c(void) {
 
   stability_settings_type settings = stability_settings_init();
   settings.context = &ctx;
+  settings.precond = precond;
+  settings.project = project;
   settings.logger = logger;
-  settings.verbose = 3; // ensure the logger callback is exercised
+  settings.verbose = 3; /* ensure the logger callback is exercised */
+  logger_without_context = 0;
 
-  // at a minimum, expect stable
+  /* at a minimum, expect stable */
   hartmann_hess(minimum1, ctx.hess);
   c_real h_diag[N_PARAM];
   for (int i = 0; i < N_PARAM; i++)
@@ -567,8 +726,21 @@ bool test_stability_check_c(void) {
                     "stability of minimum.\n");
     ok = false;
   }
+  if (!ctx.precond_called) {
+    fprintf(stderr, "test_stability_check_c failed: Preconditioner was not called.\n");
+    ok = false;
+  }
+  if (!ctx.project_called) {
+    fprintf(stderr, "test_stability_check_c failed: Projection was not called.\n");
+    ok = false;
+  }
   if (!ctx.logger_called) {
     fprintf(stderr, "test_stability_check_c failed: Logger was not called.\n");
+    ok = false;
+  }
+  if (logger_without_context) {
+    fprintf(stderr, "test_stability_check_c failed: Logger was called without the "
+                    "host context.\n");
     ok = false;
   }
   if (settings.n_hess_x <= 0) {
@@ -577,7 +749,7 @@ bool test_stability_check_c(void) {
     ok = false;
   }
 
-  // at a saddle, expect unstable
+  /* at a saddle, expect unstable */
   hartmann_hess(saddle_point, ctx.hess);
   for (int i = 0; i < N_PARAM; i++)
     h_diag[i] = ctx.hess[i][i];
@@ -594,8 +766,8 @@ bool test_stability_check_c(void) {
     ok = false;
   }
 
-  // the descent direction at the saddle should align with the known
-  // negative-curvature eigenvector
+  /* the descent direction at the saddle should align with the known
+   * negative-curvature eigenvector */
   static const c_real ref_direction[N_PARAM] = {-0.173375920238,    -0.518489821791,
                                                 -6.432848975252e-3, -0.340127852882,
                                                 3.066460316955e-3,  0.765095650196};
@@ -608,7 +780,7 @@ bool test_stability_check_c(void) {
     ok = false;
   }
 
-  // also exercise the no-direction path
+  /* also exercise the no-direction path */
   stable = true;
   error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, NULL);
   if (error != 0) {

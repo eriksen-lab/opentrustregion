@@ -376,9 +376,9 @@ contains
     logical function check_h2o_fb_solver(test_name, option)
         !
         ! this function performs the Foster-Boys localization of the occupied orbitals
-        ! of water from orbitals near the minimum and from a saddle point with a solver
-        ! option switched on and checks that the localized orbitals are a stable
-        ! minimum with the reference objective function value
+        ! of water from a guess and from a saddle point with a solver option switched
+        ! on and checks that the localized orbitals are a stable minimum with the
+        ! reference objective function value
         !
         use opentrustregion, only: update_orbs_type, obj_func_type, &
                                    solver_settings_type, solver, hess_x_type, &
@@ -397,7 +397,7 @@ contains
         real(rp) :: kappa(n_param), grad(n_param), h_diag(n_param), func
         logical :: stable
         character(len=*), parameter :: start_names(2) = &
-            [character(len=12) :: "near minimum", "saddle point"]
+            [character(len=12) :: "guess", "saddle point"]
         character(len=*), parameter :: start_files(2) = &
             ["h2o_atomic_mo_coeff.bin", "h2o_saddle_mo_coeff.bin"]
         real(rp), parameter :: ref_func = 6.890557872085_rp, func_tol = 1e-8_rp
@@ -419,6 +419,7 @@ contains
             call solver_settings%init(error)
             solver_settings%context => context
             select case (option)
+            case ("default")
             case ("jacobi-davidson")
                 solver_settings%subsystem_solver = "jacobi-davidson"
                 solver_settings%jacobi_davidson_start = 0
@@ -428,6 +429,10 @@ contains
                 solver_settings%line_search = .true.
             case ("stability")
                 solver_settings%stability = .true.
+            case default
+                write(stderr, *) test_name//" failed: Unknown solver option."
+                check_h2o_fb_solver = .false.
+                return
             end select
 
             ! run solver
@@ -474,11 +479,11 @@ contains
 
     logical function check_h2o_fb_stability_check(test_name, diag_solver)
         !
-        ! this function performs the stability check for the Foster-Boys localization 
-        ! of the occupied orbitals of water at the minimum and at a saddle point with a
-        ! diagonalization solver and checks that the minimum is found to be stable and
-        ! the saddle point to be unstable with a returned direction along which the
-        ! objective function decreases
+        ! this function performs the stability check for the Foster-Boys localization
+        ! of the occupied orbitals of water at the minimum and at a saddle point with
+        ! a diagonalization solver and checks that the minimum is found to be stable
+        ! and the saddle point to be unstable with a returned direction along which
+        ! the objective function decreases
         !
         use opentrustregion, only: hess_x_type, stability_settings_type, stability_check
 
@@ -514,7 +519,7 @@ contains
             call settings%init(error)
             settings%context => context
             settings%diag_solver = diag_solver
-            settings%jacobi_davidson_start = 0
+            if (diag_solver == "jacobi-davidson") settings%jacobi_davidson_start = 0
 
             ! perform stability check
             call stability_check(h_diag, hess_x_funptr, stable, error, settings, kappa)
@@ -579,7 +584,8 @@ contains
     logical(c_bool) function test_h2o_fb_solver_tcg() bind(C)
         !
         ! this function tests the solver for the Foster-Boys localization of the
-        ! occupied orbitals of water with the truncated conjugate gradient subsystem solver
+        ! occupied orbitals of water with the truncated conjugate gradient subsystem
+        ! solver
         !
         test_h2o_fb_solver_tcg = &
             logical(check_h2o_fb_solver("test_h2o_fb_solver_tcg", "tcg"), kind=c_bool)
@@ -608,8 +614,8 @@ contains
 
     logical(c_bool) function test_h2o_fb_stability_check_default() bind(C)
         !
-        ! this function tests the stability check for the Foster-Boys localization of the
-        ! occupied orbitals of water with the default settings
+        ! this function tests the stability check for the Foster-Boys localization of
+        ! the occupied orbitals of water with the default settings
         !
         test_h2o_fb_stability_check_default = logical(check_h2o_fb_stability_check( &
             "test_h2o_fb_stability_check_default", "davidson"), kind=c_bool)
@@ -618,8 +624,9 @@ contains
 
     logical(c_bool) function test_h2o_fb_stability_check_jacobi_davidson() bind(C)
         !
-        ! this function tests the stability check for the Foster-Boys localization of the
-        ! occupied orbitals of water with the Jacobi-Davidson diagonalization solver
+        ! this function tests the stability check for the Foster-Boys localization of
+        ! the occupied orbitals of water with the Jacobi-Davidson diagonalization
+        ! solver
         !
         test_h2o_fb_stability_check_jacobi_davidson = logical( &
             check_h2o_fb_stability_check( &

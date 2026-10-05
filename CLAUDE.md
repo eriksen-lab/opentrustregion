@@ -71,25 +71,43 @@ pip install -e .       # editable
 ```
 
 ```sh
-# full suite (Python driver calling into libotrtestsuite: Fortran unit + system tests)
+# full suite (Python driver calling into libotrtestsuite: unit, integration and system tests)
 python3 -m pyopentrustregion.testsuite                  # from an installed/editable build
 python3 pyopentrustregion/testsuite.py                  # from the source tree against ./build
 
 # single test class or method (stdlib unittest)
-python3 -m unittest pyopentrustregion.testsuite.SystemTests
-python3 -m unittest pyopentrustregion.testsuite.OpenTrustRegionTests.test_solver
+python3 -m unittest pyopentrustregion.testsuite.OpenTrustRegionSystemTests
+python3 -m unittest pyopentrustregion.testsuite.OpenTrustRegionUnitTests.test_solver
 ```
 
 The Python suite runs Fortran- and C-side tests (via symbols dynamically loaded from `libotrtestsuite`) and pure-Python wrapper tests. System tests need `pyopentrustregion/test_data/*.bin`.
 
 **Where to add coverage for a new setting.** As assertions inside the existing unit test for the routine the setting affects (`tests/opentrustregion_unit_tests.f90`), not as a new system test — system tests exercise real chemistry data end-to-end, and one per settings combination would explode combinatorially. When a setting can push a routine down a materially different code path (interior vs. boundary-crossing branch in a trust-region solver), exercise both — a check that only hits the "easy" branch (e.g. always starting near a minimum) can pass while a branch reached only near a saddle point stays untested.
 
+**What the system and integration tests cover.** The tests come in three tiers: unit tests run one routine against mocks, integration tests run the real library through one interface's declarations, and system tests run the real library on real data. Each tier checks what it adds, not the scenarios of the tier below. The system tests check numerical behaviour:
+
+| Test | Covers |
+|---|---|
+| `test_h2o_fb_solver_<option>` (`opentrustregion_system_tests.f90`) | `solver` on the water Foster-Boys localization with the default settings and with one algorithm-selecting option switched on at a time (Jacobi-Davidson, TCG, `line_search`, `stability`), each from a guess and from a saddle point; checks the converged gradient, the reference minimum and its stability. |
+| `test_h2o_fb_stability_check_<option>` (same file) | `stability_check` with the default Davidson and with the Jacobi-Davidson diagonalization solver at the minimum (stable) and at a saddle point (unstable, objective decreasing along the returned direction). |
+
+The integration tests check what crosses the C and Python interfaces. The interface unit tests replace the other side with mocks, so these are the only tests that run the real entry points behind the real header and ctypes declarations; their solves on the Hartmann 6D problem only serve as evidence that the results came back:
+
+| Test | Covers |
+|---|---|
+| `test_solver_c`, `test_stability_check_c` (`c_integration_tests.c`) | The real library through the C header: every optional callback of both settings structs, including the nested stability settings' own, the host context reaching every callback (including its lending to the internal stability check), a stability check nested in a running solve, the returned counters and stability flag, and the call without a direction. |
+| `test_settings_layout` (same file, and `PyIntegrationTests` for the ctypes structures in `python_interface.py`) | That every field of the C settings structs, including the nested stability settings, is read back under its own name from settings whose fields Fortran sets one by one to distinct sentinel values (`get_sentinel_solver_values` in `test_reference.f90`), so any drift between the header and the `bind(C)` types is caught. |
+| `test_solver_settings_init`, `test_stability_settings_init` (same file) | That the header's inline `*_init()` wrappers return the library's defaults with no callbacks and no host context. Both sides come from the same Fortran assignment, so these do not detect layout drift; `test_settings_layout` does. |
+| `test_solver_py`, `test_stability_check_py` (`PyIntegrationTests` in `testsuite.py`) | The real library through the Python wrapper: every optional callback of both settings classes, including the nested stability settings' own, the returned counters and stability flag, and the call without a direction. |
+
+System tests are registered per option, not per routine: the one-registered-test-per-routine rule and the advice above to cover a new setting in the unit tests apply to unit tests and to settings that only tune a routine. A new option that selects a different algorithm gets its own registered `test_h2o_fb_solver_<option>` or `test_h2o_fb_stability_check_<option>` test, never a combination with another option. The integration tests gain a check only when a new callback, settings field or return value crosses their interface.
+
 ### Registering a new Fortran unit test
 
 A `logical(c_bool) function test_<routine>() bind(C)` is only reachable once wired into both:
 
 1. The source file in the CMake test source list (`OPENTRUSTREGION_TESTS`).
-2. The `fortran_tests["opentrustregion_tests"]` (or `"c_interface_tests"`) name list in `pyopentrustregion/testsuite.py`, alphabetically ordered, without the `test_` prefix — the `@add_tests` decorator on the corresponding `unittest.TestCase` turns each name into a `test_<name>` method.
+2. The `fortran_tests["opentrustregion_unit_tests"]` (or `"c_interface_unit_tests"`) name list in `pyopentrustregion/testsuite.py`, alphabetically ordered, without the `test_` prefix — the `@add_tests` decorator on the corresponding `unittest.TestCase` turns each name into a `test_<name>` method.
 
 A name in the list with no matching Fortran symbol fails when that test runs, with `AttributeError: dlsym(...): symbol not found`.
 
@@ -154,7 +172,7 @@ A clean link proves nothing is left unmapped; it does **not** verify numerical b
   ln -sfn <repo>/build_manual build
   python3 -m pyopentrustregion.testsuite
   ```
-- **`ref_settings_type_c` in `test_reference.f90` has an implicit, unenforced field-order convention.** `PyInterfaceTests.setUpClass` in `pyopentrustregion/testsuite.py` rebuilds a matching struct by walking `SolverSettings.c_struct._fields_ + StabilitySettings.c_struct._fields_` (that concatenation order, bools-then-reals-then-ints, then character arrays in relative order) and passes it into Fortran's `get_reference_values` via a raw `POINTER(RefSettingsC)` cast. So `ref_settings_type_c` must declare all `solver_settings_type_c`-owned character/string fields before all `stability_settings_type_c`-owned ones, regardless of what feels natural. Getting it wrong causes no crash — the two structs read across each other's byte ranges, so a field silently reports another field's value, or raises `UnicodeDecodeError` if the misaligned bytes aren't valid UTF-8. A new settings field failing with an inexplicable value mismatch or decode error → suspect field order here first.
+- **`ref_settings_type_c` in `test_reference.f90` has an implicit, unenforced field-order convention.** `PyInterfaceUnitTests.setUpClass` in `pyopentrustregion/testsuite.py` rebuilds a matching struct by walking `SolverSettings.c_struct._fields_ + StabilitySettings.c_struct._fields_` (that concatenation order, bools-then-reals-then-ints, then character arrays in relative order) and passes it into Fortran's `get_reference_values` via a raw `POINTER(RefSettingsC)` cast. So `ref_settings_type_c` must declare all `solver_settings_type_c`-owned character/string fields before all `stability_settings_type_c`-owned ones, regardless of what feels natural. Getting it wrong causes no crash — the two structs read across each other's byte ranges, so a field silently reports another field's value, or raises `UnicodeDecodeError` if the misaligned bytes aren't valid UTF-8. A new settings field failing with an inexplicable value mismatch or decode error → suspect field order here first.
 
 ## Core library
 
@@ -164,7 +182,7 @@ A clean link proves nothing is left unmapped; it does **not** verify numerical b
 - `src/c_interface.f90` — `bind(C)` wrapper module. Collects the C callback pointers in a per-call `c_callbacks_type` bundle held on the entry point's stack and passed through as the opaque context, and adapts C-style `(*)` arrays + return-code functions into Fortran-style `(:)` arrays + `intent(out) :: error` subroutines. The module-scope `solver`/`stability_check` procedure pointers remain as test-injection seams; they are set once by the harness, never per call.
 - `include/opentrustregion.h` — C header mirroring `solver_settings_type` / `stability_settings_type` as C structs, plus `*_init()` helpers and `solver`/`stability_check` prototypes.
 - `pyopentrustregion/python_interface.py` — ctypes wrapper. `SolverSettings`/`StabilitySettings` as `ctypes.Structure` mirrors of the C structs, Python callbacks wrapped with `CFUNCTYPE`, integer error codes converted to `RuntimeError`.
-- `tests/` — `opentrustregion_unit_tests.f90` / `c_interface_unit_tests.f90` (Fortran/C interface unit tests, both in `libotrtestsuite`), `opentrustregion_system_tests.f90` (system tests against `pyopentrustregion/test_data/`), `c_system_tests.c` (system tests through the C interface), `*_mock.f90` (mock callbacks for both unit suites), `test_reference.f90` (tolerances + reference values).
+- `tests/` — `opentrustregion_unit_tests.f90` / `c_interface_unit_tests.f90` (Fortran/C interface unit tests, both in `libotrtestsuite`), `opentrustregion_system_tests.f90` (system tests against `pyopentrustregion/test_data/`), `c_integration_tests.c` (integration tests of the real library through the C header), `*_mock.f90` (mock callbacks for both unit suites), `test_reference.f90` (tolerances + reference values).
 
 ### Fortran/C/Python interfaces must stay consistent
 

@@ -95,7 +95,7 @@ if lib is None:
 
 # define all tests in alphabetical order
 fortran_tests = {
-    "opentrustregion_tests": [
+    "opentrustregion_unit_tests": [
         "abs_diag_precond",
         "accept_trust_region_step",
         "add_column",
@@ -113,10 +113,10 @@ fortran_tests = {
         "jacobi_davidson_correction",
         "level_shifted_davidson",
         "level_shifted_diag_precond",
-        "print_message",
         "minres",
         "newton_step",
         "orthogonal_projection",
+        "print_message",
         "print_results",
         "solver",
         "solver_sanity_check",
@@ -128,7 +128,7 @@ fortran_tests = {
         "symm_mat_min_eig",
         "truncated_conjugate_gradient",
     ],
-    "c_interface_tests": [
+    "c_interface_unit_tests": [
         "assign_solver_c_f",
         "assign_solver_f_c",
         "assign_stability_c_f",
@@ -148,7 +148,7 @@ fortran_tests = {
         "store_optional_c_callbacks",
         "update_orbs_f_wrapper",
     ],
-    "system_tests": [
+    "opentrustregion_system_tests": [
         "h2o_fb_solver_default",
         "h2o_fb_solver_jacobi_davidson",
         "h2o_fb_solver_line_search",
@@ -157,11 +157,12 @@ fortran_tests = {
         "h2o_fb_stability_check_default",
         "h2o_fb_stability_check_jacobi_davidson",
     ],
-    "c_system_tests": [
-        "solver_settings_init",
-        "stability_settings_init",
+    "c_integration_tests": [
+        "settings_layout",
         "solver_c",
+        "solver_settings_init",
         "stability_check_c",
+        "stability_settings_init",
     ],
 }
 
@@ -190,12 +191,12 @@ def add_tests(cls):
 
 
 @add_tests
-class OpenTrustRegionTests(unittest.TestCase):
+class OpenTrustRegionUnitTests(unittest.TestCase):
     """
     this class contains unit tests for opentrustregion
     """
 
-    tests = fortran_tests["opentrustregion_tests"]
+    tests = fortran_tests["opentrustregion_unit_tests"]
 
     @classmethod
     def setUpClass(cls):
@@ -206,12 +207,12 @@ class OpenTrustRegionTests(unittest.TestCase):
 
 
 @add_tests
-class CInterfaceTests(unittest.TestCase):
+class CInterfaceUnitTests(unittest.TestCase):
     """
     this class contains unit tests for the C interface
     """
 
-    tests = fortran_tests["c_interface_tests"]
+    tests = fortran_tests["c_interface_unit_tests"]
 
     @classmethod
     def setUpClass(cls):
@@ -222,7 +223,7 @@ class CInterfaceTests(unittest.TestCase):
 
 
 @unittest.skipUnless(NUMPY_AVAILABLE, "NumPy not available.")
-class PyInterfaceTests(unittest.TestCase):
+class PyInterfaceUnitTests(unittest.TestCase):
     """
     this class contains unit tests for the Python interface
     """
@@ -674,12 +675,12 @@ class PyInterfaceTests(unittest.TestCase):
 
 
 @add_tests
-class SystemTests(unittest.TestCase):
+class OpenTrustRegionSystemTests(unittest.TestCase):
     """
     this class contains system tests for opentrustregion
     """
 
-    tests = fortran_tests["system_tests"]
+    tests = fortran_tests["opentrustregion_system_tests"]
 
     @classmethod
     def setUpClass(cls):
@@ -696,28 +697,29 @@ class SystemTests(unittest.TestCase):
 
 
 @add_tests
-class CSystemTests(unittest.TestCase):
+class CIntegrationTests(unittest.TestCase):
     """
-    this class contains system tests for the C interface
+    this class contains integration tests that drive the real library through the C
+    header
     """
 
-    tests = fortran_tests["c_system_tests"]
+    tests = fortran_tests["c_integration_tests"]
 
     @classmethod
     def setUpClass(cls):
         print(50 * "-")
-        print("Running system tests for C interface...")
+        print("Running integration tests for C interface...")
         print(50 * "-")
         return super().setUpClass()
 
 
 @unittest.skipUnless(NUMPY_AVAILABLE, "NumPy not available.")
-class PySystemTests(unittest.TestCase):
+class PyIntegrationTests(unittest.TestCase):
     """
-    this class contains end-to-end system tests that drive the real
-    pyopentrustregion.solver and stability_check wrappers (not the mock library)
-    against the Hartmann 6D problem. This is the only test path that exercises the full
-    Python public API on a real numerical workload.
+    this class contains integration tests that drive the real library (not the mock
+    library) through the Python interface, with the Hartmann 6D problem as a small
+    workload that exercises every callback, settings field and return value crossing
+    the interface
     """
 
     # Hartmann 6D parameters
@@ -743,7 +745,7 @@ class PySystemTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         print(50 * "-")
-        print("Running system tests for Python interface...")
+        print("Running integration tests for Python interface...")
         print(50 * "-")
         return super().setUpClass()
 
@@ -792,6 +794,105 @@ class PySystemTests(unittest.TestCase):
 
     # Tests
 
+    def test_settings_layout(self):
+        """
+        this function checks that every field of the Python settings structures,
+        including the nested stability settings, is read back under its own name from
+        settings whose fields Fortran sets one by one to distinct sentinel values
+        """
+        test_passed = True
+        lib.get_sentinel_solver_values.argtypes = [
+            POINTER(SolverSettings.c_struct),
+            c_int,
+        ]
+        lib.get_sentinel_solver_values.restype = None
+
+        # check that every logical is read back under its own name, only one is set at
+        # a time so that swapped logicals can be told apart
+        for i in range(1, 5):
+            s = SolverSettings.c_struct()
+            lib.get_sentinel_solver_values(byref(s), i)
+            if (s.stability, s.line_search, s.initialized, s.max_precision_reached) != (
+                i == 1,
+                i == 2,
+                i == 3,
+                i == 4,
+            ):
+                print(" test_settings_layout failed: Logical fields misplaced.")
+                test_passed = False
+
+        # check that every other field is read back under its own name
+        s = SolverSettings.c_struct()
+        lib.get_sentinel_solver_values(byref(s), 1)
+        if (s.precond, s.project, s.conv_check, s.logger, s.context) != (1, 2, 3, 4, 5):
+            print(" test_settings_layout failed: Pointer fields misplaced.")
+            test_passed = False
+        if (
+            s.conv_tol,
+            s.start_trust_radius,
+            s.global_red_factor,
+            s.local_red_factor,
+        ) != (1.5, 2.5, 3.5, 4.5):
+            print(" test_settings_layout failed: Real fields misplaced.")
+            test_passed = False
+        if (
+            s.n_random_trial_vectors,
+            s.n_macro,
+            s.n_micro,
+            s.jacobi_davidson_start,
+            s.seed,
+            s.verbose,
+            s.n_update_orbs,
+            s.n_hess_x,
+        ) != tuple(range(11, 19)):
+            print(" test_settings_layout failed: Integer fields misplaced.")
+            test_passed = False
+        if s.subsystem_solver != b"solver":
+            print(" test_settings_layout failed: Keyword field misplaced.")
+            test_passed = False
+
+        # check the nested stability settings, which share their type with the settings
+        # of a standalone stability check
+        ss = s.stability_settings
+        if (ss.precond, ss.project, ss.logger, ss.context) != (6, 7, 8, 9):
+            print(
+                " test_settings_layout failed: Nested stability pointer fields "
+                "misplaced."
+            )
+            test_passed = False
+        if not ss.initialized:
+            print(
+                " test_settings_layout failed: Nested stability logical field "
+                "misplaced."
+            )
+            test_passed = False
+        if ss.conv_tol != 5.5:
+            print(
+                " test_settings_layout failed: Nested stability real field misplaced."
+            )
+            test_passed = False
+        if (
+            ss.n_random_trial_vectors,
+            ss.n_iter,
+            ss.jacobi_davidson_start,
+            ss.seed,
+            ss.verbose,
+            ss.n_hess_x,
+        ) != tuple(range(21, 27)):
+            print(
+                " test_settings_layout failed: Nested stability integer fields "
+                "misplaced."
+            )
+            test_passed = False
+        if ss.diag_solver != b"stability":
+            print(
+                " test_settings_layout failed: Nested stability keyword field "
+                "misplaced."
+            )
+            test_passed = False
+        self.assertTrue(test_passed, "test_settings_layout failed")
+        print(" test_settings_layout PASSED")
+
     def test_solver_py(self):
         """
         this function drives solver() end-to-end from near a minimum with every
@@ -799,15 +900,13 @@ class PySystemTests(unittest.TestCase):
         """
         test_passed = True
 
-        # mutable closure state holding the current point and its Hessian, and which
-        # callbacks were reached
+        # mutable closure state holding the current point, starting in the quadratic
+        # region near the first minimum, its Hessian and the names of the callbacks
+        # that were reached
         state = {
             "curr": np.array([0.20, 0.15, 0.48, 0.28, 0.31, 0.66]),
             "hess": None,
-            "project_called": False,
-            "stability_project_called": False,
-            "conv_check_called": False,
-            "logger_called": False,
+            "called": set(),
         }
 
         def update_orbs(delta_vars, grad, h_diag):
@@ -825,61 +924,61 @@ class PySystemTests(unittest.TestCase):
         def obj_func(delta_vars):
             return self._func(state["curr"] + delta_vars)
 
-        def precond(residual, mu, out):
-            # identity preconditioner; exercises the callback without producing a zero
-            # vector when mu=0 (which would trip the Gram-Schmidt zero-vector guard)
-            out[:] = residual
+        # identity preconditioners and projections and loggers that record their
+        # names, the stability variants are set only on the nested stability settings,
+        # so the test can tell whether the internal stability check reached its own
+        # callback slots rather than the solver's, the identity preconditioners
+        # exercise the callback without producing a zero vector when mu=0 (which would
+        # trip the Gram-Schmidt zero-vector guard)
+        def recording_precond(name):
+            def precond(residual, mu, out):
+                state["called"].add(name)
+                out[:] = residual
 
-        def project(vector):
-            # identity projection
-            state["project_called"] = True
+            return precond
 
-        def stability_project(vector):
-            # identity projection, set only on the nested stability settings, so the
-            # test can tell whether the internal stability check reached its own
-            # callback slots rather than the solver's
-            state["stability_project_called"] = True
+        def recording_callback(name):
+            def callback(*args):
+                state["called"].add(name)
+
+            return callback
 
         def conv_check():
             # never report convergence, so the solve is unaffected
-            state["conv_check_called"] = True
+            state["called"].add("conv_check")
             return False
 
-        def logger(msg):
-            state["logger_called"] = True
-
         settings = SolverSettings()
-        settings.precond = precond
-        settings.project = project
+        settings.precond = recording_precond("precond")
+        settings.project = recording_callback("project")
         settings.conv_check = conv_check
-        settings.logger = logger
+        settings.logger = recording_callback("logger")
         settings.stability = True
-        settings.stability_settings.project = stability_project
-        settings.verbose = 3  # ensure logger is exercised
+        settings.stability_settings.precond = recording_precond("stability_precond")
+        settings.stability_settings.project = recording_callback("stability_project")
+        settings.stability_settings.logger = recording_callback("stability_logger")
+        settings.verbose = 3  # ensure the loggers are exercised
 
         solver(obj_func, update_orbs, self.n_param, settings)
         if not np.allclose(state["curr"], self.minimum1, atol=1e-4):
             print(" test_solver_py failed: Solver did not find minimum.")
             test_passed = False
-        if not state["project_called"]:
-            print(" test_solver_py failed: Projection was not called.")
-            test_passed = False
-        if not state["conv_check_called"]:
-            print(" test_solver_py failed: Convergence check was not called.")
-            test_passed = False
-        if not state["logger_called"]:
-            print(" test_solver_py failed: Logger was not called.")
-            test_passed = False
+        for name, description in [
+            ("precond", "Preconditioner"),
+            ("project", "Projection"),
+            ("conv_check", "Convergence check"),
+            ("logger", "Logger"),
+        ]:
+            if name not in state["called"]:
+                print(f" test_solver_py failed: {description} was not called.")
+                test_passed = False
         if settings.n_update_orbs <= 0:
-            print(
-                " test_solver_py failed: Orbital update transformation counters were "
-                "not populated."
-            )
+            print(" test_solver_py failed: Orbital update counter was not populated.")
             test_passed = False
         if settings.n_hess_x <= 0:
             print(
-                " test_solver_py failed: Hessian linear transformation counters were "
-                "not populated."
+                " test_solver_py failed: Hessian linear transformation counter was not "
+                "populated."
             )
             test_passed = False
         if settings.stability_settings.n_hess_x <= 0:
@@ -888,10 +987,13 @@ class PySystemTests(unittest.TestCase):
                 "internal stability check was not populated."
             )
             test_passed = False
-        if not state["stability_project_called"]:
+        if (
+            not {"stability_precond", "stability_project", "stability_logger"}
+            <= state["called"]
+        ):
             print(
                 " test_solver_py failed: The internal stability check did not use the "
-                "projection set on the nested stability settings."
+                "callbacks set on the nested stability settings."
             )
             test_passed = False
         self.assertTrue(test_passed, "test_solver_py failed")
@@ -900,20 +1002,31 @@ class PySystemTests(unittest.TestCase):
     def test_stability_check_py(self):
         """
         this function drives stability_check() end-to-end at a minimum and at a saddle
-        point
+        point with every optional callback set
         """
         test_passed = True
-        logger_called = False
+        called = set()
+
+        # identity preconditioner, identity projection and logger that record their
+        # names, the identity preconditioner exercises the callback without producing
+        # a zero vector when mu=0 (which would trip the Gram-Schmidt zero-vector guard)
+        def precond(residual, mu, out):
+            called.add("precond")
+            out[:] = residual
+
+        def project(vector):
+            called.add("project")
 
         def logger(msg):
-            nonlocal logger_called
-            logger_called = True
+            called.add("logger")
 
         settings = StabilitySettings()
+        settings.precond = precond
+        settings.project = project
         settings.logger = logger
         settings.verbose = 3  # ensure logger is exercised
 
-        # at the minimum: must be reported stable
+        # at a minimum, expect stable
         H = self._hess(self.minimum1)
         h_diag = np.diag(H).copy()
 
@@ -928,9 +1041,14 @@ class PySystemTests(unittest.TestCase):
                 "stability of minimum."
             )
             test_passed = False
-        if not logger_called:
-            print(" test_stability_check_py failed: Logger was not called.")
-            test_passed = False
+        for name, description in [
+            ("precond", "Preconditioner"),
+            ("project", "Projection"),
+            ("logger", "Logger"),
+        ]:
+            if name not in called:
+                print(f" test_stability_check_py failed: {description} was not called.")
+                test_passed = False
         if settings.n_hess_x <= 0:
             print(
                 " test_stability_check_py failed: Hessian linear transformation "
@@ -938,8 +1056,7 @@ class PySystemTests(unittest.TestCase):
             )
             test_passed = False
 
-        # at the saddle: must be reported unstable, descent direction parallel to the
-        # known negative-curvature eigenvector
+        # at a saddle, expect unstable
         H = self._hess(self.saddle_point)
         h_diag = np.diag(H).copy()
 
@@ -950,6 +1067,9 @@ class PySystemTests(unittest.TestCase):
                 "stability of saddle point."
             )
             test_passed = False
+
+        # the descent direction at the saddle should align with the known
+        # negative-curvature eigenvector
         ref = np.array(
             [
                 -0.173375920238,
