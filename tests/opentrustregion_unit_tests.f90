@@ -868,6 +868,30 @@ contains
 
     end subroutine mock_precond
 
+    subroutine mock_precond_first_unit_vector(residual, mu, precond_residual, error, &
+                                              context)
+        !
+        ! this subroutine is a test subroutine for the preconditioner subroutine which
+        ! always returns the first unit vector
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: residual(:)
+        real(rp), intent(in) :: mu
+        real(rp), intent(out), target :: precond_residual(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        precond_residual = 0.0_rp * residual + 0.0_rp * mu
+        precond_residual(1) = 1.0_rp
+
+        error = 0
+
+    end subroutine mock_precond_first_unit_vector
+
     subroutine mock_project(vector, error, context)
         !
         ! this subroutine is a test subroutine for the projection subroutine
@@ -1829,6 +1853,30 @@ contains
         if (.not. uninitialized_settings%initialized) then
             write(stderr, *) "test_stability_check failed: Settings were not "// &
                 "initialized."
+            test_stability_check = .false.
+        end if
+
+        ! start at saddle point with a preconditioner which always returns the first
+        ! unit vector and a Hessian diagonal whose minimum lies at the first element,
+        ! so that the first new trial vector is linearly dependent on the first trial
+        ! vector, and check that the stability check stops without error and without
+        ! printing an error message
+        context%hess = hartmann6d_hessian(saddle_point)
+        h_diag = 1.0_rp
+        h_diag(1) = 0.0_rp
+        hess_x_funptr => hess_x_fun
+        call settings%init(error)
+        settings%precond => mock_precond_first_unit_vector
+        call setup_error_logging(settings, context)
+        call stability_check(h_diag, hess_x_funptr, stable, error, settings, direction)
+        if (error /= 0) then
+            write(stderr, *) "test_stability_check failed: Produced error when new "// &
+                "trial vector is linearly dependent."
+            test_stability_check = .false.
+        end if
+        if (len_trim(context%log_message) /= 0) then
+            write(stderr, *) "test_stability_check failed: Error message printed "// &
+                "when new trial vector is linearly dependent."
             test_stability_check = .false.
         end if
 
@@ -3460,6 +3508,261 @@ contains
 
     end function test_minres
 
+    logical(c_bool) function test_add_trial_vector() bind(C)
+        !
+        ! this function tests the subroutine which adds a new trial vector to the
+        ! reduced space basis
+        !
+        use opentrustregion, only: solver_settings_type, hess_x_type, &
+                                   add_trial_vector, error_gram_schmidt_lin_dep, &
+                                   error_hess_x
+
+        type(solver_settings_type) :: settings
+        procedure(hess_x_type), pointer :: hess_x_funptr
+        real(rp), allocatable :: red_space_basis(:, :), h_basis(:, :)
+        real(rp), dimension(n_param) :: residual, h_diag, solution, expected_vec, &
+                                        eigvals
+        real(rp) :: initial_basis(n_param, 2), eigvecs(n_param, n_param), &
+                    proj_shifted_hess(n_param, n_param), level_shift, eigval
+        real(rp), parameter :: minres_tol = 1e-14_rp
+        integer(ip) :: error, i
+        type(hartmann6d_context_type), target :: context
+
+        ! assume tests pass
+        test_add_trial_vector = .true.
+
+        ! setup settings object
+        call setup_settings(settings, context)
+
+        ! generate Hessian, orthonormal basis spanned by eigenvectors of a symmetric
+        ! matrix, residual, Hessian diagonal and level shift below the Hessian diagonal
+        context%hess = generate_random_symm_matrix(n_param)
+        call ref_symm_mat_diag(generate_random_symm_matrix(n_param), eigvals, eigvecs)
+        initial_basis = eigvecs(:, :2)
+        call random_number(residual)
+        call random_number(h_diag)
+        h_diag = h_diag + 1.0_rp
+        call random_number(level_shift)
+        level_shift = 0.5_rp * level_shift
+        hess_x_funptr => hess_x_fun
+
+        ! add trial vector from preconditioned residual and determine whether the
+        ! reduced space basis is extended by the orthonormalized residual
+        ! preconditioned with the level-shifted Hessian diagonal and its Hessian linear
+        ! transformation
+        red_space_basis = initial_basis
+        h_basis = matmul(context%hess, initial_basis)
+        context%n_hess_x_calls = 0
+        settings%n_hess_x = 0
+        call add_trial_vector(residual, level_shift, h_diag, .false., solution, &
+                              0.0_rp, minres_tol, hess_x_funptr, red_space_basis, &
+                              h_basis, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_add_trial_vector failed: Produced error for "// &
+                "Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (size(red_space_basis, 2) /= 3 .or. size(h_basis, 2) /= 3) then
+            write(stderr, *) "test_add_trial_vector failed: Reduced space basis "// &
+                "not extended by one vector for Davidson."
+            test_add_trial_vector = .false.
+            return
+        end if
+        expected_vec = residual / (h_diag - level_shift)
+        expected_vec = expected_vec - &
+                       matmul(initial_basis, matmul(expected_vec, initial_basis))
+        expected_vec = expected_vec / norm2(expected_vec)
+        if (any(abs(red_space_basis(:, :2) - initial_basis) > tol) .or. &
+            any(abs(red_space_basis(:, 3) - expected_vec) > tol)) then
+            write(stderr, *) "test_add_trial_vector failed: New trial vector is "// &
+                "not the orthonormalized preconditioned residual for Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (any( &
+            abs(h_basis(:, 3) - matmul(context%hess, red_space_basis(:, 3))) > tol)) &
+            then
+            write(stderr, *) "test_add_trial_vector failed: Hessian linear "// &
+                "transformation of new trial vector wrong for Davidson."
+            test_add_trial_vector = .false.
+        end if
+        test_add_trial_vector = test_add_trial_vector .and. logical(call_counts_match( &
+            context, "add_trial_vector", "for Davidson", settings%n_hess_x), &
+            kind=c_bool)
+
+        ! add trial vector from Jacobi-Davidson correction equations for the first
+        ! basis vector and its Rayleigh quotient and determine whether the reduced
+        ! space basis is extended by the orthonormalized solution of the correction
+        ! equations, which solves the linear system with the projected shifted Hessian,
+        ! made nonsingular along the solution, independently
+        solution = initial_basis(:, 1)
+        eigval = dot_product(solution, matmul(context%hess, solution))
+        residual = matmul(context%hess, solution) - eigval * solution
+        proj_shifted_hess = context%hess - eigval * identity_matrix(n_param)
+        proj_shifted_hess = proj_shifted_hess - spread(solution, 2, n_param) * &
+                            spread(matmul(solution, proj_shifted_hess), 1, n_param)
+        proj_shifted_hess = proj_shifted_hess - spread(matmul( &
+            proj_shifted_hess, solution), 2, n_param) * spread(solution, 1, n_param)
+        proj_shifted_hess = proj_shifted_hess + &
+                            spread(solution, 2, n_param) * spread(solution, 1, n_param)
+        call ref_symm_mat_diag(proj_shifted_hess, eigvals, eigvecs)
+        expected_vec = -matmul(eigvecs, matmul(residual, eigvecs) / eigvals)
+        expected_vec = expected_vec - &
+                       matmul(initial_basis, matmul(expected_vec, initial_basis))
+        expected_vec = expected_vec / norm2(expected_vec)
+        red_space_basis = initial_basis
+        h_basis = matmul(context%hess, initial_basis)
+        context%n_hess_x_calls = 0
+        settings%n_hess_x = 0
+        call add_trial_vector(residual, level_shift, h_diag, .true., solution, eigval, &
+                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
+                              settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_add_trial_vector failed: Produced error for "// &
+                "Jacobi-Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (size(red_space_basis, 2) /= 3 .or. size(h_basis, 2) /= 3) then
+            write(stderr, *) "test_add_trial_vector failed: Reduced space basis "// &
+                "not extended by one vector for Jacobi-Davidson."
+            test_add_trial_vector = .false.
+            return
+        end if
+        if (any(abs(red_space_basis(:, 3) - expected_vec) > tol)) then
+            write(stderr, *) "test_add_trial_vector failed: New trial vector is "// &
+                "not the orthonormalized solution of the correction equations for "// &
+                "Jacobi-Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (any( &
+            abs(h_basis(:, 3) - matmul(context%hess, red_space_basis(:, 3))) > tol)) &
+            then
+            write(stderr, *) "test_add_trial_vector failed: Hessian linear "// &
+                "transformation of new trial vector wrong for Jacobi-Davidson."
+            test_add_trial_vector = .false.
+        end if
+        test_add_trial_vector = test_add_trial_vector .and. logical(call_counts_match( &
+            context, "add_trial_vector", "for Jacobi-Davidson", settings%n_hess_x), &
+            kind=c_bool)
+
+        ! repeat with a slightly asymmetric Hessian linear transformation, whose new
+        ! linear transformation then no longer respects Hessian symmetry with respect
+        ! to the existing basis, and determine whether it is recalculated
+        red_space_basis = initial_basis
+        h_basis = matmul(context%hess, initial_basis)
+        hess_x_funptr => hess_x_fun_asymmetric
+        call add_trial_vector(residual, level_shift, h_diag, .true., solution, eigval, &
+                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
+                              settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_add_trial_vector failed: Produced error for "// &
+                "asymmetric Hessian linear transformation."
+            test_add_trial_vector = .false.
+        end if
+        if (size(h_basis, 2) /= 3) then
+            write(stderr, *) "test_add_trial_vector failed: Reduced space basis "// &
+                "not extended by one vector for asymmetric Hessian linear "// &
+                "transformation."
+            test_add_trial_vector = .false.
+            return
+        end if
+        call hess_x_funptr(red_space_basis(:, 3), expected_vec, error, settings%context)
+        if (any(abs(h_basis(:, 3) - expected_vec) > tol)) then
+            write(stderr, *) "test_add_trial_vector failed: Linear transformation "// &
+                "of new trial vector not recalculated for asymmetric Hessian "// &
+                "linear transformation."
+            test_add_trial_vector = .false.
+        end if
+        hess_x_funptr => hess_x_fun
+
+        ! precondition a residual along the first basis vector with a constant Hessian
+        ! diagonal so that the new vector is linearly dependent on the basis and
+        ! determine whether this is returned without extending the basis or printing an
+        ! error message
+        red_space_basis = initial_basis
+        h_basis = matmul(context%hess, initial_basis)
+        residual = initial_basis(:, 1)
+        h_diag = 1.0_rp
+        call setup_error_logging(settings, context)
+        call add_trial_vector(residual, 0.0_rp, h_diag, .false., solution, 0.0_rp, &
+                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
+                              settings, error)
+        if (error /= error_gram_schmidt_lin_dep) then
+            write(stderr, *) "test_add_trial_vector failed: Linear dependence not "// &
+                "returned for Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (size(red_space_basis, 2) /= 2 .or. size(h_basis, 2) /= 2) then
+            write(stderr, *) "test_add_trial_vector failed: Reduced space basis "// &
+                "extended despite linear dependence for Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (len_trim(context%log_message) /= 0) then
+            write(stderr, *) "test_add_trial_vector failed: Error message printed "// &
+                "for linear dependence for Davidson."
+            test_add_trial_vector = .false.
+        end if
+
+        ! choose a Hessian which couples the first unit vector, the solution, only to
+        ! the second unit vector, which is an eigenvector of the Hessian projected onto
+        ! the complement of the solution, so that the solution of the correction
+        ! equations lies along the second unit vector, and determine whether its linear
+        ! dependence on the basis of the first two unit vectors is returned without
+        ! extending the basis or printing an error message
+        context%hess = 0.0_rp
+        context%hess(1, 1) = 1.0_rp
+        context%hess(1, 2) = 0.5_rp
+        context%hess(2, 1) = 0.5_rp
+        do i = 2, n_param
+            context%hess(i, i) = real(i, kind=rp)
+        end do
+        red_space_basis = identity_matrix(n_param)
+        red_space_basis = red_space_basis(:, :2)
+        h_basis = matmul(context%hess, red_space_basis)
+        solution = red_space_basis(:, 1)
+        eigval = context%hess(1, 1)
+        residual = matmul(context%hess, solution) - eigval * solution
+        call setup_error_logging(settings, context)
+        call add_trial_vector(residual, 0.0_rp, h_diag, .true., solution, eigval, &
+                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
+                              settings, error)
+        if (error /= error_gram_schmidt_lin_dep) then
+            write(stderr, *) "test_add_trial_vector failed: Linear dependence not "// &
+                "returned for Jacobi-Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (size(red_space_basis, 2) /= 2 .or. size(h_basis, 2) /= 2) then
+            write(stderr, *) "test_add_trial_vector failed: Reduced space basis "// &
+                "extended despite linear dependence for Jacobi-Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (len_trim(context%log_message) /= 0) then
+            write(stderr, *) "test_add_trial_vector failed: Error message printed "// &
+                "for linear dependence for Jacobi-Davidson."
+            test_add_trial_vector = .false.
+        end if
+
+        ! add trial vector with a Hessian linear transformation which fails and check
+        ! that its error is returned with its origin and the failing call is counted
+        red_space_basis = initial_basis
+        h_basis = matmul(context%hess, initial_basis)
+        call random_number(residual)
+        hess_x_funptr => hess_x_fun_failing
+        context%n_hess_x_calls = 0
+        settings%n_hess_x = 0
+        call add_trial_vector(residual, 0.0_rp, h_diag, .false., solution, 0.0_rp, &
+                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
+                              settings, error)
+        if (error /= error_hess_x + 1) then
+            write(stderr, *) "test_add_trial_vector failed: Did not return error "// &
+                "of failing Hessian linear transformation."
+            test_add_trial_vector = .false.
+        end if
+        test_add_trial_vector = test_add_trial_vector .and. logical(call_counts_match( &
+            context, "add_trial_vector", "for failing Hessian linear transformation", &
+            settings%n_hess_x), kind=c_bool)
+
+    end function test_add_trial_vector
+
     logical(c_bool) function test_print_results() bind(C)
         !
         ! this function tests the subroutine that prints the result table
@@ -3968,7 +4271,10 @@ contains
         real(rp) :: func, grad_norm, trust_radius, mu, ratio, input_trust_radius, &
                     overflow_residual_tol
         real(rp), dimension(n_param) :: grad, h_diag, solution
-        integer(ip) :: i, imicro, imicro_jacobi_davidson, error
+        integer(ip) :: i, i_case, imicro, imicro_jacobi_davidson, error
+        real(rp) :: eigvals(n_param), rotation(n_param, n_param)
+        character(len=*), parameter :: case_names(2) = &
+            [character(len=8) :: "diagonal", "rotated"]
         procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
         type(solver_settings_type) :: settings
@@ -4015,7 +4321,7 @@ contains
                 "not zero near minimum."
             test_level_shifted_davidson = .false.
         end if
-        if (sum(abs(grad + matmul(context%hess, solution))) > &
+        if (norm2(grad + matmul(context%hess, solution)) > &
             settings%local_red_factor * grad_norm) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not describe Newton step near minimum."
@@ -4058,7 +4364,7 @@ contains
                 "not negative near saddle point."
             test_level_shifted_davidson = .false.
         end if
-        if (sum(abs(grad + matmul(context%hess, solution) - mu * solution)) > &
+        if (norm2(grad + matmul(context%hess, solution) - mu * solution) > &
             settings%global_red_factor * grad_norm) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not describe level-shifted Newton step near saddle point."
@@ -4101,7 +4407,7 @@ contains
                 "not negative near saddle point with Jacobi-Davidson solver."
             test_level_shifted_davidson = .false.
         end if
-        if (sum(abs(grad + matmul(context%hess, solution) - mu * solution)) > &
+        if (norm2(grad + matmul(context%hess, solution) - mu * solution) > &
             settings%global_red_factor * grad_norm) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not describe level-shifted Newton step near saddle point with "// &
@@ -4160,52 +4466,64 @@ contains
                               "for failing Hessian linear transformation", &
                               n_hess_x=settings%n_hess_x), kind=c_bool)
 
-        ! force the reduced space to grow until it spans the full parameter space, a
-        ! vanishing reduction factor prevents natural convergence, and one large
-        ! diagonal entry ensures that even the exact full-rank solution's residual
-        ! carries enough floating-point noise to stay above the solver's fixed
-        ! convergence floor
-        call setup_settings(settings, overflow_context)
-        settings%local_red_factor = 0.0_rp
-        settings%global_red_factor = 0.0_rp
-        overflow_context%hess = 0.0_rp
-        do i = 1, n_param
-            overflow_context%hess(i, i) = 1.0_rp
-        end do
-        overflow_context%hess(1, 1) = 1e8_rp
-        overflow_context%grad = 1.0_rp
-        overflow_residual_tol = 1e2_rp * epsilon(1.0_rp) * overflow_context%hess(1, 1)
-        h_diag = [(overflow_context%hess(i, i), i=1, n_param)]
-        grad_norm = norm2(overflow_context%grad)
-        func = 0.0_rp
-        input_trust_radius = 1.0_rp
-        trust_radius = input_trust_radius
-        obj_func_funptr => overflow_obj_func
-        hess_x_funptr => overflow_hess_x
+        ! let the reduced space grow until it can no longer be expanded, a vanishing
+        ! reduction factor prevents natural convergence, and one large Hessian
+        ! eigenvalue ensures that even the exact full-rank solution's residual carries
+        ! enough floating-point noise to stay above the solver's fixed convergence
+        ! floor, for a diagonal Hessian with only two distinct eigenvalues the
+        ! preconditioned residuals stay in a small subspace so that a new trial vector
+        ! becomes linearly dependent, while for the same Hessian in a random
+        ! orthonormal basis the reduced space grows to the dimension of the full
+        ! parameter space
+        do i_case = 1, 2
+            call setup_settings(settings, overflow_context)
+            settings%local_red_factor = 0.0_rp
+            settings%global_red_factor = 0.0_rp
+            overflow_context%hess = identity_matrix(n_param)
+            overflow_context%hess(1, 1) = 1e8_rp
+            if (i_case == 2) then
+                call ref_symm_mat_diag(generate_random_symm_matrix(n_param), eigvals, &
+                                       rotation)
+                overflow_context%hess = &
+                    matmul(rotation, matmul(overflow_context%hess, transpose(rotation)))
+            end if
+            overflow_context%grad = 1.0_rp
+            overflow_residual_tol = 1e2_rp * epsilon(1.0_rp) * 1e8_rp
+            h_diag = [(overflow_context%hess(i, i), i=1, n_param)]
+            grad_norm = norm2(overflow_context%grad)
+            func = 0.0_rp
+            input_trust_radius = 1.0_rp
+            trust_radius = input_trust_radius
+            obj_func_funptr => overflow_obj_func
+            hess_x_funptr => overflow_hess_x
 
-        call level_shifted_davidson(func, overflow_context%grad, grad_norm, h_diag, &
-                                    n_param, obj_func_funptr, hess_x_funptr, settings, &
-                                    trust_radius, solution, mu, imicro, &
-                                    imicro_jacobi_davidson, jacobi_davidson_started, &
-                                    max_precision_reached, error)
-        if (error /= 0) then
-            write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
-                "when reduced space grows to dimension of full parameter space."
-            test_level_shifted_davidson = .false.
-        end if
-        if (abs(norm2(solution) - input_trust_radius) > overflow_residual_tol) then
-            write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
-                "not lie at trust region boundary when reduced space grows to "// &
-                "dimension of full parameter space."
-            test_level_shifted_davidson = .false.
-        end if
-        if (sum(abs(overflow_context%grad + matmul(overflow_context%hess, solution) - &
-                    mu * solution)) > overflow_residual_tol) then
-            write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
-                "not describe level-shifted Newton step when reduced space grows "// &
-                "to dimension of full parameter space."
-            test_level_shifted_davidson = .false.
-        end if
+            call level_shifted_davidson( &
+                func, overflow_context%grad, grad_norm, h_diag, n_param, &
+                obj_func_funptr, hess_x_funptr, settings, trust_radius, solution, mu, &
+                imicro, imicro_jacobi_davidson, jacobi_davidson_started, &
+                max_precision_reached, error)
+            if (error /= 0) then
+                write(stderr, *) "test_level_shifted_davidson failed: Produced "// &
+                    "error when reduced space stops growing for the "// &
+                    trim(case_names(i_case))//" Hessian."
+                test_level_shifted_davidson = .false.
+            end if
+            if (abs(norm2(solution) - input_trust_radius) > overflow_residual_tol) then
+                write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
+                    "does not lie at trust region boundary when reduced space "// &
+                    "stops growing for the "//trim(case_names(i_case))//" Hessian."
+                test_level_shifted_davidson = .false.
+            end if
+            if (norm2(overflow_context%grad + &
+                      matmul(overflow_context%hess, solution) - mu * solution) > &
+                overflow_residual_tol) then
+                write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
+                    "does not describe level-shifted Newton step when reduced "// &
+                    "space stops growing for the "//trim(case_names(i_case))// &
+                    " Hessian."
+                test_level_shifted_davidson = .false.
+            end if
+        end do
 
     end function test_level_shifted_davidson
 

@@ -505,15 +505,15 @@ contains
 
         integer(ip) :: n_param, n_trial, i, iter
         real(rp), allocatable :: solution(:), h_solution(:), residual(:), &
-                                 basis_vec(:), h_basis_vec(:), red_space_basis(:, :), &
-                                 h_basis(:, :), red_space_hess(:, :), &
-                                 red_space_solution(:), red_space_hess_vec(:)
+                                 red_space_basis(:, :), h_basis(:, :), &
+                                 red_space_hess(:, :), red_space_solution(:), &
+                                 red_space_hess_vec(:)
         real(rp) :: eigval, minres_tol, stability_rms
         character(len=300) :: msg
         real(rp), parameter :: stability_thresh = -1e-2_rp
-        real(rp), external :: dnrm2, ddot
+        real(rp), external :: dnrm2
         external :: dgemm, dgemv
-        logical :: stability_converged
+        logical :: stability_converged, use_jacobi_davidson
 
         ! initialize error flag
         error = 0
@@ -573,7 +573,7 @@ contains
 
         ! allocate arrays used throughout Davidson procedure
         allocate(red_space_solution(n_trial), solution(n_param), h_solution(n_param), &
-                 residual(n_param), basis_vec(n_param), h_basis_vec(n_param))
+                 residual(n_param))
 
         ! assume not converged
         stability_converged = .false.
@@ -611,74 +611,26 @@ contains
                 exit
             end if
 
-            if (settings%diag_solver == "davidson" .or. &
-                iter <= settings%jacobi_davidson_start) then
-                ! precondition residual
-                call level_shifted_diag_precond(residual, 0.0_rp, h_diag, basis_vec, &
-                                                settings, error)
-                if (error /= 0) return
-
-                ! orthonormalize to current orbital space to get new basis vector
-                call gram_schmidt(basis_vec, red_space_basis, settings, error)
-                ! check if new vector is linearly dependent and the reduced space
-                ! cannot be usefully expanded further due to degeneracy and stop here
-                if (error == error_gram_schmidt_lin_dep) then
-                    error = 0
-                    stability_converged = .true.
-                    exit
-                end if
-                call add_error_origin(error, error_stability_check, settings)
-                if (error /= 0) return
-
-                ! add linear transformation of new basis vector
-                call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
-                settings%n_hess_x = settings%n_hess_x + 1
-                call add_error_origin(error, error_hess_x, settings)
-                if (error /= 0) return
-
-            else
-                ! solve Jacobi-Davidson correction equations
-                minres_tol = 3.0_rp**(-(iter - settings%jacobi_davidson_start - 1))
-                call minres(-residual, hess_x_funptr, solution, eigval, minres_tol, &
-                            basis_vec, h_basis_vec, settings, error)
-                call add_error_origin(error, error_stability_check, settings)
-                if (error /= 0) return
-
-                ! orthonormalize to current orbital space to get new basis vector
-                call gram_schmidt(basis_vec, red_space_basis, settings, error, &
-                                  lin_trans_vector=h_basis_vec, lin_trans_space=h_basis)
-                ! check if new vector is linearly dependent and the reduced space
-                ! cannot be usefully expanded further due to degeneracy and stop here
-                if (error == error_gram_schmidt_lin_dep) then
-                    error = 0
-                    stability_converged = .true.
-                    exit
-                end if
-                call add_error_origin(error, error_stability_check, settings)
-                if (error /= 0) return
-
-                ! check if resulting linear transformation still respects Hessian
-                ! symmetry which can happen due to numerical noise accumulation
-                if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, h_basis_vec, &
-                             1_ip) - &
-                        ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), 1_ip)) > &
-                    hess_symm_thres) then
-                    call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
-                    settings%n_hess_x = settings%n_hess_x + 1
-                    call add_error_origin(error, error_hess_x, settings)
-                    if (error /= 0) return
-                end if
-
+            ! add new trial vector from preconditioned residual (Davidson) or from
+            ! Jacobi-Davidson correction equations
+            use_jacobi_davidson = settings%diag_solver /= "davidson" .and. &
+                                  iter > settings%jacobi_davidson_start
+            minres_tol = 3.0_rp**(-(iter - settings%jacobi_davidson_start - 1))
+            call add_trial_vector(residual, 0.0_rp, h_diag, use_jacobi_davidson, &
+                                  solution, eigval, minres_tol, hess_x_funptr, &
+                                  red_space_basis, h_basis, settings, error)
+            ! check if new vector is linearly dependent and the reduced space cannot be
+            ! usefully expanded further due to degeneracy and stop here
+            if (error == error_gram_schmidt_lin_dep) then
+                error = 0
+                stability_converged = .true.
+                exit
             end if
+            call add_error_origin(error, error_stability_check, settings)
+            if (error /= 0) return
 
             ! increment trial vector count
             n_trial = n_trial + 1
-
-            ! add new trial vector to orbital space
-            call add_column(red_space_basis, basis_vec)
-
-            ! add linear transformation of new basis vector
-            call add_column(h_basis, h_basis_vec)
 
             ! construct new reduced space Hessian
             allocate(red_space_hess_vec(n_trial))
@@ -713,8 +665,8 @@ contains
         end if
 
         ! deallocate quantities from Davidson iterations
-        deallocate(solution, h_solution, residual, basis_vec, h_basis_vec, &
-                   red_space_solution, red_space_hess, h_basis, red_space_basis)
+        deallocate(solution, h_solution, residual, red_space_solution, red_space_hess, &
+                   h_basis, red_space_basis)
 
         ! flush output
         flush(stdout)
@@ -1886,6 +1838,89 @@ contains
 
     end subroutine minres
 
+    subroutine add_trial_vector(residual, level_shift, h_diag, jacobi_davidson, &
+                                solution, eigval, minres_tol, hess_x_funptr, &
+                                red_space_basis, h_basis, settings, error)
+        !
+        ! this subroutine generates a new trial vector from a residual and adds it and
+        ! its Hessian linear transformation to the reduced space basis, either by
+        ! preconditioning the residual (Davidson) or by solving the Jacobi-Davidson
+        ! correction equations, it returns an error without changing the reduced space
+        ! basis if the new vector is linearly dependent on it
+        !
+        real(rp), intent(in) :: residual(:), level_shift, h_diag(:), solution(:), &
+                                eigval, minres_tol
+        logical, intent(in) :: jacobi_davidson
+        procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
+        real(rp), allocatable, intent(inout) :: red_space_basis(:, :), h_basis(:, :)
+        class(settings_type), intent(inout) :: settings
+        integer(ip), intent(out) :: error
+
+        real(rp), allocatable :: basis_vec(:), h_basis_vec(:)
+        integer(ip) :: n_param, n_trial
+        real(rp), external :: ddot
+
+        ! initialize error flag
+        error = 0
+
+        ! number of parameters and trial vectors
+        n_param = size(red_space_basis, 1)
+        n_trial = size(red_space_basis, 2)
+
+        ! allocate new basis vector and its Hessian linear transformation
+        allocate(basis_vec(n_param), h_basis_vec(n_param))
+
+        if (.not. jacobi_davidson) then
+            ! precondition residual
+            call level_shifted_diag_precond(residual, level_shift, h_diag, basis_vec, &
+                                            settings, error)
+            if (error /= 0) return
+
+            ! orthonormalize to current orbital space to get new basis vector, a
+            ! linearly dependent vector is returned to the caller without logging
+            call gram_schmidt(basis_vec, red_space_basis, settings, error, &
+                              silent_on_error=.true.)
+            if (error /= 0) return
+
+            ! get linear transformation of new basis vector
+            call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
+            settings%n_hess_x = settings%n_hess_x + 1
+            call add_error_origin(error, error_hess_x, settings)
+            if (error /= 0) return
+        else
+            ! solve Jacobi-Davidson correction equations
+            call minres(-residual, hess_x_funptr, solution, eigval, minres_tol, &
+                        basis_vec, h_basis_vec, settings, error)
+            if (error /= 0) return
+
+            ! orthonormalize to current orbital space to get new basis vector, a
+            ! linearly dependent vector is returned to the caller without logging
+            call gram_schmidt(basis_vec, red_space_basis, settings, error, &
+                              lin_trans_vector=h_basis_vec, lin_trans_space=h_basis, &
+                              silent_on_error=.true.)
+            if (error /= 0) return
+
+            ! check if resulting linear transformation still respects Hessian symmetry
+            ! which can happen due to numerical noise accumulation
+            if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, h_basis_vec, &
+                         1_ip) - ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), &
+                                      1_ip)) > hess_symm_thres) then
+                call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
+                settings%n_hess_x = settings%n_hess_x + 1
+                call add_error_origin(error, error_hess_x, settings)
+                if (error /= 0) return
+            end if
+        end if
+
+        ! add new trial vector and its linear transformation to reduced space basis
+        call add_column(red_space_basis, basis_vec)
+        call add_column(h_basis, h_basis_vec)
+
+        ! deallocate new basis vector and its Hessian linear transformation
+        deallocate(basis_vec, h_basis_vec)
+
+    end subroutine add_trial_vector
+
     subroutine print_results(self, iteration, func, grad_rms, level_shift, n_micro, &
                              imicro_jacobi_davidson, trust_radius, kappa_norm)
         !
@@ -2050,9 +2085,9 @@ contains
         logical, intent(out) :: jacobi_davidson_started, max_precision_reached
 
         real(rp), allocatable :: red_space_basis(:, :), h_basis(:, :), aug_hess(:, :), &
-                                 red_space_solution(:), red_hess_vec(:), basis_vec(:), &
-                                 h_basis_vec(:), h_solution(:), residual(:), &
-                                 solution_normalized(:), last_solution_normalized(:), &
+                                 red_space_solution(:), red_hess_vec(:), &
+                                 h_solution(:), residual(:), solution_normalized(:), &
+                                 last_solution_normalized(:), &
                                  red_space_hess_eigvals(:), red_space_hess_eigvecs(:, :)
         integer(ip) :: n_trial, i, initial_imicro, min_idx
         logical :: accept_step, micro_converged, newton
@@ -2092,11 +2127,9 @@ contains
         call dgemm("T", "N", n_trial, n_trial, n_param, 1.0_rp, red_space_basis, &
                    n_param, h_basis, n_param, 0.0_rp, aug_hess(2, 2), n_trial + 1)
 
-        ! allocate space for reduced space solution and basis vector, Hessian linear
-        ! transformation of solution and basis vector, residual and the (last)
-        ! normalized solution
-        allocate(red_space_solution(n_trial), h_solution(n_param), basis_vec(n_param), &
-                 h_basis_vec(n_param), residual(n_param), &
+        ! allocate space for reduced space solution, Hessian linear transformation of
+        ! solution, residual and the (last) normalized solution
+        allocate(red_space_solution(n_trial), h_solution(n_param), residual(n_param), &
                  solution_normalized(n_param), last_solution_normalized(n_param))
 
         ! decrease trust radius until micro iterations converge and step is accepted
@@ -2198,72 +2231,28 @@ contains
                     exit
                 end if
 
-                if (.not. jacobi_davidson_started) then
-                    ! precondition residual
-                    call level_shifted_diag_precond(residual, mu, h_diag, basis_vec, &
-                                                    settings, error)
-                    if (error /= 0) return
-
-                    ! orthonormalize to current orbital space to get new basis vector
-                    call gram_schmidt(basis_vec, red_space_basis, settings, error)
-                    if (error == error_gram_schmidt_lin_dep) then
-                        ! new vector is linearly dependent, so the reduced space has
-                        ! reached full rank and cannot be expanded further
-                        micro_converged = .true.
-                        exit
-                    else if (error /= 0) then
-                        return
-                    end if
-
-                    ! add linear transformation of new basis vector
-                    call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
-                    settings%n_hess_x = settings%n_hess_x + 1
-                    call add_error_origin(error, error_hess_x, settings)
-                    if (error /= 0) return
-
-                else
-                    ! solve Jacobi-Davidson correction equations
+                ! add new trial vector from preconditioned residual (Davidson) or from
+                ! Jacobi-Davidson correction equations
+                if (jacobi_davidson_started) then
                     minres_tol = 3.0_rp**(-(imicro - imicro_jacobi_davidson))
-                    call minres(-residual, hess_x_funptr, solution_normalized, mu, &
-                                minres_tol, basis_vec, h_basis_vec, settings, error)
-                    if (error /= 0) return
-
-                    ! orthonormalize to current orbital space to get new basis vector
-                    call gram_schmidt(basis_vec, red_space_basis, settings, error, &
-                                      lin_trans_vector=h_basis_vec, &
-                                      lin_trans_space=h_basis)
-                    if (error == error_gram_schmidt_lin_dep) then
-                        ! new vector is linearly dependent, so the reduced space has
-                        ! reached full rank and cannot be expanded further
-                        micro_converged = .true.
-                        exit
-                    else if (error /= 0) then
-                        return
-                    end if
-
-                    ! check if resulting linear transformation still respects Hessian
-                    ! symmetry which can happen due to numerical noise accumulation
-                    if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, &
-                                 h_basis_vec, 1_ip) - &
-                            ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), &
-                                 1_ip)) > hess_symm_thres) then
-                        call hess_x_funptr(basis_vec, h_basis_vec, error, &
-                                           settings%context)
-                        settings%n_hess_x = settings%n_hess_x + 1
-                        call add_error_origin(error, error_hess_x, settings)
-                        if (error /= 0) return
-                    end if
-
+                else
+                    minres_tol = 0.0_rp
+                end if
+                call add_trial_vector(residual, mu, h_diag, jacobi_davidson_started, &
+                                      solution_normalized, mu, minres_tol, &
+                                      hess_x_funptr, red_space_basis, h_basis, &
+                                      settings, error)
+                if (error == error_gram_schmidt_lin_dep) then
+                    ! new vector is linearly dependent, so the reduced space has
+                    ! reached full rank and cannot be expanded further
+                    micro_converged = .true.
+                    exit
+                else if (error /= 0) then
+                    return
                 end if
 
                 ! increment trial vector count
                 n_trial = n_trial + 1
-
-                ! add new trial vector to orbital space
-                call add_column(red_space_basis, basis_vec)
-
-                ! add linear transformation of new basis vector
-                call add_column(h_basis, h_basis_vec)
 
                 ! construct new augmented Hessian
                 allocate(red_hess_vec(n_trial + 1))
@@ -2296,8 +2285,7 @@ contains
 
         ! deallocate quantities from microiterations
         deallocate(red_space_solution, aug_hess, red_space_basis, h_basis, h_solution, &
-                   residual, basis_vec, h_basis_vec, solution_normalized, &
-                   last_solution_normalized)
+                   residual, solution_normalized, last_solution_normalized)
 
     end subroutine level_shifted_davidson
 

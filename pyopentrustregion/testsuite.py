@@ -100,6 +100,7 @@ fortran_tests = {
         "accept_trust_region_step",
         "add_column",
         "add_error_origin",
+        "add_trial_vector",
         "bisection",
         "bracket",
         "extend_symm_matrix",
