@@ -148,7 +148,15 @@ fortran_tests = {
         "store_optional_c_callbacks",
         "update_orbs_f_wrapper",
     ],
-    "system_tests": ["h2o_atomic_fb", "h2o_saddle_fb"],
+    "system_tests": [
+        "h2o_fb_solver_default",
+        "h2o_fb_solver_jacobi_davidson",
+        "h2o_fb_solver_line_search",
+        "h2o_fb_solver_stability",
+        "h2o_fb_solver_tcg",
+        "h2o_fb_stability_check_default",
+        "h2o_fb_stability_check_jacobi_davidson",
+    ],
     "c_system_tests": [
         "solver_settings_init",
         "stability_settings_init",
