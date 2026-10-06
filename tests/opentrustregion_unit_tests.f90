@@ -62,6 +62,13 @@ module opentrustregion_unit_tests
     real(c_rp), bind(C, name="hartmann6d_near_minimum") :: near_minimum_c(n_param) = &
         near_minimum
 
+    ! eigenvector of the Hessian of 6D Hartmann function at the saddle point
+    ! belonging to its negative eigenvalue, along which the stability check has to
+    ! return the direction for the C and Python integration tests
+    real(c_rp), bind(C, name="hartmann6d_unstable_mode") :: unstable_mode_c(n_param) = &
+        [-0.173375920238_c_rp, -0.518489821791_c_rp, -6.432848975252e-3_c_rp, &
+         -0.340127852882_c_rp, 3.066460316955e-3_c_rp, 0.765095650196_c_rp]
+
     ! define type for the host context handed to the mock callback functions, which
     ! holds the messages passed to the mock logging function
     type, extends(host_context_type) :: test_context_type
@@ -119,9 +126,11 @@ module opentrustregion_unit_tests
 
     ! define type for the host context handed to the mock callback functions of the
     ! double well function x^2 - y^2 + y^4, which has a saddle point at the origin and
-    ! minima at y = +-1/sqrt(2), and holds its current variables
+    ! minima at y = +-1/sqrt(2), and holds its current variables and records whether
+    ! the Hessian linear transformation received it
     type, extends(test_context_type) :: double_well_context_type
         real(rp) :: vars(2) = 0.0_rp
+        logical :: hess_x_called = .false.
     end type
 
     ! define type for the host context of the quadratic model 1/2 |x|^2 whose
@@ -916,6 +925,7 @@ contains
         state => resolve_double_well_context(context, error)
         if (error /= 0) return
 
+        state%hess_x_called = .true.
         hess_x = [2.0_rp, -2.0_rp + 12.0_rp * state%vars(2)**2] * x
 
     end subroutine double_well_hess_x
@@ -1109,32 +1119,6 @@ contains
 
     end function half_step_obj_func
 
-    function resolve_bracket_context(context, error) result(state)
-        !
-        ! this function returns the bracketing context handed to a mock callback
-        ! function and an error if no such context was handed over
-        !
-        class(*), intent(in), pointer :: context
-        integer(ip), intent(out) :: error
-        class(bracket_context_type), pointer :: state
-
-        ! initialize error flag
-        error = 0
-
-        ! get context
-        state => null()
-        if (associated(context)) then
-            select type (context)
-            class is (bracket_context_type)
-                state => context
-            end select
-        end if
-
-        ! report missing test context
-        if (.not. associated(state)) error = missing_context_error
-
-    end function resolve_bracket_context
-
     function bracket_obj_func(delta_vars, error, context) result(func)
         !
         ! this function describes the objective function evaluation for the
@@ -1157,9 +1141,19 @@ contains
         ! check host context
         call check_host_context(context)
 
-        ! get bracketing state
-        state => resolve_bracket_context(context, error)
-        if (error /= 0) return
+        ! get bracketing state and report missing test context
+        error = 0
+        state => null()
+        if (associated(context)) then
+            select type (context)
+            class is (bracket_context_type)
+                state => context
+            end select
+        end if
+        if (.not. associated(state)) then
+            error = missing_context_error
+            return
+        end if
 
         x = delta_vars(1)
         select case (state%func_case)
@@ -2024,7 +2018,6 @@ contains
                             trim(subsystem_solver_options(i_solver))// &
                             " subsystem solver."
                         test_solver = .false.
-                        exit
                     end if
                     if (.not. check_call_counts( &
                         fault_context, "solver", &
@@ -2034,7 +2027,6 @@ contains
                         n_hess_x=settings%n_hess_x, &
                         n_update_orbs=settings%n_update_orbs)) then
                         test_solver = .false.
-                        exit
                     end if
                 end do
             end do
@@ -2266,9 +2258,14 @@ contains
         settings%verbose = verbosity_debug
         settings%jacobi_davidson_start = 0
         call stability_check(h_diag, hess_x_funptr, stable, error, settings, direction)
-        if (error /= 0 .or. index(context%log_message, "MINRES") /= 0) then
-            write(stderr, *) "test_stability_check failed: Produced error or "// &
-                "Jacobi-Davidson correction equations solved with Davidson method."
+        if (error /= 0) then
+            write(stderr, *) "test_stability_check failed: Produced error for "// &
+                "Davidson method with Jacobi-Davidson start at first iteration."
+            test_stability_check = .false.
+        end if
+        if (index(context%log_message, "MINRES") /= 0) then
+            write(stderr, *) "test_stability_check failed: Jacobi-Davidson "// &
+                "correction equations solved with Davidson method."
             test_stability_check = .false.
         end if
         call setup_settings(settings, context)
@@ -2276,10 +2273,14 @@ contains
         settings%diag_solver = "jacobi-davidson"
         settings%jacobi_davidson_start = settings%n_iter
         call stability_check(h_diag, hess_x_funptr, stable, error, settings, direction)
-        if (error /= 0 .or. index(context%log_message, "MINRES") /= 0) then
-            write(stderr, *) "test_stability_check failed: Produced error or "// &
-                "Jacobi-Davidson correction equations solved before "// &
-                "Jacobi-Davidson method is started."
+        if (error /= 0) then
+            write(stderr, *) "test_stability_check failed: Produced error for "// &
+                "Jacobi-Davidson method started after last iteration."
+            test_stability_check = .false.
+        end if
+        if (index(context%log_message, "MINRES") /= 0) then
+            write(stderr, *) "test_stability_check failed: Jacobi-Davidson "// &
+                "correction equations solved before Jacobi-Davidson method is started."
             test_stability_check = .false.
         end if
 
@@ -2355,7 +2356,6 @@ contains
                             "its origin with "//trim(diag_solver_options(i_solver))// &
                             " diagonalization solver."
                         test_stability_check = .false.
-                        exit
                     end if
                     if (.not. check_call_counts( &
                         fault_context, "stability_check", "for failing "// &
@@ -2364,7 +2364,6 @@ contains
                         trim(diag_solver_options(i_solver))// &
                         " diagonalization solver", n_hess_x=settings%n_hess_x)) then
                         test_stability_check = .false.
-                        exit
                     end if
                 end do
             end do
@@ -2451,9 +2450,14 @@ contains
         call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
                                     obj_func_funptr, 1_ip, settings, stable, kappa, &
                                     error)
-        if (error /= 0 .or. stable) then
+        if (error /= 0) then
             write(stderr, *) "test_check_stationary_point failed: Produced error "// &
-                "or saddle point not found to be unstable."
+                "at saddle point."
+            test_check_stationary_point = .false.
+        end if
+        if (stable) then
+            write(stderr, *) "test_check_stationary_point failed: Saddle point not "// &
+                "found to be unstable."
             test_check_stationary_point = .false.
         end if
         if (abs(kappa(1)) > tol .or. abs(abs(kappa(2)) - saddle_step) > tol) then
@@ -2497,20 +2501,28 @@ contains
 
         ! check the saddle point in a later macro iteration with nested stability check
         ! settings with a verbosity above the solver's and a context of their own,
-        ! which they have to keep, and check that the warning for reaching a saddle
-        ! point is printed
+        ! which they have to keep alongside the callback functions they inherit from
+        ! the solver, so that the stability check hands it to these and to the Hessian
+        ! linear transformation, and check that the warning for reaching a saddle point
+        ! is printed
         call setup_settings(settings, context)
+        settings%precond => identity_precond
+        settings%project => identity_project
         context%vars = [0.0_rp, 0.0_rp]
         stability_context%vars = [0.0_rp, 0.0_rp]
-        stability_context%n_calls = 0
         settings%stability_settings%verbose = verbosity_debug
         settings%stability_settings%context => stability_context
         call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
                                     obj_func_funptr, 2_ip, settings, stable, kappa, &
                                     error)
-        if (error /= 0 .or. stable) then
+        if (error /= 0) then
             write(stderr, *) "test_check_stationary_point failed: Produced error "// &
-                "or saddle point not found to be unstable in later macro iteration."
+                "at saddle point in later macro iteration."
+            test_check_stationary_point = .false.
+        end if
+        if (stable) then
+            write(stderr, *) "test_check_stationary_point failed: Saddle point not "// &
+                "found to be unstable in later macro iteration."
             test_check_stationary_point = .false.
         end if
         if (settings%stability_settings%verbose /= verbosity_debug) then
@@ -2518,11 +2530,23 @@ contains
                 "nested settings above the solver's replaced."
             test_check_stationary_point = .false.
         end if
-        if (.not. associated(settings%stability_settings%context, &
-                             stability_context) .or. stability_context%n_calls == 0) &
+        if (.not. associated(settings%stability_settings%context, stability_context)) &
             then
             write(stderr, *) "test_check_stationary_point failed: Context of "// &
-                "nested settings replaced or not handed to the stability check."
+                "nested settings replaced."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. stability_context%hess_x_called) then
+            write(stderr, *) "test_check_stationary_point failed: Context of "// &
+                "nested settings not handed to the Hessian linear transformation."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. ( &
+            associated(settings%stability_settings%precond, identity_precond) .and. &
+            associated(settings%stability_settings%project, identity_project) .and. &
+            associated(settings%stability_settings%logger, logger))) then
+            write(stderr, *) "test_check_stationary_point failed: Solver's "// &
+                "callback functions not inherited alongside context of nested settings."
             test_check_stationary_point = .false.
         end if
         if (index(context%log_message, " "//reached_saddle_point_warning_msg) == 0) then
@@ -2541,9 +2565,14 @@ contains
         call check_stationary_point(double_well_func(context%vars), minimum_h_diag, &
                                     hess_x_funptr, obj_func_funptr, 2_ip, settings, &
                                     stable, kappa, error)
-        if (error /= 0 .or. .not. stable) then
+        if (error /= 0) then
             write(stderr, *) "test_check_stationary_point failed: Produced error "// &
-                "or minimum not found to be stable."
+                "at minimum."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. stable) then
+            write(stderr, *) "test_check_stationary_point failed: Minimum not "// &
+                "found to be stable."
             test_check_stationary_point = .false.
         end if
         if (any(abs(kappa) > tol)) then
@@ -4800,10 +4829,32 @@ contains
             trust_radius_too_small_warning_msg, trust_radius_expand_ratio, &
             trust_radius_shrink_factor, trust_radius_expand_factor
 
+        ! cases with the reason for accepting or rejecting the step, the size of the
+        ! first rotation, the ratio of actual to predicted reduction, whether the
+        ! micro iterations converged, and the expected acceptance and trust radius
+        character(len=*), parameter :: case_names(6) = &
+            [character(len=35) :: "micro iterations have not converged", &
+             "ratio is negative", "individual rotations are too large", &
+             "ratio is too small", "ratio is acceptable", "ratio is too large"]
+        real(rp), parameter :: &
+            case_rotations(6) = [0.3_rp, 0.3_rp, 1.0_rp, 0.3_rp, 0.3_rp, 0.3_rp], &
+            case_ratios(6) = [ &
+                1.0_rp, -1.0_rp, 1.0_rp, 0.9_rp * trust_radius_shrink_ratio, &
+                0.5_rp * (trust_radius_shrink_ratio + trust_radius_expand_ratio), &
+                1.1_rp * trust_radius_expand_ratio], &
+            case_trust_radii(6) = [ &
+                trust_radius_shrink_factor, trust_radius_shrink_factor, &
+                trust_radius_shrink_factor, trust_radius_shrink_factor, 1.0_rp, &
+                trust_radius_expand_factor]
+        logical, parameter :: &
+            case_converged(6) = [.false., .true., .true., .true., .true., .true.], &
+            case_accepted(6) = [.false., .false., .false., .true., .true., .true.]
+
         logical :: accept_step, max_precision_reached
         real(rp) :: solution(3), trust_radius
         type(solver_settings_type) :: settings
         type(test_context_type), target :: context
+        integer(ip) :: i
 
         ! assume tests pass
         test_accept_trust_region_step = .true.
@@ -4813,89 +4864,31 @@ contains
 
         solution = [0.3_rp, 0.3_rp, 0.3_rp]
 
-        ! check if step is rejected and trust radius is correctly reduced if micro
-        ! iterations have not converged
-        trust_radius = 1.0_rp
-        accept_step = accept_trust_region_step(solution, 1.0_rp, .false., settings, &
-                                               trust_radius, max_precision_reached)
-        if (accept_step .or. max_precision_reached .or. &
-            abs(trust_radius - trust_radius_shrink_factor) > tol) then
-            write(stderr, *) "test_accept_trust_region_step failed: Step accepted, "// &
-                "maximum precision reported as reached or trust radius not "// &
-                "correctly reduced when micro iterations have not converged."
-            test_accept_trust_region_step = .false.
-        end if
-
-        ! check if step is rejected and trust radius is correctly reduced if ratio is
-        ! negative
-        trust_radius = 1.0_rp
-        accept_step = accept_trust_region_step(solution, -1.0_rp, .true., settings, &
-                                               trust_radius, max_precision_reached)
-        if (accept_step .or. max_precision_reached .or. &
-            abs(trust_radius - trust_radius_shrink_factor) > tol) then
-            write(stderr, *) "test_accept_trust_region_step failed: Step accepted, "// &
-                "maximum precision reported as reached or trust radius not "// &
-                "correctly reduced when ratio is negative."
-            test_accept_trust_region_step = .false.
-        end if
-
-        ! check if step is rejected and trust radius is correctly reduced if individual
-        ! rotations are too large
-        trust_radius = 1.0_rp
-        solution(1) = 1.0_rp
-        accept_step = accept_trust_region_step(solution, 1.0_rp, .true., settings, &
-                                               trust_radius, max_precision_reached)
-        if (accept_step .or. max_precision_reached .or. &
-            abs(trust_radius - trust_radius_shrink_factor) > tol) then
-            write(stderr, *) "test_accept_trust_region_step failed: Step accepted, "// &
-                "maximum precision reported as reached or trust radius not "// &
-                "correctly reduced when individual rotations are too large."
-            test_accept_trust_region_step = .false.
-        end if
-        solution(1) = 0.3_rp
-
-        ! check if step is accepted and trust radius is correctly reduced if ratio is
-        ! too small
-        trust_radius = 1.0_rp
-        accept_step = accept_trust_region_step( &
-            solution, 0.9_rp * trust_radius_shrink_ratio, .true., settings, &
-            trust_radius, max_precision_reached)
-        if (.not. accept_step .or. max_precision_reached .or. &
-            abs(trust_radius - trust_radius_shrink_factor) > tol) then
-            write(stderr, *) "test_accept_trust_region_step failed: Step not "// &
-                "accepted, maximum precision reported as reached or trust radius "// &
-                "not correctly reduced when ratio is too small."
-            test_accept_trust_region_step = .false.
-        end if
-
-        ! check if step is accepted and trust radius is correctly reduced if ratio is
-        ! ok
-        trust_radius = 1.0_rp
-        accept_step = accept_trust_region_step( &
-            solution, &
-            0.5_rp * (trust_radius_shrink_ratio + trust_radius_expand_ratio), .true., &
-            settings, trust_radius, max_precision_reached)
-        if (.not. accept_step .or. max_precision_reached .or. &
-            abs(trust_radius - 1.0_rp) > tol) then
-            write(stderr, *) "test_accept_trust_region_step failed: Step not "// &
-                "accepted, maximum precision reported as reached or trust radius "// &
-                "changed when ratio is acceptable."
-            test_accept_trust_region_step = .false.
-        end if
-
-        ! check if step is accepted and trust radius is correctly expanded if ratio is
-        ! too large
-        trust_radius = 1.0_rp
-        accept_step = accept_trust_region_step( &
-            solution, 1.1_rp * trust_radius_expand_ratio, .true., settings, &
-            trust_radius, max_precision_reached)
-        if (.not. accept_step .or. max_precision_reached .or. &
-            abs(trust_radius - trust_radius_expand_factor) > tol) then
-            write(stderr, *) "test_accept_trust_region_step failed: Step not "// &
-                "accepted, maximum precision reported as reached or trust radius "// &
-                "not correctly expanded when ratio is too large."
-            test_accept_trust_region_step = .false.
-        end if
+        ! check for every case whether the step is accepted and the trust radius is
+        ! reduced, kept or expanded, without maximum precision being reported as
+        ! reached
+        do i = 1, size(case_names)
+            trust_radius = 1.0_rp
+            solution(1) = case_rotations(i)
+            accept_step = accept_trust_region_step(solution, case_ratios(i), &
+                                                   case_converged(i), settings, &
+                                                   trust_radius, max_precision_reached)
+            if (accept_step .neqv. case_accepted(i)) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "acceptance incorrect when "//trim(case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (abs(trust_radius - case_trust_radii(i)) > tol) then
+                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
+                    "radius not correctly updated when "//trim(case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (max_precision_reached) then
+                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
+                    "precision reported as reached when "//trim(case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+        end do
 
         ! check if step is rejected and maximum precision is reported as reached if the
         ! reduced trust radius falls below numerical zero
@@ -4903,9 +4896,14 @@ contains
         context%log_message = ""
         accept_step = accept_trust_region_step(solution, -1.0_rp, .true., settings, &
                                                trust_radius, max_precision_reached)
-        if (accept_step .or. .not. max_precision_reached) then
+        if (accept_step) then
             write(stderr, *) "test_accept_trust_region_step failed: Step accepted "// &
-                "or maximum precision not reached when trust radius becomes too small."
+                "when trust radius becomes too small."
+            test_accept_trust_region_step = .false.
+        end if
+        if (.not. max_precision_reached) then
+            write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
+                "precision not reached when trust radius becomes too small."
             test_accept_trust_region_step = .false.
         end if
         if (adjustl(context%log_message) /= trust_radius_too_small_warning_msg) then
@@ -5054,10 +5052,14 @@ contains
         end do
         settings%subsystem_solver = "Jacobi-Davidson"
         call solver_sanity_check(settings, 3_ip, grad, error)
-        if (error /= 0 .or. settings%subsystem_solver /= "jacobi-davidson") then
-            write(stderr, *) "test_solver_sanity_check failed: Error thrown or "// &
-                "subsystem solver not converted to lowercase for mixed-case "// &
-                "subsystem solver."
+        if (error /= 0) then
+            write(stderr, *) "test_solver_sanity_check failed: Error thrown for "// &
+                "mixed-case subsystem solver."
+            test_solver_sanity_check = .false.
+        end if
+        if (settings%subsystem_solver /= "jacobi-davidson") then
+            write(stderr, *) "test_solver_sanity_check failed: Mixed-case "// &
+                "subsystem solver not converted to lowercase."
             test_solver_sanity_check = .false.
         end if
         settings%subsystem_solver = "unknown"
@@ -5136,10 +5138,14 @@ contains
         end do
         settings%diag_solver = "Jacobi-Davidson"
         call stability_sanity_check(settings, 3_ip, error)
-        if (error /= 0 .or. settings%diag_solver /= "jacobi-davidson") then
-            write(stderr, *) "test_stability_sanity_check failed: Error thrown or "// &
-                "diagonalization solver not converted to lowercase for mixed-case "// &
-                "diagonalization solver."
+        if (error /= 0) then
+            write(stderr, *) "test_stability_sanity_check failed: Error thrown for "// &
+                "mixed-case diagonalization solver."
+            test_stability_sanity_check = .false.
+        end if
+        if (settings%diag_solver /= "jacobi-davidson") then
+            write(stderr, *) "test_stability_sanity_check failed: Mixed-case "// &
+                "diagonalization solver not converted to lowercase."
             test_stability_sanity_check = .false.
         end if
         settings%diag_solver = "unknown"

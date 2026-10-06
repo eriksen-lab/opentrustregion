@@ -76,7 +76,7 @@ contains
             settings_c%context)
 
         ! check if passed number of parameters is correct
-        if (n_param_c /= 3) then
+        if (n_param_c /= n_param) then
             write(stderr, *) "test_solver_py_interface failed: Passed number of "// &
                 "parameters wrong."
             test_solver_interface = .false.
@@ -179,7 +179,7 @@ contains
                 " by given Hessian linear transformation function", settings_c%context)
 
         ! check if passed number of parameters is correct
-        if (n_param_c /= 3) then
+        if (n_param_c /= n_param) then
             write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
                 "number of parameters wrong."
             test_stability_check_interface = .false.
@@ -227,7 +227,7 @@ contains
         !
         use c_interface, only: solver_settings_type_c
         use test_reference, only: get_reference_solver_values, unset_callbacks
-        use, intrinsic :: iso_c_binding, only: c_null_funptr, c_null_ptr
+        use, intrinsic :: iso_c_binding, only: c_null_ptr
 
         type(solver_settings_type_c), intent(inout) :: settings
 
@@ -247,7 +247,7 @@ contains
         !
         use c_interface, only: stability_settings_type_c
         use test_reference, only: get_reference_stability_values, unset_callbacks
-        use, intrinsic :: iso_c_binding, only: c_null_funptr, c_null_ptr
+        use, intrinsic :: iso_c_binding, only: c_null_ptr
 
         type(stability_settings_type_c), intent(inout) :: settings
 

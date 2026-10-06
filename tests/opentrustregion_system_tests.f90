@@ -469,7 +469,13 @@ contains
             stability_settings%context => context
             call stability_check(h_diag, hess_x_funptr, stable, error, &
                                  stability_settings)
-            if (error /= 0 .or. .not. stable) then
+            if (error /= 0) then
+                write(stderr, *) test_name//" failed: Stability check of the "// &
+                    "localized orbitals produced error from the "// &
+                    trim(start_names(i_start))//"."
+                check_h2o_fb_solver = .false.
+            end if
+            if (.not. stable) then
                 write(stderr, *) test_name//" failed: Localized orbitals are not a "// &
                     "stable minimum from the "//trim(start_names(i_start))//"."
                 check_h2o_fb_solver = .false.

@@ -21,13 +21,15 @@ module test_reference
 
     ! number of parameters
     integer(ip), parameter :: n_param = 3_ip
-    integer(c_ip), parameter :: n_param_c = int(n_param, kind=c_ip)
+    integer(c_ip), bind(C, name="test_n_param") :: n_param_c = n_param
 
-    ! reference settings, every field has a value distinct from every other field of
-    ! the same kind and from its default value, so that a field read from or written to
-    ! the wrong place or not converted at all is detected, the nested stability check
-    ! settings of the reference solver settings are the reference stability check
-    ! settings
+    ! reference settings, every field other than the logicals has a value distinct
+    ! from every other field of the same kind and from its default value, so that a
+    ! field read from or written to the wrong place or not converted at all is
+    ! detected, the logicals, which cannot all differ from each other and from their
+    ! default values, are told apart by tests that set them one at a time or flip
+    ! them, the nested stability check settings of the reference solver settings are
+    ! the reference stability check settings
     type(stability_settings_type), parameter :: ref_stability_settings = &
         stability_settings_type(precond=null(), project=null(), logger=null(), &
                                 initialized=.true., conv_tol=5e-6_rp, &
@@ -164,6 +166,44 @@ contains
 
     end function host_context_error
 
+    function ref_character_to_c(char_f) result(char_c)
+        !
+        ! this function converts a Fortran keyword to a C null-terminated character
+        ! array of the size of the keyword fields of the C settings, whose remainder
+        ! is filled with null characters, independently of the conversion routine
+        ! under test
+        !
+        character(len=*), intent(in) :: char_f
+        character(kind=c_char) :: char_c(kw_len + 1)
+
+        integer(ip) :: i
+
+        char_c = c_null_char
+        do i = 1, len_trim(char_f)
+            char_c(i) = char_f(i:i)
+        end do
+
+    end function ref_character_to_c
+
+    function ref_character_from_c(char_c) result(char_f)
+        !
+        ! this function converts a C null-terminated character array to a Fortran
+        ! character string, independently of the conversion routine under test
+        !
+        character(kind=c_char), intent(in) :: char_c(*)
+        character(len=:), allocatable :: char_f
+
+        integer(ip) :: i
+
+        char_f = ""
+        i = 1
+        do while (char_c(i) /= c_null_char)
+            char_f = char_f//char_c(i)
+            i = i + 1
+        end do
+
+    end function ref_character_from_c
+
     subroutine reset_host_context()
         !
         ! this subroutine clears the bookkeeping of the callback functions and arms the
@@ -213,6 +253,258 @@ contains
 
     end subroutine arm_host_context_c
 
+    subroutine get_reference_solver_values(values_out, true_logical) bind(C)
+        !
+        ! this subroutine exports the reference solver settings as C settings whose
+        ! fields are set one by one without the conversion routines under test, the
+        ! callback function pointers and host contexts are set to distinct addresses,
+        ! and if the name of a logical (prefixed by "stability_settings." for the
+        ! nested settings) is given, which only the layout tests do, only this logical
+        ! is set so that they can tell swapped logicals apart, otherwise the logicals
+        ! take their reference values
+        !
+        use c_interface, only: solver_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr
+
+        type(solver_settings_type_c), intent(out) :: values_out
+        character(kind=c_char), intent(in), optional :: true_logical(*)
+
+        character(len=:), allocatable :: name
+
+        ! set callback function pointers and host context to distinct addresses
+        values_out%precond = transfer(1_c_intptr_t, c_null_funptr)
+        values_out%project = transfer(2_c_intptr_t, c_null_funptr)
+        values_out%conv_check = transfer(3_c_intptr_t, c_null_funptr)
+        values_out%logger = transfer(4_c_intptr_t, c_null_funptr)
+        values_out%context = transfer(5_c_intptr_t, c_null_ptr)
+
+        ! set logicals
+        name = ""
+        if (present(true_logical)) name = ref_character_from_c(true_logical)
+        if (len(name) == 0) then
+            values_out%stability = ref_solver_settings%stability
+            values_out%line_search = ref_solver_settings%line_search
+            values_out%initialized = ref_solver_settings%initialized
+            values_out%max_precision_reached = ref_solver_settings%max_precision_reached
+        else
+            values_out%stability = name == "stability"
+            values_out%line_search = name == "line_search"
+            values_out%initialized = name == "initialized"
+            values_out%max_precision_reached = name == "max_precision_reached"
+        end if
+
+        ! set reals
+        values_out%conv_tol = ref_solver_settings%conv_tol
+        values_out%start_trust_radius = ref_solver_settings%start_trust_radius
+        values_out%global_red_factor = ref_solver_settings%global_red_factor
+        values_out%local_red_factor = ref_solver_settings%local_red_factor
+
+        ! set integers
+        values_out%n_random_trial_vectors = ref_solver_settings%n_random_trial_vectors
+        values_out%n_macro = ref_solver_settings%n_macro
+        values_out%n_micro = ref_solver_settings%n_micro
+        values_out%jacobi_davidson_start = ref_solver_settings%jacobi_davidson_start
+        values_out%seed = ref_solver_settings%seed
+        values_out%verbose = ref_solver_settings%verbose
+        values_out%n_update_orbs = ref_solver_settings%n_update_orbs
+        values_out%n_hess_x = ref_solver_settings%n_hess_x
+
+        ! set keyword
+        values_out%subsystem_solver = &
+            ref_character_to_c(ref_solver_settings%subsystem_solver)
+
+        ! set nested stability check settings
+        call get_reference_stability_values(values_out%stability_settings)
+        if (len(name) > 0) values_out%stability_settings%initialized = &
+            name == "stability_settings.initialized"
+
+    end subroutine get_reference_solver_values
+
+    subroutine get_reference_stability_values(values_out)
+        !
+        ! this subroutine sets C stability check settings to the reference values field
+        ! by field without the conversion routines under test, the callback function
+        ! pointers and host context are set to distinct addresses which also differ
+        ! from those of the solver settings
+        !
+        use c_interface, only: stability_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr
+
+        type(stability_settings_type_c), intent(out) :: values_out
+
+        ! set callback function pointers and host context to distinct addresses
+        values_out%precond = transfer(6_c_intptr_t, c_null_funptr)
+        values_out%project = transfer(7_c_intptr_t, c_null_funptr)
+        values_out%logger = transfer(8_c_intptr_t, c_null_funptr)
+        values_out%context = transfer(9_c_intptr_t, c_null_ptr)
+
+        ! set logical, real and integers
+        values_out%initialized = ref_stability_settings%initialized
+        values_out%conv_tol = ref_stability_settings%conv_tol
+        values_out%n_random_trial_vectors = &
+            ref_stability_settings%n_random_trial_vectors
+        values_out%n_iter = ref_stability_settings%n_iter
+        values_out%jacobi_davidson_start = ref_stability_settings%jacobi_davidson_start
+        values_out%seed = ref_stability_settings%seed
+        values_out%verbose = ref_stability_settings%verbose
+        values_out%n_hess_x = ref_stability_settings%n_hess_x
+
+        ! set keyword
+        values_out%diag_solver = ref_character_to_c(ref_stability_settings%diag_solver)
+
+    end subroutine get_reference_stability_values
+
+    subroutine reference_field(name_c, field_value, keyword_c) bind(C)
+        !
+        ! this subroutine returns the value of a field of the C solver settings
+        ! exported by get_reference_solver_values by its name, prefixed by
+        ! "stability_settings." for the nested settings, which also describe
+        ! standalone stability check settings, a numeric, logical (as 1 or 0) or
+        ! pointer (as its address) field in field_value and a keyword field as a
+        ! null-terminated character array in keyword_c, so that the C and Python tests
+        ! need no values of their own and compare what they read through their own
+        ! declarations with what the Fortran declaration reads
+        !
+        use c_interface, only: solver_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_intptr_t
+
+        character(kind=c_char), intent(in) :: name_c(*)
+        real(c_rp), intent(out) :: field_value
+        character(kind=c_char), intent(out) :: keyword_c(kw_len + 1)
+
+        type(solver_settings_type_c) :: values
+        character(len=:), allocatable :: name
+
+        ! export reference values and select field by name
+        field_value = 0.0_c_rp
+        keyword_c = c_null_char
+        call get_reference_solver_values(values)
+        name = ref_character_from_c(name_c)
+        select case (name)
+        case ("precond")
+            field_value = address(values%precond)
+        case ("project")
+            field_value = address(values%project)
+        case ("conv_check")
+            field_value = address(values%conv_check)
+        case ("logger")
+            field_value = address(values%logger)
+        case ("context")
+            field_value = real(transfer(values%context, 0_c_intptr_t), kind=c_rp)
+        case ("stability")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%stability)
+        case ("line_search")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%line_search)
+        case ("initialized")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%initialized)
+        case ("max_precision_reached")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%max_precision_reached)
+        case ("conv_tol")
+            field_value = values%conv_tol
+        case ("start_trust_radius")
+            field_value = values%start_trust_radius
+        case ("global_red_factor")
+            field_value = values%global_red_factor
+        case ("local_red_factor")
+            field_value = values%local_red_factor
+        case ("n_random_trial_vectors")
+            field_value = values%n_random_trial_vectors
+        case ("n_macro")
+            field_value = values%n_macro
+        case ("n_micro")
+            field_value = values%n_micro
+        case ("jacobi_davidson_start")
+            field_value = values%jacobi_davidson_start
+        case ("seed")
+            field_value = values%seed
+        case ("verbose")
+            field_value = values%verbose
+        case ("n_update_orbs")
+            field_value = values%n_update_orbs
+        case ("n_hess_x")
+            field_value = values%n_hess_x
+        case ("subsystem_solver")
+            keyword_c = values%subsystem_solver
+        case ("stability_settings.precond")
+            field_value = address(values%stability_settings%precond)
+        case ("stability_settings.project")
+            field_value = address(values%stability_settings%project)
+        case ("stability_settings.logger")
+            field_value = address(values%stability_settings%logger)
+        case ("stability_settings.context")
+            field_value = real( &
+                transfer(values%stability_settings%context, 0_c_intptr_t), kind=c_rp)
+        case ("stability_settings.initialized")
+            field_value = &
+                merge(1.0_c_rp, 0.0_c_rp, values%stability_settings%initialized)
+        case ("stability_settings.conv_tol")
+            field_value = values%stability_settings%conv_tol
+        case ("stability_settings.n_random_trial_vectors")
+            field_value = values%stability_settings%n_random_trial_vectors
+        case ("stability_settings.n_iter")
+            field_value = values%stability_settings%n_iter
+        case ("stability_settings.jacobi_davidson_start")
+            field_value = values%stability_settings%jacobi_davidson_start
+        case ("stability_settings.seed")
+            field_value = values%stability_settings%seed
+        case ("stability_settings.verbose")
+            field_value = values%stability_settings%verbose
+        case ("stability_settings.n_hess_x")
+            field_value = values%stability_settings%n_hess_x
+        case ("stability_settings.diag_solver")
+            keyword_c = values%stability_settings%diag_solver
+        case default
+            write(stderr, *) "reference_field: unknown field "//name//"."
+            field_value = huge(1.0_c_rp)
+        end select
+
+    contains
+
+        real(c_rp) function address(funptr)
+            !
+            ! this function returns the address of a C function pointer
+            !
+            type(c_funptr), intent(in) :: funptr
+
+            address = real(transfer(funptr, 0_c_intptr_t), kind=c_rp)
+
+        end function address
+
+    end subroutine reference_field
+
+    subroutine unset_solver_callbacks_c(settings_c)
+        !
+        ! this subroutine unsets every callback function of C solver settings,
+        ! including those of the nested stability check settings
+        !
+        use c_interface, only: solver_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_null_funptr
+
+        type(solver_settings_type_c), intent(inout) :: settings_c
+
+        settings_c%precond = c_null_funptr
+        settings_c%project = c_null_funptr
+        settings_c%conv_check = c_null_funptr
+        settings_c%logger = c_null_funptr
+        call unset_stability_callbacks_c(settings_c%stability_settings)
+
+    end subroutine unset_solver_callbacks_c
+
+    subroutine unset_stability_callbacks_c(settings_c)
+        !
+        ! this subroutine unsets every callback function of C stability check settings
+        !
+        use c_interface, only: stability_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_null_funptr
+
+        type(stability_settings_type_c), intent(inout) :: settings_c
+
+        settings_c%precond = c_null_funptr
+        settings_c%project = c_null_funptr
+        settings_c%logger = c_null_funptr
+
+    end subroutine unset_stability_callbacks_c
+
     logical function host_context_reached(test_name, context)
         !
         ! this function checks that the callback functions all received the host
@@ -250,42 +542,6 @@ contains
         host_context_armed = .false.
 
     end function host_context_reached
-
-    function ref_character_to_c(char_f) result(char_c)
-        !
-        ! this function converts a Fortran character string to a C null-terminated
-        ! character array, independently of the conversion routine under test
-        !
-        character(len=*), intent(in) :: char_f
-        character(kind=c_char) :: char_c(len_trim(char_f) + 1)
-
-        integer(ip) :: i
-
-        do i = 1, len_trim(char_f)
-            char_c(i) = char_f(i:i)
-        end do
-        char_c(len_trim(char_f) + 1) = c_null_char
-
-    end function ref_character_to_c
-
-    function ref_character_from_c(char_c) result(char_f)
-        !
-        ! this function converts a C null-terminated character array to a Fortran
-        ! character string, independently of the conversion routine under test
-        !
-        character(kind=c_char), intent(in) :: char_c(*)
-        character(len=:), allocatable :: char_f
-
-        integer(ip) :: i
-
-        char_f = ""
-        i = 1
-        do while (char_c(i) /= c_null_char)
-            char_f = char_f//char_c(i)
-            i = i + 1
-        end do
-
-    end function ref_character_from_c
 
     logical function equal_solver(lhs, rhs)
         !
@@ -438,229 +694,6 @@ contains
 
     end function not_equal_stability_c
 
-    subroutine get_reference_solver_values(values_out, true_logical) bind(C)
-        !
-        ! this subroutine exports the reference solver settings as C settings whose
-        ! fields are set one by one without the conversion routines under test, the
-        ! callback function pointers and host contexts are set to distinct addresses,
-        ! and if the name of a logical (prefixed by "stability_settings." for the
-        ! nested settings) is given, which only the layout tests do, only this logical
-        ! is set so that they can tell swapped logicals apart, otherwise the logicals
-        ! take their reference values
-        !
-        use c_interface, only: solver_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr
-
-        type(solver_settings_type_c), intent(out) :: values_out
-        character(kind=c_char), intent(in), optional :: true_logical(*)
-
-        character(len=:), allocatable :: name
-
-        ! set callback function pointers and host context to distinct addresses
-        values_out%precond = transfer(1_c_intptr_t, c_null_funptr)
-        values_out%project = transfer(2_c_intptr_t, c_null_funptr)
-        values_out%conv_check = transfer(3_c_intptr_t, c_null_funptr)
-        values_out%logger = transfer(4_c_intptr_t, c_null_funptr)
-        values_out%context = transfer(5_c_intptr_t, c_null_ptr)
-
-        ! set logicals
-        name = ""
-        if (present(true_logical)) name = ref_character_from_c(true_logical)
-        if (len(name) == 0) then
-            values_out%stability = ref_solver_settings%stability
-            values_out%line_search = ref_solver_settings%line_search
-            values_out%initialized = ref_solver_settings%initialized
-            values_out%max_precision_reached = ref_solver_settings%max_precision_reached
-        else
-            values_out%stability = name == "stability"
-            values_out%line_search = name == "line_search"
-            values_out%initialized = name == "initialized"
-            values_out%max_precision_reached = name == "max_precision_reached"
-        end if
-
-        ! set reals
-        values_out%conv_tol = ref_solver_settings%conv_tol
-        values_out%start_trust_radius = ref_solver_settings%start_trust_radius
-        values_out%global_red_factor = ref_solver_settings%global_red_factor
-        values_out%local_red_factor = ref_solver_settings%local_red_factor
-
-        ! set integers
-        values_out%n_random_trial_vectors = ref_solver_settings%n_random_trial_vectors
-        values_out%n_macro = ref_solver_settings%n_macro
-        values_out%n_micro = ref_solver_settings%n_micro
-        values_out%jacobi_davidson_start = ref_solver_settings%jacobi_davidson_start
-        values_out%seed = ref_solver_settings%seed
-        values_out%verbose = ref_solver_settings%verbose
-        values_out%n_update_orbs = ref_solver_settings%n_update_orbs
-        values_out%n_hess_x = ref_solver_settings%n_hess_x
-
-        ! set keyword
-        values_out%subsystem_solver = c_null_char
-        values_out%subsystem_solver(:len_trim(ref_solver_settings%subsystem_solver) + &
-                                    1) = &
-            ref_character_to_c(ref_solver_settings%subsystem_solver)
-
-        ! set nested stability check settings
-        call get_reference_stability_values(values_out%stability_settings)
-        if (len(name) > 0) values_out%stability_settings%initialized = &
-            name == "stability_settings.initialized"
-
-    end subroutine get_reference_solver_values
-
-    subroutine get_reference_stability_values(values_out)
-        !
-        ! this subroutine sets C stability check settings to the reference values field
-        ! by field without the conversion routines under test, the callback function
-        ! pointers and host context are set to distinct addresses which also differ
-        ! from those of the solver settings
-        !
-        use c_interface, only: stability_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr
-
-        type(stability_settings_type_c), intent(out) :: values_out
-
-        ! set callback function pointers and host context to distinct addresses
-        values_out%precond = transfer(6_c_intptr_t, c_null_funptr)
-        values_out%project = transfer(7_c_intptr_t, c_null_funptr)
-        values_out%logger = transfer(8_c_intptr_t, c_null_funptr)
-        values_out%context = transfer(9_c_intptr_t, c_null_ptr)
-
-        ! set logical, real and integers
-        values_out%initialized = ref_stability_settings%initialized
-        values_out%conv_tol = ref_stability_settings%conv_tol
-        values_out%n_random_trial_vectors = &
-            ref_stability_settings%n_random_trial_vectors
-        values_out%n_iter = ref_stability_settings%n_iter
-        values_out%jacobi_davidson_start = ref_stability_settings%jacobi_davidson_start
-        values_out%seed = ref_stability_settings%seed
-        values_out%verbose = ref_stability_settings%verbose
-        values_out%n_hess_x = ref_stability_settings%n_hess_x
-
-        ! set keyword
-        values_out%diag_solver = c_null_char
-        values_out%diag_solver(:len_trim(ref_stability_settings%diag_solver) + 1) = &
-            ref_character_to_c(ref_stability_settings%diag_solver)
-
-    end subroutine get_reference_stability_values
-
-    subroutine reference_field(name_c, field_value, keyword_c) bind(C)
-        !
-        ! this subroutine returns the value of a field of the C solver settings
-        ! exported by get_reference_solver_values by its name, prefixed by
-        ! "stability_settings." for the nested settings, which also describe
-        ! standalone stability check settings, a numeric, logical (as 1 or 0) or
-        ! pointer (as its address) field in field_value and a keyword field as a
-        ! null-terminated character array in keyword_c, so that the C and Python tests
-        ! need no values of their own and compare what they read through their own
-        ! declarations with what the Fortran declaration reads
-        !
-        use c_interface, only: solver_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_intptr_t
-
-        character(kind=c_char), intent(in) :: name_c(*)
-        real(c_rp), intent(out) :: field_value
-        character(kind=c_char), intent(out) :: keyword_c(kw_len + 1)
-
-        type(solver_settings_type_c) :: values
-        character(len=:), allocatable :: name
-
-        ! export reference values and select field by name
-        field_value = 0.0_c_rp
-        keyword_c = c_null_char
-        call get_reference_solver_values(values)
-        name = ref_character_from_c(name_c)
-        select case (name)
-        case ("precond")
-            field_value = address(values%precond)
-        case ("project")
-            field_value = address(values%project)
-        case ("conv_check")
-            field_value = address(values%conv_check)
-        case ("logger")
-            field_value = address(values%logger)
-        case ("context")
-            field_value = real(transfer(values%context, 0_c_intptr_t), kind=c_rp)
-        case ("stability")
-            field_value = merge(1.0_c_rp, 0.0_c_rp, values%stability)
-        case ("line_search")
-            field_value = merge(1.0_c_rp, 0.0_c_rp, values%line_search)
-        case ("initialized")
-            field_value = merge(1.0_c_rp, 0.0_c_rp, values%initialized)
-        case ("max_precision_reached")
-            field_value = merge(1.0_c_rp, 0.0_c_rp, values%max_precision_reached)
-        case ("conv_tol")
-            field_value = values%conv_tol
-        case ("start_trust_radius")
-            field_value = values%start_trust_radius
-        case ("global_red_factor")
-            field_value = values%global_red_factor
-        case ("local_red_factor")
-            field_value = values%local_red_factor
-        case ("n_random_trial_vectors")
-            field_value = values%n_random_trial_vectors
-        case ("n_macro")
-            field_value = values%n_macro
-        case ("n_micro")
-            field_value = values%n_micro
-        case ("jacobi_davidson_start")
-            field_value = values%jacobi_davidson_start
-        case ("seed")
-            field_value = values%seed
-        case ("verbose")
-            field_value = values%verbose
-        case ("n_update_orbs")
-            field_value = values%n_update_orbs
-        case ("n_hess_x")
-            field_value = values%n_hess_x
-        case ("subsystem_solver")
-            keyword_c = values%subsystem_solver
-        case ("stability_settings.precond")
-            field_value = address(values%stability_settings%precond)
-        case ("stability_settings.project")
-            field_value = address(values%stability_settings%project)
-        case ("stability_settings.logger")
-            field_value = address(values%stability_settings%logger)
-        case ("stability_settings.context")
-            field_value = real( &
-                transfer(values%stability_settings%context, 0_c_intptr_t), kind=c_rp)
-        case ("stability_settings.initialized")
-            field_value = &
-                merge(1.0_c_rp, 0.0_c_rp, values%stability_settings%initialized)
-        case ("stability_settings.conv_tol")
-            field_value = values%stability_settings%conv_tol
-        case ("stability_settings.n_random_trial_vectors")
-            field_value = values%stability_settings%n_random_trial_vectors
-        case ("stability_settings.n_iter")
-            field_value = values%stability_settings%n_iter
-        case ("stability_settings.jacobi_davidson_start")
-            field_value = values%stability_settings%jacobi_davidson_start
-        case ("stability_settings.seed")
-            field_value = values%stability_settings%seed
-        case ("stability_settings.verbose")
-            field_value = values%stability_settings%verbose
-        case ("stability_settings.n_hess_x")
-            field_value = values%stability_settings%n_hess_x
-        case ("stability_settings.diag_solver")
-            keyword_c = values%stability_settings%diag_solver
-        case default
-            write(stderr, *) "reference_field: unknown field "//name//"."
-            field_value = huge(1.0_c_rp)
-        end select
-
-    contains
-
-        real(c_rp) function address(funptr)
-            !
-            ! this function returns the address of a C function pointer
-            !
-            type(c_funptr), intent(in) :: funptr
-
-            address = real(transfer(funptr, 0_c_intptr_t), kind=c_rp)
-
-        end function address
-
-    end subroutine reference_field
-
     logical function solver_callbacks_unset(settings)
         !
         ! this function checks that no callback function of solver settings, including
@@ -720,39 +753,6 @@ contains
                                              c_associated(settings_c%logger))
 
     end function stability_callbacks_unset_c
-
-    subroutine unset_solver_callbacks_c(settings_c)
-        !
-        ! this subroutine unsets every callback function of C solver settings,
-        ! including those of the nested stability check settings
-        !
-        use c_interface, only: solver_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_null_funptr
-
-        type(solver_settings_type_c), intent(inout) :: settings_c
-
-        settings_c%precond = c_null_funptr
-        settings_c%project = c_null_funptr
-        settings_c%conv_check = c_null_funptr
-        settings_c%logger = c_null_funptr
-        call unset_stability_callbacks_c(settings_c%stability_settings)
-
-    end subroutine unset_solver_callbacks_c
-
-    subroutine unset_stability_callbacks_c(settings_c)
-        !
-        ! this subroutine unsets every callback function of C stability check settings
-        !
-        use c_interface, only: stability_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_null_funptr
-
-        type(stability_settings_type_c), intent(inout) :: settings_c
-
-        settings_c%precond = c_null_funptr
-        settings_c%project = c_null_funptr
-        settings_c%logger = c_null_funptr
-
-    end subroutine unset_stability_callbacks_c
 
     logical function solver_callbacks_wrapped(settings)
         !

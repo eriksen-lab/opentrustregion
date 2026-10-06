@@ -888,21 +888,21 @@ contains
 
     function character_to_c(char_f) result(char_c)
         !
-        ! this function converts a Fortran character string to a C null-terminated
-        ! character array
+        ! this function converts a Fortran keyword to a C null-terminated character
+        ! array of the size of the keyword fields of the C settings, whose remainder
+        ! is filled with null characters
         !
         character(len=*), intent(in) :: char_f
-        character(kind=c_char), allocatable :: char_c(:)
+        character(kind=c_char) :: char_c(kw_len + 1)
 
         integer(ip) :: n
 
-        ! allocate C null-terminated character array
-        n = len_trim(char_f)
-        allocate(char_c(n + 1))
+        ! fill with null characters, which terminate the copied characters
+        char_c = c_null_char
 
         ! copy and convert each character
+        n = len_trim(char_f)
         char_c(1:n) = transfer(char_f(1:n), char_c(1:n))
-        char_c(n + 1) = c_null_char
 
     end function character_to_c
 

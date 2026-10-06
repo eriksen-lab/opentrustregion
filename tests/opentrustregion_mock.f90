@@ -19,7 +19,7 @@ module opentrustregion_mock
     integer(ip), parameter :: mock_error = 7, mock_n_update_orbs = 3, &
                               mock_n_hess_x = 5, mock_stability_n_hess_x = 2, &
                               mock_stability_check_n_hess_x = 4, &
-                              mock_solver_n_nested_calls = 2
+                              mock_solver_n_nested_calls = 3
 
     ! create function pointers to ensure that routines comply with interface
     procedure(solver), pointer :: mock_solver_ptr => mock_solver
@@ -36,7 +36,7 @@ contains
         use opentrustregion, only: solver_settings_type, update_orbs_type, obj_func_type
         use test_reference, only: check_update_orbs_funptr, check_obj_func_funptr, &
                                   check_precond_funptr, check_project_funptr, &
-                                  check_conv_check_funptr
+                                  check_conv_check_funptr, n_param_ref => n_param
 
         procedure(update_orbs_type), intent(in), pointer :: update_orbs_funptr
         procedure(obj_func_type), intent(in), pointer :: obj_func_funptr
@@ -58,7 +58,7 @@ contains
             settings%context)
 
         ! check number of parameters
-        if (n_param /= 3) then
+        if (n_param /= n_param_ref) then
             test_passed = .false.
             write(stderr, *) "test_solver_c_wrapper failed: Passed number of "// &
                 "parameters wrong."
@@ -114,6 +114,11 @@ contains
                 " by preconditioner inherited by the internal stability check", &
                 settings%stability_settings%context)
         end if
+        if (associated(settings%project)) then
+            test_passed = test_passed .and. check_project_funptr( &
+                settings%project, "solver_c_wrapper", " by projection inherited by "// &
+                "the internal stability check", settings%stability_settings%context)
+        end if
         if (associated(settings%logger)) &
             call settings%logger("test", settings%stability_settings%context)
 
@@ -141,7 +146,7 @@ contains
         !
         use opentrustregion, only: stability_settings_type, hess_x_type
         use test_reference, only: check_hess_x_funptr, check_precond_funptr, &
-                                  check_project_funptr
+                                  check_project_funptr, n_param
 
         real(rp), intent(in) :: h_diag(:)
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
@@ -154,7 +159,7 @@ contains
         test_passed = .true.
 
         ! check Hessian diagonal
-        if (size(h_diag) /= 3 .or. any(abs(h_diag - 3.0_rp) > tol)) then
+        if (size(h_diag) /= n_param .or. any(abs(h_diag - 3.0_rp) > tol)) then
             test_passed = .false.
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal wrong."

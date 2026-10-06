@@ -1016,7 +1016,7 @@ contains
                                   callbacks_wrapped
 
         type(solver_settings_type_c) :: settings_c
-        type(solver_settings_type) :: settings
+        type(solver_settings_type) :: settings, flipped_settings
 
         ! assume test passes
         test_assign_solver_f_c = .true.
@@ -1038,6 +1038,26 @@ contains
         ! check against reference values
         if (settings /= ref_solver_settings) then
             write(stderr, *) "test_assign_solver_f_c failed: Settings not "// &
+                "converted correctly."
+            test_assign_solver_f_c = .false.
+        end if
+
+        ! convert again with the logicals other than initialized flipped, since a
+        ! logical cannot differ from its default value and the other logicals at once,
+        ! a logical that is not converted is otherwise missed whenever it happens to
+        ! hold its reference value
+        call get_reference_solver_values(settings_c)
+        settings_c%stability = .not. settings_c%stability
+        settings_c%line_search = .not. settings_c%line_search
+        settings_c%max_precision_reached = .not. settings_c%max_precision_reached
+        flipped_settings = ref_solver_settings
+        flipped_settings%stability = .not. flipped_settings%stability
+        flipped_settings%line_search = .not. flipped_settings%line_search
+        flipped_settings%max_precision_reached = &
+            .not. flipped_settings%max_precision_reached
+        settings = settings_c
+        if (settings /= flipped_settings) then
+            write(stderr, *) "test_assign_solver_f_c failed: Flipped logicals not "// &
                 "converted correctly."
             test_assign_solver_f_c = .false.
         end if
@@ -1170,6 +1190,20 @@ contains
             test_assign_solver_c_f = .false.
         end if
 
+        ! convert again with the logicals other than initialized flipped, since a
+        ! logical cannot differ from its default value and the other logicals at once,
+        ! a logical that is not converted is otherwise missed whenever it happens to
+        ! hold its reference value
+        settings%stability = .not. settings%stability
+        settings%line_search = .not. settings%line_search
+        settings%max_precision_reached = .not. settings%max_precision_reached
+        settings_c = settings
+        if (settings_c /= settings) then
+            write(stderr, *) "test_assign_solver_c_f failed: Flipped logicals not "// &
+                "converted correctly."
+            test_assign_solver_c_f = .false.
+        end if
+
     end function test_assign_solver_c_f
 
     logical(c_bool) function test_assign_stability_c_f() bind(C)
@@ -1213,38 +1247,41 @@ contains
         ! null-terminated character array
         !
         use c_interface, only: character_to_c
+        use opentrustregion, only: kw_len
 
         character(len=*), parameter :: test_string = "test  "
-        character(kind=c_char), allocatable :: char_c(:)
+        character(kind=c_char) :: char_c(kw_len + 1)
         integer :: n, i
 
         ! assume test passes
         test_character_to_c = .true.
 
-        ! perform conversion
-        char_c = character_to_c(test_string)
-
-        ! check length, trailing blanks are dropped
-        n = len_trim(test_string)
-        if (size(char_c) /= n + 1) then
+        ! check that the array has the size of the keyword fields of the C settings,
+        ! before it is assigned to an array of this size
+        if (size(character_to_c(test_string)) /= kw_len + 1) then
             write(stderr, *) "test_character_to_c failed: Character array has "// &
                 "wrong size."
             test_character_to_c = .false.
+            return
         end if
 
-        ! check characters
+        ! perform conversion
+        char_c = character_to_c(test_string)
+
+        ! check characters, trailing blanks are dropped
+        n = len_trim(test_string)
         do i = 1, n
             if (char_c(i) /= test_string(i:i)) then
                 write(stderr, *) "test_character_to_c failed: Character array "// &
-                    "mismatch at character ", i
+                    "mismatch at character ", i, "."
                 test_character_to_c = .false.
             end if
         end do
 
-        ! check null terminator
-        if (char_c(n + 1) /= c_null_char) then
-            write(stderr, *) "test_character_to_c failed: Character array is "// &
-                "missing null terminator."
+        ! check null terminator and that the remainder is filled with null characters
+        if (any(char_c(n + 1:) /= c_null_char)) then
+            write(stderr, *) "test_character_to_c failed: Character array not "// &
+                "filled with null characters after the string."
             test_character_to_c = .false.
         end if
 

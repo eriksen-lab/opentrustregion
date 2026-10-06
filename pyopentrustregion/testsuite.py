@@ -270,7 +270,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         """
         this function tests the solver python interface
         """
-        n_param = 3
+        n_param = c_int.in_dll(lib, "test_n_param").value
 
         def mock_obj_func(kappa):
             """
@@ -414,7 +414,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         """
         this function tests the stability check python interface
         """
-        n_param = 3
+        n_param = c_int.in_dll(lib, "test_n_param").value
         h_diag = np.full(n_param, 3.0, dtype=np.float64)
 
         def mock_hess_x(x, hess_x):
@@ -765,35 +765,31 @@ class PyIntegrationTests(unittest.TestCase):
     the interface
     """
 
-    # Hartmann 6D parameters
-    n_param = c_int.in_dll(lib, "hartmann6d_n_param").value
-    n_terms = c_int.in_dll(lib, "hartmann6d_n_terms").value
-    alpha_ctypes = (c_real * n_terms).in_dll(lib, "hartmann6d_alpha")
-    alpha = np.frombuffer(alpha_ctypes, dtype=np.dtype(c_real), count=n_terms)
-    A_ctypes = ((c_real * n_param) * n_terms).in_dll(lib, "hartmann6d_A")
-    A = np.frombuffer(
-        A_ctypes, dtype=np.dtype(c_real), count=n_terms * n_param
-    ).reshape((n_terms, n_param), order="F")
-    P_ctypes = ((c_real * n_param) * n_terms).in_dll(lib, "hartmann6d_P")
-    P = np.frombuffer(
-        P_ctypes, dtype=np.dtype(c_real), count=n_terms * n_param
-    ).reshape((n_terms, n_param), order="F")
-    minimum1_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_minimum1")
-    minimum1 = np.frombuffer(minimum1_ctypes, dtype=np.dtype(c_real), count=n_param)
-    near_minimum_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_near_minimum")
-    near_minimum = np.frombuffer(
-        near_minimum_ctypes, dtype=np.dtype(c_real), count=n_param
-    )
-    saddle_point_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_saddle_point")
-    saddle_point = np.frombuffer(
-        saddle_point_ctypes, dtype=np.dtype(c_real), count=n_param
-    )
-
     @classmethod
     def setUpClass(cls):
         print(50 * "-")
         print("Running integration tests for Python interface...")
         print(50 * "-")
+
+        # read the Hartmann 6D problem here rather than in the class body, so that
+        # a missing NumPy skips these tests instead of failing the import
+        def read_array(name, *shape):
+            size = int(np.prod(shape))
+            array = (c_real * size).in_dll(lib, name)
+            return np.frombuffer(array, dtype=np.dtype(c_real), count=size).reshape(
+                shape, order="F"
+            )
+
+        cls.n_param = c_int.in_dll(lib, "hartmann6d_n_param").value
+        cls.n_terms = c_int.in_dll(lib, "hartmann6d_n_terms").value
+        cls.alpha = read_array("hartmann6d_alpha", cls.n_terms)
+        cls.A = read_array("hartmann6d_A", cls.n_terms, cls.n_param)
+        cls.P = read_array("hartmann6d_P", cls.n_terms, cls.n_param)
+        cls.minimum1 = read_array("hartmann6d_minimum1", cls.n_param)
+        cls.near_minimum = read_array("hartmann6d_near_minimum", cls.n_param)
+        cls.saddle_point = read_array("hartmann6d_saddle_point", cls.n_param)
+        cls.unstable_mode = read_array("hartmann6d_unstable_mode", cls.n_param)
+
         return super().setUpClass()
 
     # Hartmann 6D primitives shared by the callbacks
@@ -1076,17 +1072,7 @@ class PyIntegrationTests(unittest.TestCase):
 
         # the descent direction at the saddle should align with the known
         # negative-curvature eigenvector
-        ref = np.array(
-            [
-                -0.173375920238,
-                -0.518489821791,
-                -6.432848975252e-3,
-                -0.340127852882,
-                3.066460316955e-3,
-                0.765095650196,
-            ]
-        )
-        if not np.allclose(abs(np.dot(kappa, ref)), 1.0, atol=1e-6):
+        if not np.allclose(abs(np.dot(kappa, self.unstable_mode)), 1.0, atol=1e-6):
             print(
                 " test_stability_check_py failed: Stability check does not return "
                 "correct direction for saddle point."

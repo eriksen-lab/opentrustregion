@@ -51,6 +51,8 @@ _Static_assert(offsetof(stability_settings_type, logger) == 2 * sizeof(void *),
 #define N_PARAM 6
 #define N_TERM 4
 
+extern const c_int hartmann6d_n_param;
+extern const c_int hartmann6d_n_terms;
 extern const c_real hartmann6d_alpha[N_TERM];
 const c_real *alpha = hartmann6d_alpha;
 extern const c_real hartmann6d_A[N_TERM * N_PARAM];
@@ -62,6 +64,7 @@ const c_real *minimum1 = hartmann6d_minimum1;
 extern const c_real hartmann6d_saddle_point[N_PARAM];
 const c_real *saddle_point = hartmann6d_saddle_point;
 extern const c_real hartmann6d_near_minimum[N_PARAM];
+extern const c_real hartmann6d_unstable_mode[N_PARAM];
 
 /* Host data handed to the callbacks through the context of the settings: the current
  * point and its Hessian, and flags recording which callbacks were reached. */
@@ -311,6 +314,14 @@ static int vec_close(const c_real *a, const c_real *b, c_real tol) {
   return 1;
 }
 
+static bool hartmann_dimensions_match(const char *test_name) {
+  if (hartmann6d_n_param == N_PARAM && hartmann6d_n_terms == N_TERM)
+    return true;
+  fprintf(stderr, "%s failed: Hartmann 6D dimensions differ from the library's.\n",
+          test_name);
+  return false;
+}
+
 static bool check_field(c_real value, const char *name) {
   c_real ref_value;
   char ref_keyword[OTR_KW_LEN + 1];
@@ -345,12 +356,15 @@ bool test_settings_layout(void) {
   static const char *logicals[] = {"stability", "line_search", "initialized",
                                    "max_precision_reached",
                                    "stability_settings.initialized"};
-  for (int i = 0; i < 5; i++) {
+  const int n_logicals = sizeof logicals / sizeof *logicals;
+  for (int i = 0; i < n_logicals; i++) {
     solver_settings_type s = {0};
     get_reference_solver_values(&s, logicals[i]);
     bool read[] = {s.stability, s.line_search, s.initialized, s.max_precision_reached,
                    s.stability_settings.initialized};
-    for (int j = 0; j < 5; j++) {
+    _Static_assert(sizeof read / sizeof *read == sizeof logicals / sizeof *logicals,
+                   "test_settings_layout: every logical needs a name and a field");
+    for (int j = 0; j < n_logicals; j++) {
       if (read[j] != (i == j)) {
         fprintf(stderr, "test_settings_layout failed: Field %s misplaced.\n",
                 logicals[j]);
@@ -437,6 +451,9 @@ bool test_stability_settings_init(void) {
 bool test_solver_c(void) {
   bool ok = true;
 
+  if (!hartmann_dimensions_match("test_solver_c"))
+    return false;
+
   /* start in the quadratic region near the first minimum */
   hartmann_context ctx = {0};
   memcpy(ctx.curr_vars, hartmann6d_near_minimum, sizeof(ctx.curr_vars));
@@ -518,6 +535,9 @@ bool test_solver_c(void) {
 bool test_stability_check_c(void) {
   bool ok = true;
 
+  if (!hartmann_dimensions_match("test_stability_check_c"))
+    return false;
+
   hartmann_context ctx = {0};
 
   stability_settings_type settings = stability_settings_init();
@@ -588,12 +608,9 @@ bool test_stability_check_c(void) {
 
   /* the descent direction at the saddle should align with the known
    * negative-curvature eigenvector */
-  static const c_real ref_direction[N_PARAM] = {-0.173375920238,    -0.518489821791,
-                                                -6.432848975252e-3, -0.340127852882,
-                                                3.066460316955e-3,  0.765095650196};
   c_real dot = 0.0;
   for (int i = 0; i < N_PARAM; i++)
-    dot += direction[i] * ref_direction[i];
+    dot += direction[i] * hartmann6d_unstable_mode[i];
   if (fabs(fabs(dot) - 1.0) > 1e-6) {
     fprintf(stderr, "test_stability_check_c failed: Stability check does not return "
                     "correct direction for saddle point.\n");
