@@ -190,9 +190,10 @@ contains
         ! check host context
         call check_host_context_c(context_c)
 
-        ! record call with test message in host context
+        ! record call with null-terminated test message in host context
         message = transfer(message_c(1:4), message)
-        if (message == "test" .and. c_associated(context_c)) then
+        if (message == "test" .and. message_c(5) == c_null_char .and. &
+            c_associated(context_c)) then
             call c_f_pointer(context_c, context)
             context%logger_called = .true.
         end if
@@ -1213,7 +1214,7 @@ contains
         !
         use c_interface, only: character_to_c
 
-        character(len=*), parameter :: test_string = "test"
+        character(len=*), parameter :: test_string = "test  "
         character(kind=c_char), allocatable :: char_c(:)
         integer :: n, i
 
@@ -1223,7 +1224,7 @@ contains
         ! perform conversion
         char_c = character_to_c(test_string)
 
-        ! check length
+        ! check length, trailing blanks are dropped
         n = len_trim(test_string)
         if (size(char_c) /= n + 1) then
             write(stderr, *) "test_character_to_c failed: Character array has "// &

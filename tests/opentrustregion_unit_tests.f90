@@ -124,6 +124,14 @@ module opentrustregion_unit_tests
         real(rp) :: vars(2) = 0.0_rp
     end type
 
+    ! define type for the host context of the quadratic model 1/2 |x|^2 whose
+    ! objective function is evaluated at half the displacement, which holds its
+    ! current variables and records the first nonvanishing displacement passed to the
+    ! orbital update
+    type, extends(test_context_type) :: half_step_context_type
+        real(rp) :: vars(2) = 0.0_rp, first_step(2) = 0.0_rp
+    end type
+
     ! define type for the host context handed to the objective function used to test
     ! the bracketing, which selects one of the one-dimensional test functions
     type, extends(test_context_type) :: bracket_context_type
@@ -1007,6 +1015,100 @@ contains
 
     end subroutine double_well_update_orbs
 
+    function resolve_half_step_context(context, error) result(state)
+        !
+        ! this function returns the context of the half step model handed to a mock
+        ! callback function and an error if no such context was handed over
+        !
+        class(*), intent(in), pointer :: context
+        integer(ip), intent(out) :: error
+        class(half_step_context_type), pointer :: state
+
+        ! initialize error flag
+        error = 0
+
+        ! get context
+        state => null()
+        if (associated(context)) then
+            select type (context)
+            class is (half_step_context_type)
+                state => context
+            end select
+        end if
+
+        ! report missing test context
+        if (.not. associated(state)) error = missing_context_error
+
+    end function resolve_half_step_context
+
+    subroutine half_step_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
+                                     error, context)
+        !
+        ! this subroutine describes the orbital update of the quadratic model 1/2 |x|^2,
+        ! whose Newton step leads to the origin, and records the first nonvanishing
+        ! displacement
+        !
+        use opentrustregion, only: hess_x_type
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: delta_vars(:)
+        real(rp), intent(out) :: func
+        real(rp), intent(out), target :: grad(:), h_diag(:)
+        procedure(hess_x_type), intent(inout), pointer :: hess_x_funptr
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        class(half_step_context_type), pointer :: state
+
+        ! check host context
+        call check_host_context(context)
+
+        ! get half step model state
+        state => resolve_half_step_context(context, error)
+        if (error /= 0) return
+
+        ! record first nonvanishing displacement and update variables
+        if (maxval(abs(state%first_step)) <= 0.0_rp) state%first_step = delta_vars
+        state%vars = state%vars + delta_vars
+
+        ! evaluate model, gradient and Hessian diagonal and define Hessian linear
+        ! transformation
+        func = 0.5_rp * dot_product(state%vars, state%vars)
+        grad = state%vars
+        h_diag = 1.0_rp
+        hess_x_funptr => identity_hess_x
+
+    end subroutine half_step_update_orbs
+
+    function half_step_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes an objective function which evaluates the quadratic
+        ! model 1/2 |x|^2 at half the displacement, so that its minimum along a step
+        ! lies at twice the Newton step of the model
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        class(half_step_context_type), pointer :: state
+
+        ! initialize result in case the half step model state is missing
+        func = 0.0_rp
+
+        ! check host context
+        call check_host_context(context)
+
+        ! get half step model state
+        state => resolve_half_step_context(context, error)
+        if (error /= 0) return
+
+        func = 0.5_rp * sum((state%vars + 0.5_rp * delta_vars)**2)
+
+    end function half_step_obj_func
+
     function resolve_bracket_context(context, error) result(state)
         !
         ! this function returns the bracketing context handed to a mock callback
@@ -1461,8 +1563,8 @@ contains
             update_orbs_type, obj_func_type, solver_settings_type, solver, &
             default_settings => default_solver_settings, error_solver_max_iter, &
             error_update_orbs, error_conv_check, error_obj_func, error_hess_x, &
-            error_precond, error_project, verbosity_warning, subsystem_solver_options, &
-            stability_settings_uninitialized_warning_msg
+            error_solver, error_precond, error_project, verbosity_warning, &
+            subsystem_solver_options, stability_settings_uninitialized_warning_msg
         use test_reference, only: arm_host_context, host_context_reached
 
         real(rp), parameter :: var_thres = 1e-6_rp
@@ -1478,6 +1580,7 @@ contains
         type(solver_settings_type) :: settings, uninitialized_settings
         type(hartmann6d_recording_context_type), target :: context
         type(double_well_context_type), target :: double_well_context
+        type(half_step_context_type), target :: half_step_context
 
         ! assume tests pass
         test_solver = .true.
@@ -1595,6 +1698,23 @@ contains
         if (settings%n_hess_x /= settings%stability_settings%n_hess_x) then
             write(stderr, *) "test_solver failed: Hessian linear transformations "// &
                 "of the internal stability check not added to the solver's counter."
+            test_solver = .false.
+        end if
+
+        ! run solver with settings which the sanity check rejects and check that its
+        ! error is returned and an error message is printed
+        context%vars = near_minimum
+        call settings%init(error)
+        settings%n_micro = 0
+        call setup_error_logging(settings, context)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= error_solver + 1) then
+            write(stderr, *) "test_solver failed: Did not return error of sanity check."
+            test_solver = .false.
+        end if
+        if (len_trim(context%log_message) == 0) then
+            write(stderr, *) "test_solver failed: No error message printed for "// &
+                "settings rejected by sanity check."
             test_solver = .false.
         end if
 
@@ -1832,6 +1952,24 @@ contains
         if (.not. context%precond_received_step) then
             write(stderr, *) "test_solver failed: Step size not measured with "// &
                 "preconditioner for truncated conjugate gradient."
+            test_solver = .false.
+        end if
+
+        ! perform a line search for an objective function whose minimum along the step
+        ! lies at twice the Newton step of the model and check that the step is scaled
+        ! by the multiplier the bracketing returns
+        call setup_settings(settings, half_step_context)
+        settings%line_search = .true.
+        settings%n_macro = 2
+        half_step_context%vars = [0.1_rp, 0.1_rp]
+        update_orbs_funptr => half_step_update_orbs
+        obj_func_funptr => half_step_obj_func
+        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings)
+        if (any( &
+            abs(half_step_context%first_step + 2.0_rp * [0.1_rp, 0.1_rp]) > 1e-6_rp)) &
+            then
+            write(stderr, *) "test_solver failed: Step not scaled by multiplier of "// &
+                "line search."
             test_solver = .false.
         end if
 

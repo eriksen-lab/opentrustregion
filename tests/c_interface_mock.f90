@@ -38,7 +38,7 @@ contains
         !
         ! this function is a mock routine for the solver C wrapper subroutine
         !
-        use c_interface, only: solver_settings_type_c, logger_c_type
+        use c_interface, only: solver_settings_type_c, logger_c_type, obj_func_c_type
         use test_reference, only: check_update_orbs_c_funptr, check_obj_func_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
                                   check_conv_check_c_funptr, operator(/=)
@@ -49,10 +49,20 @@ contains
         integer(c_ip) :: error_c
 
         procedure(logger_c_type), pointer :: logger_funptr
+        procedure(obj_func_c_type), pointer :: obj_func_funptr
         character(len=:), allocatable, target :: message
+        real(c_rp) :: kappa(n_param), func
 
         ! assume test passes
         test_solver_interface = .true.
+
+        ! evaluate the objective function once and return its error as the solver
+        ! would, so that a test can check how an error of a callback function is
+        ! reported
+        kappa = 0.0_c_rp
+        call c_f_procpointer(cptr=obj_func_c_funptr, fptr=obj_func_funptr)
+        error_c = obj_func_funptr(kappa, func, settings_c%context)
+        if (error_c /= 0) return
 
         ! test passed orbital update function
         test_solver_interface = &
@@ -92,6 +102,17 @@ contains
         call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
         call logger_funptr(message, settings_c%context)
 
+        ! test the callback functions of the nested stability check settings
+        test_solver_interface = test_solver_interface .and. check_precond_c_funptr( &
+            settings_c%stability_settings%precond, "solver_py_interface", &
+            " by preconditioning function of nested settings", settings_c%context)
+        test_solver_interface = test_solver_interface .and. check_project_c_funptr( &
+            settings_c%stability_settings%project, "solver_py_interface", &
+            " by projection function of nested settings", settings_c%context)
+        call c_f_procpointer(cptr=settings_c%stability_settings%logger, &
+                             fptr=logger_funptr)
+        call logger_funptr(message, settings_c%context)
+
         ! check optional settings against reference values
         if (settings_c /= ref_solver_settings) then
             write(stderr, *) "test_solver_py_interface failed: Passed settings "// &
@@ -111,7 +132,7 @@ contains
         ! this function is a mock routine for the stability check C wrapper
         ! subroutine
         !
-        use c_interface, only: stability_settings_type_c, logger_c_type
+        use c_interface, only: stability_settings_type_c, logger_c_type, hess_x_c_type
         use test_reference, only: tol_c, check_hess_x_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
                                   operator(/=)
@@ -126,10 +147,23 @@ contains
 
         real(c_rp), pointer :: kappa_ptr(:)
         procedure(logger_c_type), pointer :: logger_funptr
+        procedure(hess_x_c_type), pointer :: hess_x_funptr
         character(len=:), allocatable, target :: message
+        real(c_rp) :: x(n_param), hess_x(n_param)
 
         ! assume test passes
         test_stability_check_interface = .true.
+
+        ! apply the Hessian linear transformation once and return its error as the
+        ! stability check would, so that a test can check how an error of a callback
+        ! function is reported
+        x = 0.0_c_rp
+        call c_f_procpointer(cptr=hess_x_c_funptr, fptr=hess_x_funptr)
+        error_c = hess_x_funptr(x, hess_x, settings_c%context)
+        if (error_c /= 0) then
+            stable_c = .false.
+            return
+        end if
 
         ! check if Hessian diagonal is passed correctly
         if (any(abs(h_diag_c(:n_param_c) - 3.0_c_rp) > tol_c)) then
@@ -176,7 +210,7 @@ contains
         end if
 
         ! set return arguments
-        stable_c = .false.
+        stable_c = .true.
         if (c_associated(kappa_c_ptr)) then
             call c_f_pointer(kappa_c_ptr, kappa_ptr, [n_param])
             kappa_ptr = 1.0_c_rp

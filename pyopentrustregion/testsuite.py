@@ -324,6 +324,9 @@ class PyInterfaceUnitTests(unittest.TestCase):
         settings.project = mock_project
         settings.conv_check = mock_conv_check
         settings.logger = mock_logger
+        settings.stability_settings.precond = mock_precond
+        settings.stability_settings.project = mock_project
+        settings.stability_settings.logger = mock_logger
         for field_info in settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
             if (
@@ -376,8 +379,28 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "function was not reported."
             )
 
+        # a callback function that raises makes the solver fail with the exception as
+        # the cause of the reported error
+        def raising_obj_func(kappa):
+            raise ValueError("objective function failure")
+
+        settings.logger = mock_logger
+        callback_error_reported = False
+        try:
+            solver(raising_obj_func, mock_update_orbs, n_param, settings)
+        except RuntimeError as e:
+            callback_error_reported = isinstance(e.__cause__, ValueError)
+        if not callback_error_reported:
+            print(
+                " test_solver_py_interface failed: Exception raised by objective "
+                "function was not reported."
+            )
+
         self.assertTrue(
-            interface_passed and test_logger and logger_error_reported,
+            interface_passed
+            and test_logger
+            and logger_error_reported
+            and callback_error_reported,
             "test_solver_py_interface failed",
         )
         print(" test_solver_py_interface PASSED")
@@ -454,7 +477,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
 
         # check if returned variables are correct
-        if stable:
+        if not stable:
             print(
                 " test_stability_check_py_interface failed: Returned stability boolean "
                 "wrong."
@@ -484,12 +507,41 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "logging function was not reported."
             )
 
+        # call stability check python interface without a returned direction
+        settings.logger = mock_logger
+        stable_without_direction = stability_check(
+            h_diag, mock_hess_x, n_param, settings
+        )
+        if not stable_without_direction:
+            print(
+                " test_stability_check_py_interface failed: Returned stability boolean "
+                "wrong without returned direction."
+            )
+
+        # a callback function that raises makes the stability check fail with the
+        # exception as the cause of the reported error
+        def raising_hess_x(x, hess_x):
+            raise ValueError("Hessian linear transformation failure")
+
+        callback_error_reported = False
+        try:
+            stability_check(h_diag, raising_hess_x, n_param, settings)
+        except RuntimeError as e:
+            callback_error_reported = isinstance(e.__cause__, ValueError)
+        if not callback_error_reported:
+            print(
+                " test_stability_check_py_interface failed: Exception raised by "
+                "Hessian linear transformation was not reported."
+            )
+
         self.assertTrue(
             interface_passed
             and test_logger
-            and not stable
+            and stable
             and not wrong_direction
-            and logger_error_reported,
+            and logger_error_reported
+            and stable_without_direction
+            and callback_error_reported,
             "test_stability_check_py_interface failed",
         )
         print(" test_stability_check_py_interface PASSED")
