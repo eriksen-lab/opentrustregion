@@ -46,9 +46,21 @@ module opentrustregion_unit_tests
     real(rp), parameter :: saddle_point(n_param) = &
         [0.35278250_rp, 0.59374767_rp, 0.47631257_rp, 0.40058250_rp, 0.31111531_rp, &
          0.32397158_rp]
+
+    ! points of 6D Hartmann function in the quadratic regions near the first minimum
+    ! and near the saddle point and a point far from both
+    real(rp), parameter :: near_minimum(n_param) = &
+        [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+    real(rp), parameter :: near_saddle_point(n_param) = &
+        [0.35_rp, 0.59_rp, 0.48_rp, 0.40_rp, 0.31_rp, 0.32_rp]
+    real(rp), parameter :: distant_point(n_param) = &
+        [0.9_rp, 0.1_rp, 0.7_rp, 0.2_rp, 0.6_rp, 0.4_rp]
+
     real(c_rp), bind(C, name="hartmann6d_minimum1") :: minimum1_c(n_param) = minimum1
     real(c_rp), bind(C, name="hartmann6d_saddle_point") :: saddle_point_c(n_param) = &
         saddle_point
+    real(c_rp), bind(C, name="hartmann6d_near_minimum") :: near_minimum_c(n_param) = &
+        near_minimum
 
     ! define type for the host context handed to the mock callback functions, which
     ! holds the messages passed to the mock logging function
@@ -217,7 +229,7 @@ contains
 
     subroutine hess_x_fun(x, hess_x, error, context)
         !
-        ! this function describes the Hessian linear transformation operation for the
+        ! this subroutine describes the Hessian linear transformation operation for the
         ! Hartmann 6D function
         !
         use test_reference, only: check_host_context
@@ -257,7 +269,7 @@ contains
 
     subroutine hess_x_fun_asymmetric(x, hess_x, error, context)
         !
-        ! this function describes the Hessian linear transformation operation for the
+        ! this subroutine describes the Hessian linear transformation operation for the
         ! Hartmann 6D function with a small antisymmetric contribution, which mimics
         ! numerical noise large enough that the Jacobi-Davidson method has to
         ! recalculate linear transformations which no longer respect Hessian symmetry
@@ -289,7 +301,7 @@ contains
 
     subroutine hess_x_fun_failing(x, hess_x, error, context)
         !
-        ! this function describes a Hessian linear transformation which always fails
+        ! this subroutine describes a Hessian linear transformation which always fails
         !
         use test_reference, only: check_host_context
 
@@ -371,7 +383,7 @@ contains
     subroutine update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, &
                            context)
         !
-        ! this function describes the orbital update equivalent for the Hartmann 6D
+        ! this subroutine describes the orbital update equivalent for the Hartmann 6D
         ! function
         !
         use opentrustregion, only: hess_x_type
@@ -417,7 +429,7 @@ contains
     subroutine update_orbs_no_hess_x(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                      error, context)
         !
-        ! this function describes an orbital update which reports success but does
+        ! this subroutine describes an orbital update which reports success but does
         ! not provide a Hessian linear transformation
         !
         use opentrustregion, only: hess_x_type
@@ -457,7 +469,7 @@ contains
     subroutine faulty_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                   error, context)
         !
-        ! this function describes the orbital update of the Hartmann 6D function into
+        ! this subroutine describes the orbital update of the Hartmann 6D function into
         ! which a fault can be injected, and which returns the Hessian linear
         ! transformation into which a fault can be injected
         !
@@ -501,7 +513,7 @@ contains
 
     subroutine faulty_hess_x(x, hess_x, error, context)
         !
-        ! this function describes the Hessian linear transformation of the Hartmann 6D
+        ! this subroutine describes the Hessian linear transformation of the Hartmann 6D
         ! function into which a fault can be injected
         !
         real(rp), intent(in), target :: x(:)
@@ -675,7 +687,7 @@ contains
 
     subroutine quadratic_hess_x(x, hess_x, error, context)
         !
-        ! this function describes the Hessian linear transformation operation for the
+        ! this subroutine describes the Hessian linear transformation operation for the
         ! quadratic model
         !
         use test_reference, only: check_host_context
@@ -729,8 +741,8 @@ contains
 
     subroutine identity_hess_x(x, hess_x, error, context)
         !
-        ! this function describes an identity Hessian linear transformation which needs
-        ! no test context
+        ! this subroutine describes an identity Hessian linear transformation which
+        ! needs no test context
         !
         use test_reference, only: check_host_context
 
@@ -791,7 +803,7 @@ contains
     subroutine stationary_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                       error, context)
         !
-        ! this function describes an orbital update at the minimum of a quadratic
+        ! this subroutine describes an orbital update at the minimum of a quadratic
         ! function with identity Hessian which needs no test context, since the
         ! gradient vanishes for every displacement passed to it here
         !
@@ -877,7 +889,7 @@ contains
 
     subroutine double_well_hess_x(x, hess_x, error, context)
         !
-        ! this function describes the Hessian linear transformation operation for the
+        ! this subroutine describes the Hessian linear transformation operation for the
         ! double well function
         !
         use test_reference, only: check_host_context
@@ -960,7 +972,7 @@ contains
     subroutine double_well_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                        error, context)
         !
-        ! this function describes the orbital update equivalent for the double well
+        ! this subroutine describes the orbital update equivalent for the double well
         ! function
         !
         use opentrustregion, only: hess_x_type
@@ -1388,7 +1400,7 @@ contains
 
     end subroutine ref_symm_mat_diag
 
-    function step_trust_radius(trust_radius, ratio)
+    function ref_step_trust_radius(trust_radius, ratio)
         !
         ! this function recovers the trust radius an accepted step was computed for
         ! from the trust radius and the ratio of actual to predicted function change of
@@ -1399,19 +1411,19 @@ contains
             trust_radius_shrink_factor, trust_radius_expand_factor
 
         real(rp), intent(in) :: trust_radius, ratio
-        real(rp) :: step_trust_radius
+        real(rp) :: ref_step_trust_radius
 
         if (ratio < trust_radius_shrink_ratio) then
-            step_trust_radius = trust_radius / trust_radius_shrink_factor
+            ref_step_trust_radius = trust_radius / trust_radius_shrink_factor
         else if (ratio < trust_radius_expand_ratio) then
-            step_trust_radius = trust_radius
+            ref_step_trust_radius = trust_radius
         else
-            step_trust_radius = trust_radius / trust_radius_expand_factor
+            ref_step_trust_radius = trust_radius / trust_radius_expand_factor
         end if
 
-    end function step_trust_radius
+    end function ref_step_trust_radius
 
-    logical function call_counts_match(context, test_name, case_name, n_hess_x, &
+    logical function check_call_counts(context, test_name, case_name, n_hess_x, &
                                        n_update_orbs)
         !
         ! this function checks that the counters reported by the library agree with
@@ -1422,24 +1434,24 @@ contains
         integer(ip), intent(in), optional :: n_hess_x, n_update_orbs
 
         ! assume test passes
-        call_counts_match = .true.
+        check_call_counts = .true.
 
         if (present(n_hess_x)) then
             if (n_hess_x /= context%n_hess_x_calls) then
                 write(stderr, *) "test_"//test_name//" failed: Reported number of "// &
                     "Hessian linear transformations wrong "//case_name//"."
-                call_counts_match = .false.
+                check_call_counts = .false.
             end if
         end if
         if (present(n_update_orbs)) then
             if (n_update_orbs /= context%n_update_orbs_calls) then
                 write(stderr, *) "test_"//test_name// &
                     " failed: Reported number of orbital updates wrong "//case_name//"."
-                call_counts_match = .false.
+                check_call_counts = .false.
             end if
         end if
 
-    end function call_counts_match
+    end function check_call_counts
 
     logical(c_bool) function test_solver() bind(C)
         !
@@ -1460,11 +1472,10 @@ contains
              error_project, error_conv_check]
         character(len=20) :: call_number
         type(hartmann6d_fault_context_type), target :: fault_context
-        real(rp), allocatable :: final_grad(:)
+        real(rp) :: final_grad(n_param)
         procedure(update_orbs_type), pointer :: update_orbs_funptr
         procedure(obj_func_type), pointer :: obj_func_funptr
         type(solver_settings_type) :: settings, uninitialized_settings
-        real(rp) :: start_vars(n_param)
         type(hartmann6d_recording_context_type), target :: context
         type(double_well_context_type), target :: double_well_context
 
@@ -1473,10 +1484,6 @@ contains
 
         ! initialize settings
         call settings%init(error)
-        settings%context => context
-
-        ! allocate space for the final gradient
-        allocate(final_grad(n_param))
 
         ! start at saddle point
         context%vars = saddle_point
@@ -1513,7 +1520,7 @@ contains
             test_solver = .false.
         end if
         test_solver = test_solver .and. logical( &
-            call_counts_match(context, "solver", "at saddle point", &
+            check_call_counts(context, "solver", "at saddle point", &
                               n_update_orbs=settings%n_update_orbs), kind=c_bool)
         if (settings%max_precision_reached) then
             write(stderr, *) "test_solver failed: Flagged that maximum precision "// &
@@ -1594,9 +1601,7 @@ contains
         ! force non-convergence by allowing only a single macro iteration from a
         ! generic starting point and check that the specific maximum iteration error
         ! code is returned
-        context%vars = [0.9_rp, 0.1_rp, 0.7_rp, 0.2_rp, 0.6_rp, 0.4_rp]
-        update_orbs_funptr => update_orbs
-        obj_func_funptr => obj_func
+        context%vars = distant_point
         call settings%init(error)
         settings%n_macro = 1
         context%n_update_orbs_calls = 0
@@ -1622,21 +1627,20 @@ contains
             test_solver = .false.
         end if
         test_solver = test_solver .and. logical( &
-            call_counts_match(context, "solver", "when exceeding n_macro", &
+            check_call_counts(context, "solver", "when exceeding n_macro", &
                               n_update_orbs=settings%n_update_orbs), kind=c_bool)
 
         ! force the maximum precision heuristic to trigger by requesting a convergence
         ! tolerance that floating-point noise in the gradient can never satisfy
-        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
-        update_orbs_funptr => update_orbs
-        obj_func_funptr => obj_func
+        context%vars = near_minimum
         call settings%init(error)
         settings%context => context
         settings%conv_tol = 0.0_rp
         settings%subsystem_solver = "tcg"
 
         ! run solver, check that it still returns without error while flagging this in
-        ! the settings object, the final macro iteration does not update the orbitals
+        ! the settings object and that the reported number of orbital updates agrees
+        ! with the calls
         context%n_update_orbs_calls = 0
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
@@ -1650,12 +1654,12 @@ contains
             test_solver = .false.
         end if
         test_solver = test_solver .and. logical( &
-            call_counts_match(context, "solver", "when maximum precision is reached", &
+            check_call_counts(context, "solver", "when maximum precision is reached", &
                               n_update_orbs=settings%n_update_orbs), kind=c_bool)
 
         ! run solver again on the same settings object but stop it before convergence
         ! and check that the maximum precision flag is reset
-        context%vars = [0.9_rp, 0.1_rp, 0.7_rp, 0.2_rp, 0.6_rp, 0.4_rp]
+        context%vars = distant_point
         settings%conv_tol = default_settings%conv_tol
         settings%n_macro = 1
         call setup_error_logging(settings, context)
@@ -1679,7 +1683,7 @@ contains
         ! force the maximum precision heuristic to trigger again but let the
         ! convergence check pass in that same macro iteration, convergence then takes
         ! precedence and maximum precision is not flagged
-        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        context%vars = near_minimum
         call settings%init(error)
         settings%context => context
         settings%conv_tol = 0.0_rp
@@ -1700,10 +1704,7 @@ contains
 
         ! run solver with a convergence check which always passes, the solver stops at
         ! the first check without taking a step
-        start_vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
-        context%vars = start_vars
-        update_orbs_funptr => update_orbs
-        obj_func_funptr => obj_func
+        context%vars = near_minimum
         call settings%init(error)
         settings%context => context
         settings%conv_check => mock_conv_check
@@ -1713,7 +1714,7 @@ contains
                 "check passes."
             test_solver = .false.
         end if
-        if (any(abs(context%vars - start_vars) > tol)) then
+        if (any(abs(context%vars - near_minimum) > tol)) then
             write(stderr, *) "test_solver failed: Solver did not stop when "// &
                 "convergence check passed."
             test_solver = .false.
@@ -1722,9 +1723,8 @@ contains
         ! run solver, an orbital update which succeeds without providing a Hessian
         ! linear transformation is reported as an orbital update error, the orbital
         ! update is still counted
-        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        context%vars = near_minimum
         update_orbs_funptr => update_orbs_no_hess_x
-        obj_func_funptr => obj_func
         call settings%init(error)
         context%n_update_orbs_calls = 0
         call setup_error_logging(settings, context)
@@ -1739,7 +1739,7 @@ contains
                 "missing Hessian linear transformation."
             test_solver = .false.
         end if
-        test_solver = test_solver .and. logical(call_counts_match( &
+        test_solver = test_solver .and. logical(check_call_counts( &
             context, "solver", "for missing Hessian linear transformation", &
             n_update_orbs=settings%n_update_orbs), kind=c_bool)
 
@@ -1763,7 +1763,7 @@ contains
         obj_func_funptr => obj_func
 
         ! check that the line search brackets the step starting from a vanishing step
-        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        context%vars = near_minimum
         call settings%init(error)
         settings%context => context
         settings%line_search = .true.
@@ -1787,7 +1787,7 @@ contains
         ! switch to Jacobi-Davidson from the first micro iteration and check that the
         ! printed iterations split the micro iterations into Davidson and
         ! Jacobi-Davidson ones, which shows as zero Davidson micro iterations
-        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        context%vars = near_minimum
         call setup_settings(settings, context)
         settings%subsystem_solver = "jacobi-davidson"
         settings%jacobi_davidson_start = 0
@@ -1805,7 +1805,7 @@ contains
         ! check that the truncated conjugate gradient solver is used instead of the
         ! Davidson solvers, whose first trial vector is the normalized gradient, and
         ! that the reported step size is measured with the preconditioner
-        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        context%vars = near_minimum
         call settings%init(error)
         settings%context => context
         settings%subsystem_solver = "tcg"
@@ -1888,7 +1888,7 @@ contains
                         test_solver = .false.
                         exit
                     end if
-                    if (.not. call_counts_match( &
+                    if (.not. check_call_counts( &
                         fault_context, "solver", &
                         "for failing "//trim(fault_callback_names(callback))// &
                         " at call "//trim(call_number)//" with "// &
@@ -1901,9 +1901,6 @@ contains
                 end do
             end do
         end do
-
-        ! deallocate space for the gradient
-        deallocate(final_grad)
 
     contains
 
@@ -1986,12 +1983,12 @@ contains
         call settings%init(error)
         settings%context => context
 
-        ! run stability, check if error has occured check and determine whether minimum
+        ! run stability check, check if error has occured and determine whether minimum
         ! is stable and the returned direction vanishes
         context%n_hess_x_calls = 0
         call stability_check(h_diag, hess_x_funptr, stable, error, settings, direction)
         if (error /= 0) then
-            write(stderr, *) "test_stability_check failed: Produced error."
+            write(stderr, *) "test_stability_check failed: Produced error for minimum."
             test_stability_check = .false.
         end if
         if (.not. stable) then
@@ -2001,11 +1998,12 @@ contains
         end if
         if (any(abs(direction) > tol)) then
             write(stderr, *) "test_stability_check failed: Stability check does "// &
-                "not return zero vector for minimum"
+                "not return zero vector for minimum."
             test_stability_check = .false.
         end if
-        test_stability_check = test_stability_check .and. logical(call_counts_match( &
-            context, "stability_check", "for minimum", settings%n_hess_x), kind=c_bool)
+        test_stability_check = test_stability_check .and. logical(check_call_counts( &
+            context, "stability_check", "for minimum", n_hess_x=settings%n_hess_x), &
+            kind=c_bool)
 
         ! start at saddle point and determine Hessian diagonal, define linear
         ! transformation and determine the eigenvector of the lowest Hessian eigenvalue
@@ -2026,7 +2024,8 @@ contains
         context%log_message = ""
         call stability_check(h_diag, hess_x_funptr, stable, error, settings, direction)
         if (error /= 0) then
-            write(stderr, *) "test_stability_check failed: Produced error."
+            write(stderr, *) "test_stability_check failed: Produced error for "// &
+                "saddle point."
             test_stability_check = .false.
         end if
         if (stable) then
@@ -2045,9 +2044,9 @@ contains
                 "saddle point."
             test_stability_check = .false.
         end if
-        test_stability_check = test_stability_check .and. logical(call_counts_match( &
-            context, "stability_check", "for saddle point", settings%n_hess_x), &
-            kind=c_bool)
+        test_stability_check = test_stability_check .and. logical( &
+            check_call_counts(context, "stability_check", "for saddle point", &
+                              n_hess_x=settings%n_hess_x), kind=c_bool)
 
         ! force non-convergence by allowing only a single iteration and check that the
         ! specific maximum iteration error code is returned
@@ -2118,9 +2117,9 @@ contains
                 "Jacobi-Davidson method."
             test_stability_check = .false.
         end if
-        test_stability_check = test_stability_check .and. logical(call_counts_match( &
+        test_stability_check = test_stability_check .and. logical(check_call_counts( &
             context, "stability_check", "with Jacobi-Davidson method", &
-            settings%n_hess_x), kind=c_bool)
+            n_hess_x=settings%n_hess_x), kind=c_bool)
 
         ! check that the Jacobi-Davidson method is used neither by the Davidson method
         ! nor before the iteration at which it is requested to start, which the
@@ -2220,7 +2219,7 @@ contains
                         test_stability_check = .false.
                         exit
                     end if
-                    if (.not. call_counts_match( &
+                    if (.not. check_call_counts( &
                         fault_context, "stability_check", "for failing "// &
                         trim(fault_callback_names(fault_callbacks(callback)))// &
                         " at call "//trim(call_number)//" with "// &
@@ -2544,15 +2543,15 @@ contains
 
         type(solver_settings_type) :: settings
         integer(ip), parameter :: n_trial = 3
-        real(rp) :: red_space_basis(n_param, n_trial), vars(n_param), grad(n_param), &
-                    grad_norm, aug_hess(n_trial + 1, n_trial + 1), &
+        real(rp) :: red_space_basis(n_param, n_trial), grad(n_param), grad_norm, &
+                    hess(n_param, n_param), aug_hess(n_trial + 1, n_trial + 1), &
                     red_space_hess_eigvals(n_trial), &
                     red_space_hess_eigvecs(n_trial, n_trial), solution(n_param), &
                     red_space_solution(n_trial), trust_radius, mu, &
                     grad_coupled_component, newton_solution(n_param), &
-                    newton_red_space_solution(n_trial), red_space_grad(n_trial)
-        integer(ip) :: i, j, error
-        type(hartmann6d_context_type), target :: context
+                    newton_red_space_solution(n_trial)
+        integer(ip) :: error
+        type(test_context_type), target :: context
 
         ! assume tests pass
         test_bisection = .true.
@@ -2560,92 +2559,30 @@ contains
         ! setup settings object
         call setup_settings(settings, context)
 
-        ! defined a reduced space basis
+        ! define an orthonormal reduced space basis whose first vector is not the
+        ! gradient direction
         red_space_basis = reshape( &
             [1.0_rp / sqrt(2.0_rp), -1.0_rp / sqrt(2.0_rp), 0.0_rp, 0.0_rp, 0.0_rp, &
-             0.0_rp, 1.0_rp / sqrt(6.0_rp), -1.0_rp / sqrt(6.0_rp), &
+             0.0_rp, 1.0_rp / sqrt(6.0_rp), 1.0_rp / sqrt(6.0_rp), &
              -2.0_rp / sqrt(6.0_rp), 0.0_rp, 0.0_rp, 0.0_rp, 1.0_rp / sqrt(12.0_rp), &
-             -1.0_rp / sqrt(12.0_rp), 1.0_rp / sqrt(12.0_rp), -3.0_rp / sqrt(12.0_rp), &
+             1.0_rp / sqrt(12.0_rp), 1.0_rp / sqrt(12.0_rp), -3.0_rp / sqrt(12.0_rp), &
              0.0_rp, 0.0_rp], [n_param, n_trial])
 
         ! choose target trust radius
         trust_radius = 0.4_rp
 
-        ! point with strong negative curvature
-        vars = [0.29_rp, 0.47_rp, 0.66_rp, 0.41_rp, 0.23_rp, 0.26_rp]
+        ! project the Hessian at a point with strong negative curvature, where the
+        ! level shift has to be bisected
+        call set_up_reduced_hessian( &
+            [0.29_rp, 0.47_rp, 0.66_rp, 0.41_rp, 0.23_rp, 0.26_rp])
+        test_bisection = &
+            test_bisection .and. &
+            bisected_step_correct("at point with strong negative curvature")
 
-        ! calculate gradient and Hessian to define augmented Hessian
-        call hartmann6d_gradient(vars, grad)
-        grad_norm = norm2(grad)
-        context%hess = hartmann6d_hessian(vars)
-        aug_hess = 0.0_rp
-        do i = 1, n_trial
-            do j = 1, n_trial
-                aug_hess(i + 1, j + 1) = dot_product( &
-                    red_space_basis(:, i), matmul(context%hess, red_space_basis(:, j)))
-            end do
-        end do
-
-        ! diagonalize Hessian
-        call ref_symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
-                               red_space_hess_eigvecs)
-
-        ! perform bisection, check whether error has occured and determine whether
-        ! resulting solution respects target trust radius, solves the level-shifted
-        ! Newton equations in reduced space for a level shift below the lowest reduced
-        ! space Hessian eigenvalue and is correctly transformed to the full space
-        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
-                       red_space_hess_eigvecs, trust_radius, solution, &
-                       red_space_solution, mu, settings, error)
-        if (error /= 0) then
-            write(stderr, *) "test_bisection failed: Produced error."
-            test_bisection = .false.
-        end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
-            write(stderr, *) "test_bisection failed: Solution does not respect "// &
-                "trust radius."
-            test_bisection = .false.
-        end if
-        red_space_grad = 0.0_rp
-        red_space_grad(1) = grad_norm
-        if (any(abs(matmul(aug_hess(2:, 2:), red_space_solution) - &
-                    mu * red_space_solution + red_space_grad) > tol)) then
-            write(stderr, *) "test_bisection failed: Reduced space solution does "// &
-                "not solve level-shifted Newton equations."
-            test_bisection = .false.
-        end if
-        if (mu > minval(red_space_hess_eigvals)) then
-            write(stderr, *) "test_bisection failed: Level shift not below lowest "// &
-                "reduced space Hessian eigenvalue."
-            test_bisection = .false.
-        end if
-        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
-            write(stderr, *) "test_bisection failed: Full space solution not correct."
-            test_bisection = .false.
-        end if
-
-        ! point in quadratic region near minimum
-        vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
-
-        ! calculate gradient and Hessian to define augmented Hessian
-        call hartmann6d_gradient(vars, grad)
-        grad_norm = norm2(grad)
-        context%hess = hartmann6d_hessian(vars)
-        aug_hess = 0.0_rp
-        do i = 1, n_trial
-            do j = 1, n_trial
-                aug_hess(i + 1, j + 1) = dot_product( &
-                    red_space_basis(:, i), matmul(context%hess, red_space_basis(:, j)))
-            end do
-        end do
-
-        ! diagonalize Hessian
-        call ref_symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
-                               red_space_hess_eigvecs)
-
-        ! perform bisection and determine whether routine correctly falls back to the
-        ! Newton step since the minimum is closer than the target trust radius and no
-        ! level shift is necessary
+        ! project the Hessian in the quadratic region near minimum and determine
+        ! whether routine correctly falls back to the Newton step since the minimum is
+        ! closer than the target trust radius and no level shift is necessary
+        call set_up_reduced_hessian(near_minimum)
         call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
                        red_space_hess_eigvecs, trust_radius, solution, &
                        red_space_solution, mu, settings, error)
@@ -2685,73 +2622,18 @@ contains
         red_space_basis(3, 3) = 1.0_rp
         grad_norm = 0.1_rp
         trust_radius = 0.5_rp
-        aug_hess = 0.0_rp
-        aug_hess(2, 2) = -10.0_rp
-        aug_hess(3, 3) = 2.0_rp
-        aug_hess(4, 4) = 3.0_rp
+        call set_up_diagonal_reduced_hessian([-10.0_rp, 2.0_rp, 3.0_rp])
+        test_bisection = test_bisection .and. &
+                         bisected_step_correct("when alpha has to be increased")
 
-        ! diagonalize Hessian
-        call ref_symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
-                               red_space_hess_eigvecs)
-
-        ! perform bisection, check whether error has occured and determine whether
-        ! resulting solution respects target trust radius, solves the level-shifted
-        ! Newton equations in reduced space for a level shift below the lowest reduced
-        ! space Hessian eigenvalue and is correctly transformed to the full space
-        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
-                       red_space_hess_eigvecs, trust_radius, solution, &
-                       red_space_solution, mu, settings, error)
-        if (error /= 0) then
-            write(stderr, *) "test_bisection failed: Produced error when alpha has "// &
-                "to be increased."
-            test_bisection = .false.
-        end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
-            write(stderr, *) "test_bisection failed: Solution does not respect "// &
-                "trust radius when alpha has to be increased."
-            test_bisection = .false.
-        end if
-        red_space_grad = 0.0_rp
-        red_space_grad(1) = grad_norm
-        if (any(abs(matmul(aug_hess(2:, 2:), red_space_solution) - &
-                    mu * red_space_solution + red_space_grad) > tol)) then
-            write(stderr, *) "test_bisection failed: Reduced space solution does "// &
-                "not solve level-shifted Newton equations when alpha has to be "// &
-                "increased."
-            test_bisection = .false.
-        end if
-        if (mu > minval(red_space_hess_eigvals)) then
-            write(stderr, *) "test_bisection failed: Level shift not below lowest "// &
-                "reduced space Hessian eigenvalue when alpha has to be increased."
-            test_bisection = .false.
-        end if
-        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
-            write(stderr, *) "test_bisection failed: Full space solution not "// &
-                "correct when alpha has to be increased."
-            test_bisection = .false.
-        end if
-
-        ! set up hard case by using an orthonormal basis as this is what the hard case
-        ! step assumes
-        red_space_basis = 0.0_rp
-        red_space_basis(1, 1) = 1.0_rp
-        red_space_basis(2, 2) = 1.0_rp
-        red_space_basis(3, 3) = 1.0_rp
+        ! set up hard case, in which the lowest reduced space Hessian eigenvalue is
+        ! negative and its eigenvector has no component along the gradient direction,
+        ! so that no level shift can reproduce the trust region solution and it must be
+        ! constructed directly from the eigendecomposition, the hard case step assumes
+        ! an orthonormal basis
         grad_norm = 1.0_rp
         trust_radius = 0.6_rp
-        aug_hess = 0.0_rp
-        aug_hess(2, 2) = 5.0_rp
-        aug_hess(3, 3) = -2.0_rp
-        aug_hess(4, 4) = 3.0_rp
-
-        ! diagonalize Hessian
-        call ref_symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
-                               red_space_hess_eigvecs)
-
-        ! test hard case: lowest reduced space Hessian eigenvalue is negative and its
-        ! eigenvector has no component along the gradient direction, so no level shift
-        ! can reproduce the trust region solution and it must be constructed directly
-        ! from the eigendecomposition
+        call set_up_diagonal_reduced_hessian([5.0_rp, -2.0_rp, 3.0_rp])
         call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
                        red_space_hess_eigvecs, trust_radius, solution, &
                        red_space_solution, mu, settings, error)
@@ -2785,61 +2667,19 @@ contains
         end if
 
         ! test hard case with a trust radius below the norm of the solution at the
-        ! crossover point grad_norm / (5 - (-2)), where the solution cannot be filled up
-        ! with the lowest eigenvector and the level shift is instead bisected starting
-        ! from the crossover point, so that the solution lies at the trust region
-        ! boundary, solves the level-shifted Newton equations and has a level shift
-        ! strictly below the lowest reduced space Hessian eigenvalue
+        ! crossover point grad_norm / (5 - (-2)), where the solution cannot be filled
+        ! up with the lowest eigenvector and the level shift is instead bisected
+        ! starting from the crossover point
         trust_radius = 0.1_rp
-        call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
-                       red_space_hess_eigvecs, trust_radius, solution, &
-                       red_space_solution, mu, settings, error)
-        if (error /= 0) then
-            write(stderr, *) "test_bisection failed: Produced error for hard case "// &
-                "with trust radius below crossover point."
-            test_bisection = .false.
-        end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
-            write(stderr, *) "test_bisection failed: Hard case solution does not "// &
-                "respect trust radius below crossover point."
-            test_bisection = .false.
-        end if
-        red_space_grad = 0.0_rp
-        red_space_grad(1) = grad_norm
-        if (norm2(matmul(aug_hess(2:, 2:), red_space_solution) - &
-                  mu * red_space_solution + red_space_grad) > tol) then
-            write(stderr, *) "test_bisection failed: Hard case solution does not "// &
-                "solve level-shifted Newton equations with trust radius below "// &
-                "crossover point."
-            test_bisection = .false.
-        end if
-        if (mu >= minval(red_space_hess_eigvals)) then
-            write(stderr, *) "test_bisection failed: Hard case level shift not "// &
-                "below lowest reduced space Hessian eigenvalue with trust radius "// &
-                "below crossover point."
-            test_bisection = .false.
-        end if
-        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
-            write(stderr, *) "test_bisection failed: Hard case full space solution "// &
-                "not correct with trust radius below crossover point."
-            test_bisection = .false.
-        end if
+        test_bisection = test_bisection .and. bisected_step_correct( &
+            "for hard case with trust radius below crossover point")
 
-        ! set up hard case with degenerate lowest eigenvalues
-        trust_radius = 0.5_rp
-        aug_hess = 0.0_rp
-        aug_hess(2, 2) = 5.0_rp
-        aug_hess(3, 3) = -2.0_rp
-        aug_hess(4, 4) = -2.0_rp
-
-        ! diagonalize Hessian
-        call ref_symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
-                               red_space_hess_eigvecs)
-
-        ! test hard case with a degenerate lowest eigenvalue: the eigenvector spanning
+        ! set up hard case with degenerate lowest eigenvalues, the eigenvector spanning
         ! the degenerate subspace used to fill the trust radius is not uniquely
-        ! defined,so only invariant properties of the solution are checked rather than
+        ! defined, so only invariant properties of the solution are checked rather than
         ! exact reduced space solution components
+        trust_radius = 0.5_rp
+        call set_up_diagonal_reduced_hessian([5.0_rp, -2.0_rp, -2.0_rp])
         call bisection(aug_hess, grad_norm, red_space_basis, red_space_hess_eigvals, &
                        red_space_hess_eigvecs, trust_radius, solution, &
                        red_space_solution, mu, settings, error)
@@ -2876,6 +2716,96 @@ contains
                 "space solution not correct."
             test_bisection = .false.
         end if
+
+    contains
+
+        subroutine set_up_reduced_hessian(vars)
+            !
+            ! this subroutine sets the gradient norm and the augmented Hessian with
+            ! the Hartmann 6D Hessian at a point projected onto the reduced space and
+            ! diagonalizes the reduced space Hessian
+            !
+            real(rp), intent(in) :: vars(n_param)
+
+            call hartmann6d_gradient(vars, grad)
+            grad_norm = norm2(grad)
+            hess = hartmann6d_hessian(vars)
+            aug_hess = 0.0_rp
+            aug_hess(2:, 2:) = matmul(transpose(red_space_basis), &
+                                      matmul(hess, red_space_basis))
+            call ref_symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                   red_space_hess_eigvecs)
+
+        end subroutine set_up_reduced_hessian
+
+        subroutine set_up_diagonal_reduced_hessian(diagonal)
+            !
+            ! this subroutine sets the augmented Hessian with a diagonal reduced space
+            ! Hessian and diagonalizes the reduced space Hessian
+            !
+            real(rp), intent(in) :: diagonal(n_trial)
+
+            integer(ip) :: i_diag
+
+            aug_hess = 0.0_rp
+            do i_diag = 1, n_trial
+                aug_hess(i_diag + 1, i_diag + 1) = diagonal(i_diag)
+            end do
+            call ref_symm_mat_diag(aug_hess(2:, 2:), red_space_hess_eigvals, &
+                                   red_space_hess_eigvecs)
+
+        end subroutine set_up_diagonal_reduced_hessian
+
+        logical function bisected_step_correct(case_name)
+            !
+            ! this function performs bisection and checks whether error has occured
+            ! and whether the resulting solution respects the target trust radius,
+            ! solves the level-shifted Newton equations in reduced space for a level
+            ! shift below the lowest reduced space Hessian eigenvalue and is correctly
+            ! transformed to the full space
+            !
+            character(len=*), intent(in) :: case_name
+
+            real(rp) :: red_space_grad(n_trial)
+
+            ! assume test passes
+            bisected_step_correct = .true.
+
+            call bisection(aug_hess, grad_norm, red_space_basis, &
+                           red_space_hess_eigvals, red_space_hess_eigvecs, &
+                           trust_radius, solution, red_space_solution, mu, settings, &
+                           error)
+            if (error /= 0) then
+                write(stderr, *) "test_bisection failed: Produced error "//case_name// &
+                    "."
+                bisected_step_correct = .false.
+            end if
+            if (abs(norm2(solution) - trust_radius) > tol) then
+                write(stderr, *) "test_bisection failed: Solution does not respect "// &
+                    "trust radius "//case_name//"."
+                bisected_step_correct = .false.
+            end if
+            red_space_grad = 0.0_rp
+            red_space_grad(1) = grad_norm
+            if (norm2(matmul(aug_hess(2:, 2:), red_space_solution) - &
+                      mu * red_space_solution + red_space_grad) > tol) then
+                write(stderr, *) "test_bisection failed: Reduced space solution "// &
+                    "does not solve level-shifted Newton equations "//case_name//"."
+                bisected_step_correct = .false.
+            end if
+            if (mu >= minval(red_space_hess_eigvals)) then
+                write(stderr, *) "test_bisection failed: Level shift not below "// &
+                    "lowest reduced space Hessian eigenvalue "//case_name//"."
+                bisected_step_correct = .false.
+            end if
+            if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > &
+                    tol)) then
+                write(stderr, *) "test_bisection failed: Full space solution not "// &
+                    "correct "//case_name//"."
+                bisected_step_correct = .false.
+            end if
+
+        end function bisected_step_correct
 
     end function test_bisection
 
@@ -3149,7 +3079,7 @@ contains
         !
         use opentrustregion, only: init_rng
 
-        integer(ip) :: seed1, seed2, i
+        integer(ip) :: seed1, seed2
         real(rp) :: rand_seq1(5), rand_seq2(5), rand_seq3(5)
 
         ! assume tests pass
@@ -3161,21 +3091,15 @@ contains
 
         ! call rng with first seed
         call init_rng(seed1)
-        do i = 1, 5
-            call random_number(rand_seq1(i))
-        end do
+        call random_number(rand_seq1)
 
         ! call rng with first seed
         call init_rng(seed1)
-        do i = 1, 5
-            call random_number(rand_seq2(i))
-        end do
+        call random_number(rand_seq2)
 
         ! call rng with second seed
         call init_rng(seed2)
-        do i = 1, 5
-            call random_number(rand_seq3(i))
-        end do
+        call random_number(rand_seq3)
 
         ! check reproducibility
         if (any(abs(rand_seq1 - rand_seq2) > tol)) then
@@ -3577,16 +3501,19 @@ contains
         ! orthonormalized
         call gram_schmidt(vector, space, settings, error)
         if (error /= 0) then
-            write(stderr, *) "test_gram_schmidt failed: Produced error."
+            write(stderr, *) "test_gram_schmidt failed: Produced error without "// &
+                "linear transformation."
             test_gram_schmidt = .false.
         end if
         if (abs(dot_product(vector, space(:, 1))) > tol .or. &
             abs(dot_product(vector, space(:, 2))) > tol) then
-            write(stderr, *) "test_gram_schmidt failed: Added vector not orthogonal."
+            write(stderr, *) "test_gram_schmidt failed: Added vector not "// &
+                "orthogonal without linear transformation."
             test_gram_schmidt = .false.
         end if
         if (abs(norm2(vector) - 1.0_rp) > tol) then
-            write(stderr, *) "test_gram_schmidt failed: Added vector not normalized."
+            write(stderr, *) "test_gram_schmidt failed: Added vector not "// &
+                "normalized without linear transformation."
             test_gram_schmidt = .false.
         end if
 
@@ -3603,19 +3530,22 @@ contains
         call gram_schmidt(vector, space, settings, error, lin_trans_vector, &
                           lin_trans_space)
         if (error /= 0) then
-            write(stderr, *) "test_gram_schmidt failed: Produced error."
+            write(stderr, *) "test_gram_schmidt failed: Produced error with linear "// &
+                "transformation."
             test_gram_schmidt = .false.
         end if
         if (abs(dot_product(vector, space(:, 1))) > tol .or. &
             abs(dot_product(vector, space(:, 2))) > tol) then
-            write(stderr, *) "test_gram_schmidt failed: Added vector not orthogonal."
+            write(stderr, *) "test_gram_schmidt failed: Added vector not "// &
+                "orthogonal with linear transformation."
             test_gram_schmidt = .false.
         end if
         if (abs(norm2(vector) - 1.0_rp) > tol) then
-            write(stderr, *) "test_gram_schmidt failed: Added vector not normalized."
+            write(stderr, *) "test_gram_schmidt failed: Added vector not "// &
+                "normalized with linear transformation."
             test_gram_schmidt = .false.
         end if
-        if (abs(sum(abs(lin_trans_vector - matmul(symm_matrix, vector)))) > tol) then
+        if (norm2(lin_trans_vector - matmul(symm_matrix, vector)) > tol) then
             write(stderr, *) "test_gram_schmidt failed: Added linear "// &
                 "transformation not correct."
             test_gram_schmidt = .false.
@@ -3677,9 +3607,8 @@ contains
         end if
 
         ! define vector in space that is already complete
-        vector_small = [1.0_rp, 2.0_rp]
-        space_small(:, 1) = [1.0_rp, 0.0_rp]
-        space_small(:, 2) = [0.0_rp, 1.0_rp]
+        call random_number(vector_small)
+        space_small = identity_matrix(2_ip)
 
         ! perform Gram-Schmidt orthogonalization and determine if function correctly
         ! returns an error and prints an error message
@@ -4115,7 +4044,7 @@ contains
             test_jacobi_davidson_correction = .false.
         end if
         test_jacobi_davidson_correction = &
-            test_jacobi_davidson_correction .and. logical(call_counts_match( &
+            test_jacobi_davidson_correction .and. logical(check_call_counts( &
                 context, "jacobi_davidson_correction", "for valid input", &
                 n_hess_x=settings%n_hess_x), kind=c_bool)
 
@@ -4133,7 +4062,7 @@ contains
             test_jacobi_davidson_correction = .false.
         end if
         test_jacobi_davidson_correction = &
-            test_jacobi_davidson_correction .and. logical(call_counts_match( &
+            test_jacobi_davidson_correction .and. logical(check_call_counts( &
                 context, "jacobi_davidson_correction", "for failing Hessian linear "// &
                 "transformation", n_hess_x=settings%n_hess_x), kind=c_bool)
 
@@ -4147,10 +4076,10 @@ contains
 
         type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
-        real(rp), dimension(n_param) :: vars, rhs, solution, vector, hess_vector, &
+        real(rp), dimension(n_param) :: rhs, solution, vector, hess_vector, &
                                         corr_vector, guess
         real(rp) :: mu
-        real(rp), parameter :: rtol = 1e-14_rp
+        real(rp), parameter :: minres_tol = 1e-14_rp
         integer(ip) :: error
         type(hartmann6d_context_type), target :: context
 
@@ -4160,14 +4089,10 @@ contains
         ! setup settings object
         call setup_settings(settings, context)
 
-        ! define point near saddle point
-        vars = [0.35_rp, 0.59_rp, 0.48_rp, 0.40_rp, 0.31_rp, 0.32_rp]
-
-        ! define solution to be projected out
-        solution = [1.0_rp, 2.0_rp, 3.0_rp, 4.0_rp, 5.0_rp, 6.0_rp] / sqrt(91.0_rp)
-
-        ! generate Hessian
-        context%hess = hartmann6d_hessian(vars)
+        ! generate normalized solution to be projected out and symmetric Hessian
+        call random_number(solution)
+        solution = solution / norm2(solution)
+        context%hess = generate_random_symm_matrix(n_param)
 
         ! define Hessian linear transformation
         hess_x_funptr => hess_x_fun
@@ -4185,10 +4110,11 @@ contains
         ! orthogonal to the solution vector and consequently the Hessian linear
         ! transformation of the projected vector is equivalent to the Hessian linear
         ! transformation of the vector itself
-        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
-                    settings, error)
+        call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
+                    hess_vector, settings, error)
         if (error /= 0) then
-            write(stderr, *) "test_minres failed: Returned error."
+            write(stderr, *) "test_minres failed: Returned error for correction "// &
+                "equation."
             test_minres = .false.
         end if
         corr_vector = vector - dot_product(vector, solution) * solution
@@ -4208,10 +4134,10 @@ contains
 
         ! run minimum residual method for vanishing right hand side
         rhs = 0.0_rp
-        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
-                    settings, error)
+        call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
+                    hess_vector, settings, error)
         if (error /= 0) then
-            write(stderr, *) "test_minres failed: Returned error."
+            write(stderr, *) "test_minres failed: Returned error for vanishing rhs."
             test_minres = .false.
         end if
         if (sum(abs(vector)) > tol) then
@@ -4228,11 +4154,11 @@ contains
         ! run minimum residual method from an initial guess which only partially solves
         ! the Jacobi-Davidson correction equation and check if the equation is solved
         rhs = matmul(context%hess, solution) - mu * solution
-        call minres(-rhs, hess_x_funptr, solution, mu, rtol, guess, hess_vector, &
+        call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, guess, hess_vector, &
                     settings, error)
         guess = 0.5_rp * guess
-        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
-                    settings, error, guess=guess)
+        call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
+                    hess_vector, settings, error, guess=guess)
         if (error /= 0) then
             write(stderr, *) "test_minres failed: Returned error for initial guess."
             test_minres = .false.
@@ -4254,8 +4180,8 @@ contains
         corr_vector = matmul(context%hess, guess) - mu * guess
         rhs = -(corr_vector - dot_product(corr_vector, solution) * solution)
         context%n_hess_x_calls = 0
-        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
-                    settings, error, guess=guess)
+        call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
+                    hess_vector, settings, error, guess=guess)
         if (error /= 0) then
             write(stderr, *) "test_minres failed: Returned error for initial guess "// &
                 "which solves the equation."
@@ -4270,8 +4196,8 @@ contains
         ! allow only a single iteration and check that an error is returned and an
         ! error message is printed when the iteration limit is reached
         call setup_error_logging(settings, context)
-        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
-                    settings, error, max_iter=1_ip)
+        call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
+                    hess_vector, settings, error, max_iter=1_ip)
         if (error == 0) then
             write(stderr, *) "test_minres failed: No error returned when iteration "// &
                 "limit is reached."
@@ -4286,8 +4212,8 @@ contains
         ! run minimum residual method from an initial guess for a vanishing right hand
         ! side and check that the solution and its Hessian linear transformation vanish
         rhs = 0.0_rp
-        call minres(-rhs, hess_x_funptr, solution, mu, rtol, vector, hess_vector, &
-                    settings, error, guess=guess)
+        call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
+                    hess_vector, settings, error, guess=guess)
         if (error /= 0) then
             write(stderr, *) "test_minres failed: Returned error for initial guess "// &
                 "and vanishing rhs."
@@ -4378,8 +4304,8 @@ contains
                 "transformation of new trial vector wrong for Davidson."
             test_add_trial_vector = .false.
         end if
-        test_add_trial_vector = test_add_trial_vector .and. logical(call_counts_match( &
-            context, "add_trial_vector", "for Davidson", settings%n_hess_x), &
+        test_add_trial_vector = test_add_trial_vector .and. logical(check_call_counts( &
+            context, "add_trial_vector", "for Davidson", n_hess_x=settings%n_hess_x), &
             kind=c_bool)
 
         ! add trial vector from Jacobi-Davidson correction equations for the first
@@ -4433,9 +4359,9 @@ contains
                 "transformation of new trial vector wrong for Jacobi-Davidson."
             test_add_trial_vector = .false.
         end if
-        test_add_trial_vector = test_add_trial_vector .and. logical(call_counts_match( &
-            context, "add_trial_vector", "for Jacobi-Davidson", settings%n_hess_x), &
-            kind=c_bool)
+        test_add_trial_vector = test_add_trial_vector .and. logical( &
+            check_call_counts(context, "add_trial_vector", "for Jacobi-Davidson", &
+                              n_hess_x=settings%n_hess_x), kind=c_bool)
 
         ! repeat with a slightly asymmetric Hessian linear transformation, whose new
         ! linear transformation then no longer respects Hessian symmetry with respect
@@ -4550,9 +4476,9 @@ contains
                 "of failing Hessian linear transformation."
             test_add_trial_vector = .false.
         end if
-        test_add_trial_vector = test_add_trial_vector .and. logical(call_counts_match( &
+        test_add_trial_vector = test_add_trial_vector .and. logical(check_call_counts( &
             context, "add_trial_vector", "for failing Hessian linear transformation", &
-            settings%n_hess_x), kind=c_bool)
+            n_hess_x=settings%n_hess_x), kind=c_bool)
 
     end function test_add_trial_vector
 
@@ -4687,12 +4613,12 @@ contains
                 trim(substrings(2)) /= "a test" .or. &
                 trim(substrings(3)) /= "message.") then
                 write(stderr, *) "test_split_string_by_space failed: Split strings "// &
-                    "incorrect."
+                    "incorrect when splitting on spaces."
                 test_split_string_by_space = .false.
             end if
         else
             write(stderr, *) "test_split_string_by_space failed: Number of "// &
-                "substrings incorrect."
+                "substrings incorrect when splitting on spaces."
             test_split_string_by_space = .false.
         end if
 
@@ -4703,12 +4629,12 @@ contains
                 trim(substrings(3)) /= "test" .or. trim(substrings(4)) /= "messa" .or. &
                 trim(substrings(5)) /= "ge.") then
                 write(stderr, *) "test_split_string_by_space failed: Split strings "// &
-                    "incorrect."
+                    "incorrect when splitting on spaces is not possible."
                 test_split_string_by_space = .false.
             end if
         else
             write(stderr, *) "test_split_string_by_space failed: Number of "// &
-                "substrings incorrect."
+                "substrings incorrect when splitting on spaces is not possible."
             test_split_string_by_space = .false.
         end if
 
@@ -5146,7 +5072,7 @@ contains
         hess_x_funptr => hess_x_fun
 
         ! start in quadratic region near minimum
-        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        context%vars = near_minimum
         func = hartmann6d_func(context%vars)
         call hartmann6d_gradient(context%vars, grad)
         grad_norm = norm2(grad)
@@ -5181,17 +5107,17 @@ contains
         end if
         ratio = (hartmann6d_func(context%vars + solution) - func) / &
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
-        if (norm2(solution) > step_trust_radius(trust_radius, ratio) + tol) then
+        if (norm2(solution) > ref_step_trust_radius(trust_radius, ratio) + tol) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not stay within trust region near minimum."
             test_level_shifted_davidson = .false.
         end if
         test_level_shifted_davidson = test_level_shifted_davidson .and. logical( &
-            call_counts_match(context, "level_shifted_davidson", "near minimum", &
+            check_call_counts(context, "level_shifted_davidson", "near minimum", &
                               n_hess_x=settings%n_hess_x), kind=c_bool)
 
         ! start near saddle point
-        context%vars = [0.35_rp, 0.59_rp, 0.48_rp, 0.40_rp, 0.31_rp, 0.32_rp]
+        context%vars = near_saddle_point
         func = hartmann6d_func(context%vars)
         call hartmann6d_gradient(context%vars, grad)
         grad_norm = norm2(grad)
@@ -5224,7 +5150,8 @@ contains
         end if
         ratio = (hartmann6d_func(context%vars + solution) - func) / &
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
-        if (abs(norm2(solution) - step_trust_radius(trust_radius, ratio)) > tol) then
+        if (abs(norm2(solution) - ref_step_trust_radius(trust_radius, ratio)) > tol) &
+            then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not lie at trust region boundary near saddle point."
             test_level_shifted_davidson = .false.
@@ -5268,7 +5195,8 @@ contains
         end if
         ratio = (hartmann6d_func(context%vars + solution) - func) / &
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
-        if (abs(norm2(solution) - step_trust_radius(trust_radius, ratio)) > tol) then
+        if (abs(norm2(solution) - ref_step_trust_radius(trust_radius, ratio)) > tol) &
+            then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not lie at trust region boundary near saddle point with "// &
                 "Jacobi-Davidson solver."
@@ -5291,7 +5219,7 @@ contains
             test_level_shifted_davidson = .false.
         end if
         test_level_shifted_davidson = test_level_shifted_davidson .and. logical( &
-            call_counts_match(context, "level_shifted_davidson", &
+            check_call_counts(context, "level_shifted_davidson", &
                               "for failing Hessian linear transformation", &
                               n_hess_x=settings%n_hess_x), kind=c_bool)
 
@@ -5461,7 +5389,6 @@ contains
 
         ! setup settings object
         call setup_settings(settings, context)
-        settings%n_micro = 50
 
         ! initialize variables
         trust_radius = 0.4_rp
@@ -5469,15 +5396,15 @@ contains
         hess_x_funptr => hess_x_fun
 
         ! start in quadratic region near minimum
-        context%vars = [0.20_rp, 0.15_rp, 0.48_rp, 0.28_rp, 0.31_rp, 0.66_rp]
+        context%vars = near_minimum
         func = hartmann6d_func(context%vars)
         call hartmann6d_gradient(context%vars, grad)
         context%hess = hartmann6d_hessian(context%vars)
         h_diag = [(context%hess(i, i), i=1, size(h_diag))]
 
-        ! run truncated conjugate gradient, check whether the solution lies at the
-        ! trust region boundary and reduces the function value and whether the
-        ! reported number of Hessian linear transformations agrees with the calls
+        ! run truncated conjugate gradient, check whether the solution stays within the
+        ! trust region and reduces the function value and whether the reported number
+        ! of Hessian linear transformations agrees with the calls
         settings%n_hess_x = 0
         context%n_hess_x_calls = 0
         call truncated_conjugate_gradient( &
@@ -5489,7 +5416,7 @@ contains
             test_truncated_conjugate_gradient = .false.
         end if
         test_truncated_conjugate_gradient = &
-            test_truncated_conjugate_gradient .and. logical(call_counts_match( &
+            test_truncated_conjugate_gradient .and. logical(check_call_counts( &
                 context, "truncated_conjugate_gradient", "near minimum", &
                 n_hess_x=settings%n_hess_x), kind=c_bool)
         ratio = (hartmann6d_func(context%vars + solution) - func) / &
@@ -5501,14 +5428,14 @@ contains
         end if
         solution_norm = sqrt(dot_product(solution, &
                                          solution / max(abs(h_diag), h_diag_floor)))
-        if (solution_norm > step_trust_radius(trust_radius, ratio) + tol) then
+        if (solution_norm > ref_step_trust_radius(trust_radius, ratio) + tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not stay within trust region near minimum."
             test_truncated_conjugate_gradient = .false.
         end if
 
         ! start near saddle point
-        context%vars = [0.35_rp, 0.59_rp, 0.48_rp, 0.40_rp, 0.31_rp, 0.32_rp]
+        context%vars = near_saddle_point
         func = hartmann6d_func(context%vars)
         call hartmann6d_gradient(context%vars, grad)
         context%hess = hartmann6d_hessian(context%vars)
@@ -5534,7 +5461,7 @@ contains
         end if
         solution_norm = sqrt(dot_product(solution, &
                                          solution / max(abs(h_diag), h_diag_floor)))
-        if (abs(solution_norm - step_trust_radius(trust_radius, ratio)) > tol) then
+        if (abs(solution_norm - ref_step_trust_radius(trust_radius, ratio)) > tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not lie at trust region boundary near saddle point."
             test_truncated_conjugate_gradient = .false.
@@ -5556,7 +5483,7 @@ contains
             test_truncated_conjugate_gradient = .false.
         end if
         test_truncated_conjugate_gradient = &
-            test_truncated_conjugate_gradient .and. logical(call_counts_match( &
+            test_truncated_conjugate_gradient .and. logical(check_call_counts( &
                 context, "truncated_conjugate_gradient", "for failing Hessian "// &
                 "linear transformation", n_hess_x=settings%n_hess_x), kind=c_bool)
 

@@ -33,7 +33,7 @@ contains
     function mock_update_orbs(kappa, func, grad, h_diag, hess_x_c_funptr, context_c) &
         result(error) bind(C)
         !
-        ! this subroutine is a test subroutine for the orbital update C function
+        ! this function is a test function for the orbital update C function
         !
         use test_reference, only: check_host_context_c, host_context_error
 
@@ -77,7 +77,7 @@ contains
 
     function mock_hess_x(x, hess_x, context_c) result(error) bind(C)
         !
-        ! this subroutine is a test subroutine for the Hessian linear transformation C
+        ! this function is a test function for the Hessian linear transformation C
         ! function
         !
         use test_reference, only: check_host_context_c, host_context_error
@@ -177,7 +177,7 @@ contains
 
     subroutine mock_logger(message_c, context_c) bind(C)
         !
-        ! this function is a test function for the C logging function
+        ! this subroutine is a test subroutine for the C logging function
         !
         use test_reference, only: host_context_type, check_host_context_c
 
@@ -248,6 +248,9 @@ contains
             call arm_host_context_c(settings%context)
             if (icase == 2) &
                 settings%stability_settings%context = c_loc(stability_host_context)
+
+            ! clear the result of the mock so that a missing call is detected
+            test_passed = .false.
 
             ! call solver
             error = solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, &
@@ -371,6 +374,9 @@ contains
             else
                 kappa_c_ptr = c_loc(kappa)
             end if
+
+            ! clear the result of the mock so that a missing call is detected
+            test_passed = .false.
 
             ! call stability check
             error = stability_check_c_wrapper(h_diag, hess_x_c_funptr, n_param_c, &
@@ -500,7 +506,7 @@ contains
         !
         use opentrustregion, only: update_orbs_type, hess_x_type
         use c_interface, only: c_callbacks_type, update_orbs_f_wrapper
-        use test_reference, only: test_update_orbs_funptr, host_context, &
+        use test_reference, only: check_update_orbs_funptr, host_context, &
                                   arm_host_context_c, host_context_reached
 
         procedure(update_orbs_type), pointer :: update_orbs_funptr
@@ -524,7 +530,7 @@ contains
         update_orbs_funptr => update_orbs_f_wrapper
 
         ! test orbital update wrapper
-        test_update_orbs_f_wrapper = test_update_orbs_funptr( &
+        test_update_orbs_f_wrapper = check_update_orbs_funptr( &
             update_orbs_funptr, "update_orbs_f_wrapper", "", context)
 
         ! check that the wrapper handed the host context to the C function
@@ -583,7 +589,7 @@ contains
         !
         use opentrustregion, only: hess_x_type
         use c_interface, only: c_callbacks_type, hess_x_f_wrapper
-        use test_reference, only: test_hess_x_funptr, host_context, &
+        use test_reference, only: check_hess_x_funptr, host_context, &
                                   arm_host_context_c, host_context_reached
 
         procedure(hess_x_type), pointer :: hess_x_funptr
@@ -603,7 +609,7 @@ contains
 
         ! test Hessian linear transformation wrapper
         test_hess_x_f_wrapper = &
-            test_hess_x_funptr(hess_x_funptr, "hess_x_f_wrapper", "", context)
+            check_hess_x_funptr(hess_x_funptr, "hess_x_f_wrapper", "", context)
 
         ! check that the wrapper handed the host context to the C function
         test_hess_x_f_wrapper = test_hess_x_f_wrapper .and. logical( &
@@ -639,7 +645,7 @@ contains
         !
         use opentrustregion, only: obj_func_type
         use c_interface, only: c_callbacks_type, obj_func_f_wrapper
-        use test_reference, only: test_obj_func_funptr, host_context, &
+        use test_reference, only: check_obj_func_funptr, host_context, &
                                   arm_host_context_c, host_context_reached
 
         procedure(obj_func_type), pointer :: obj_func_funptr
@@ -659,7 +665,7 @@ contains
 
         ! test objective function wrapper
         test_obj_func_f_wrapper = &
-            test_obj_func_funptr(obj_func_funptr, "obj_func_f_wrapper", "", context)
+            check_obj_func_funptr(obj_func_funptr, "obj_func_f_wrapper", "", context)
 
         ! check that the wrapper handed the host context to the C function
         test_obj_func_f_wrapper = test_obj_func_f_wrapper .and. logical( &
@@ -695,7 +701,7 @@ contains
         !
         use opentrustregion, only: precond_type
         use c_interface, only: c_callbacks_type, precond_f_wrapper
-        use test_reference, only: test_precond_funptr, host_context, &
+        use test_reference, only: check_precond_funptr, host_context, &
                                   arm_host_context_c, host_context_reached
 
         procedure(precond_type), pointer :: precond_funptr
@@ -715,7 +721,7 @@ contains
 
         ! test preconditioner wrapper
         test_precond_f_wrapper = &
-            test_precond_funptr(precond_funptr, "precond_f_wrapper", "", context)
+            check_precond_funptr(precond_funptr, "precond_f_wrapper", "", context)
 
         ! check that the wrapper handed the host context to the C function
         test_precond_f_wrapper = test_precond_f_wrapper .and. logical( &
@@ -752,7 +758,7 @@ contains
         !
         use opentrustregion, only: project_type
         use c_interface, only: c_callbacks_type, project_f_wrapper
-        use test_reference, only: test_project_funptr, host_context, &
+        use test_reference, only: check_project_funptr, host_context, &
                                   arm_host_context_c, host_context_reached
 
         procedure(project_type), pointer :: project_funptr
@@ -772,7 +778,7 @@ contains
 
         ! test projection wrapper
         test_project_f_wrapper = &
-            test_project_funptr(project_funptr, "project_f_wrapper", "", context)
+            check_project_funptr(project_funptr, "project_f_wrapper", "", context)
 
         ! check that the wrapper handed the host context to the C function
         test_project_f_wrapper = test_project_f_wrapper .and. logical( &
@@ -808,7 +814,7 @@ contains
         !
         use opentrustregion, only: conv_check_type
         use c_interface, only: c_callbacks_type, conv_check_f_wrapper
-        use test_reference, only: test_conv_check_funptr, host_context, &
+        use test_reference, only: check_conv_check_funptr, host_context, &
                                   arm_host_context_c, host_context_reached
 
         procedure(conv_check_type), pointer :: conv_check_funptr
@@ -827,7 +833,7 @@ contains
         conv_check_funptr => conv_check_f_wrapper
 
         ! test convergence check wrapper
-        test_conv_check_f_wrapper = test_conv_check_funptr( &
+        test_conv_check_f_wrapper = check_conv_check_funptr( &
             conv_check_funptr, "conv_check_f_wrapper", "", context)
 
         ! check that the wrapper handed the host context to the C function

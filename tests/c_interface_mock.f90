@@ -15,8 +15,10 @@ module c_interface_mock
 
     implicit none
 
-    logical(c_bool), bind(C) :: test_solver_interface = .true., &
-                                test_stability_check_interface = .true.
+    ! results of the mocks, which the Python tests clear before and read after every
+    ! call
+    logical(c_bool), bind(C) :: test_solver_interface = .false., &
+                                test_stability_check_interface = .false.
 
     ! create function pointers to ensure that routines comply with interface
     procedure(solver_c_wrapper), pointer :: mock_solver_c_wrapper_ptr => &
@@ -34,12 +36,12 @@ contains
                                    settings_c) result(error_c) &
         bind(C, name="mock_solver")
         !
-        ! this subroutine is a mock routine for the solver C wrapper subroutine
+        ! this function is a mock routine for the solver C wrapper subroutine
         !
         use c_interface, only: solver_settings_type_c, logger_c_type
-        use test_reference, only: test_update_orbs_c_funptr, test_obj_func_c_funptr, &
-                                  test_precond_c_funptr, test_project_c_funptr, &
-                                  test_conv_check_c_funptr, operator(/=)
+        use test_reference, only: check_update_orbs_c_funptr, check_obj_func_c_funptr, &
+                                  check_precond_c_funptr, check_project_c_funptr, &
+                                  check_conv_check_c_funptr, operator(/=)
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
@@ -49,13 +51,17 @@ contains
         procedure(logger_c_type), pointer :: logger_funptr
         character(len=:), allocatable, target :: message
 
+        ! assume test passes
+        test_solver_interface = .true.
+
         ! test passed orbital update function
-        test_solver_interface = test_solver_interface .and. test_update_orbs_c_funptr( &
-            update_orbs_c_funptr, "solver_py_interface", &
-            " by given orbital updating function", settings_c%context)
+        test_solver_interface = &
+            test_solver_interface .and. check_update_orbs_c_funptr( &
+                update_orbs_c_funptr, "solver_py_interface", &
+                " by given orbital updating function", settings_c%context)
 
         ! test passed objective function
-        test_solver_interface = test_solver_interface .and. test_obj_func_c_funptr( &
+        test_solver_interface = test_solver_interface .and. check_obj_func_c_funptr( &
             obj_func_c_funptr, "solver_py_interface", " by given objective function", &
             settings_c%context)
 
@@ -67,17 +73,17 @@ contains
         end if
 
         ! test passed preconditioner function
-        test_solver_interface = test_solver_interface .and. test_precond_c_funptr( &
+        test_solver_interface = test_solver_interface .and. check_precond_c_funptr( &
             settings_c%precond, "solver_py_interface", &
             " by given preconditioning function", settings_c%context)
 
         ! test passed projection function
-        test_solver_interface = test_solver_interface .and. test_project_c_funptr( &
+        test_solver_interface = test_solver_interface .and. check_project_c_funptr( &
             settings_c%project, "solver_py_interface", &
             " by given projection function", settings_c%context)
 
         ! test passed convergence check function
-        test_solver_interface = test_solver_interface .and. test_conv_check_c_funptr( &
+        test_solver_interface = test_solver_interface .and. check_conv_check_c_funptr( &
             settings_c%conv_check, "solver_py_interface", &
             " by given convergence check function", settings_c%context)
 
@@ -102,12 +108,13 @@ contains
                                             stable_c, settings_c, kappa_c_ptr) &
         result(error_c) bind(C, name="mock_stability_check")
         !
-        ! this subroutine is a mock routine for the stability check C wrapper
+        ! this function is a mock routine for the stability check C wrapper
         ! subroutine
         !
         use c_interface, only: stability_settings_type_c, logger_c_type
-        use test_reference, only: tol_c, test_hess_x_c_funptr, test_precond_c_funptr, &
-                                  test_project_c_funptr, operator(/=)
+        use test_reference, only: tol_c, check_hess_x_c_funptr, &
+                                  check_precond_c_funptr, check_project_c_funptr, &
+                                  operator(/=)
 
         real(c_rp), intent(in), target :: h_diag_c(*)
         type(c_funptr), intent(in), value :: hess_x_c_funptr
@@ -121,6 +128,9 @@ contains
         procedure(logger_c_type), pointer :: logger_funptr
         character(len=:), allocatable, target :: message
 
+        ! assume test passes
+        test_stability_check_interface = .true.
+
         ! check if Hessian diagonal is passed correctly
         if (any(abs(h_diag_c(:n_param_c) - 3.0_c_rp) > tol_c)) then
             write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
@@ -130,7 +140,7 @@ contains
 
         ! test passed Hessian linear transformation
         test_stability_check_interface = &
-            test_stability_check_interface .and. test_hess_x_c_funptr( &
+            test_stability_check_interface .and. check_hess_x_c_funptr( &
                 hess_x_c_funptr, "stability_check_py_interface", &
                 " by given Hessian linear transformation function", settings_c%context)
 
@@ -143,15 +153,15 @@ contains
 
         ! test passed preconditioner
         test_stability_check_interface = &
-            test_stability_check_interface .and. test_precond_c_funptr( &
+            test_stability_check_interface .and. check_precond_c_funptr( &
                 settings_c%precond, "stability_check_py_interface", &
                 " by given preconditioning function", settings_c%context)
 
         ! test passed projection function
         test_stability_check_interface = &
             test_stability_check_interface .and. &
-            test_project_c_funptr(settings_c%project, "stability_check_py_interface", &
-                                  " by given projection function", settings_c%context)
+            check_project_c_funptr(settings_c%project, "stability_check_py_interface", &
+                                   " by given projection function", settings_c%context)
 
         ! get Fortran pointer to passed logging function and call it
         message = "test"//c_null_char

@@ -34,9 +34,9 @@ contains
         ! this subroutine is a mock routine for solver to test the C interface
         !
         use opentrustregion, only: solver_settings_type, update_orbs_type, obj_func_type
-        use test_reference, only: test_update_orbs_funptr, test_obj_func_funptr, &
-                                  test_precond_funptr, test_project_funptr, &
-                                  test_conv_check_funptr
+        use test_reference, only: check_update_orbs_funptr, check_obj_func_funptr, &
+                                  check_precond_funptr, check_project_funptr, &
+                                  check_conv_check_funptr
 
         procedure(update_orbs_type), intent(in), pointer :: update_orbs_funptr
         procedure(obj_func_type), intent(in), pointer :: obj_func_funptr
@@ -48,12 +48,12 @@ contains
         test_passed = .true.
 
         ! test passed orbital update subroutine
-        test_passed = test_passed .and. test_update_orbs_funptr( &
+        test_passed = test_passed .and. check_update_orbs_funptr( &
             update_orbs_funptr, "solver_c_wrapper", &
             " by given orbital updating subroutine", settings%context)
 
         ! test passed objective function
-        test_passed = test_passed .and. test_obj_func_funptr( &
+        test_passed = test_passed .and. check_obj_func_funptr( &
             obj_func_funptr, "solver_c_wrapper", " by given objective function", &
             settings%context)
 
@@ -70,7 +70,7 @@ contains
             write(stderr, *) "test_solver_c_wrapper failed: Passed preconditioner "// &
                 "function not associated with value."
         else
-            test_passed = test_passed .and. test_precond_funptr( &
+            test_passed = test_passed .and. check_precond_funptr( &
                 settings%precond, "solver_c_wrapper", &
                 " by given preconditioner subroutine", settings%context)
         end if
@@ -81,7 +81,7 @@ contains
             write(stderr, *) "test_solver_c_wrapper failed: Passed projection "// &
                 "function not associated with value."
         else
-            test_passed = test_passed .and. test_project_funptr( &
+            test_passed = test_passed .and. check_project_funptr( &
                 settings%project, "solver_c_wrapper", &
                 " by given projection subroutine", settings%context)
         end if
@@ -92,7 +92,7 @@ contains
             write(stderr, *) "test_solver_c_wrapper failed: Passed convergence "// &
                 "check function not associated with value."
         else
-            test_passed = test_passed .and. test_conv_check_funptr( &
+            test_passed = test_passed .and. check_conv_check_funptr( &
                 settings%conv_check, "solver_c_wrapper", &
                 " by given convergence check function", settings%context)
         end if
@@ -109,7 +109,7 @@ contains
         ! check if the internal stability check inherits the solver's optional callback
         ! functions and calls them with the nested settings' context
         if (associated(settings%precond)) then
-            test_passed = test_passed .and. test_precond_funptr( &
+            test_passed = test_passed .and. check_precond_funptr( &
                 settings%precond, "solver_c_wrapper", &
                 " by preconditioner inherited by the internal stability check", &
                 settings%stability_settings%context)
@@ -140,8 +140,8 @@ contains
         ! interface
         !
         use opentrustregion, only: stability_settings_type, hess_x_type
-        use test_reference, only: test_hess_x_funptr, test_precond_funptr, &
-                                  test_project_funptr
+        use test_reference, only: check_hess_x_funptr, check_precond_funptr, &
+                                  check_project_funptr
 
         real(rp), intent(in) :: h_diag(:)
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
@@ -161,7 +161,7 @@ contains
         end if
 
         ! test passed Hessian linear transformation subroutine
-        test_passed = test_passed .and. test_hess_x_funptr( &
+        test_passed = test_passed .and. check_hess_x_funptr( &
             hess_x_funptr, "stability_check_c_wrapper", &
             " by given Hessian linear transformation subroutine", settings%context)
 
@@ -171,7 +171,7 @@ contains
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "preconditioner function not associated with value."
         else
-            test_passed = test_passed .and. test_precond_funptr( &
+            test_passed = test_passed .and. check_precond_funptr( &
                 settings%precond, "stability_check_c_wrapper", &
                 " by given preconditioner subroutine", settings%context)
         end if
@@ -182,7 +182,7 @@ contains
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "projection function not associated with value."
         else
-            test_passed = test_passed .and. test_project_funptr( &
+            test_passed = test_passed .and. check_project_funptr( &
                 settings%project, "stability_check_c_wrapper", &
                 " by given projection subroutine", settings%context)
         end if

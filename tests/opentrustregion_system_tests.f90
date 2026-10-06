@@ -124,7 +124,7 @@ contains
 
     subroutine hess_x_fun(x, hess_x, error, context)
         !
-        ! this function performs the Hessian linear transformation for Foster-Boys
+        ! this subroutine performs the Hessian linear transformation for Foster-Boys
         ! orbital localization, it cannot be defined within update_orbs as it would
         ! otherwise go out of scope when that subroutine returns
         !
@@ -243,7 +243,7 @@ contains
 
     subroutine update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, context)
         !
-        ! this function updates the orbitals for Foster-Boys orbital localization
+        ! this subroutine updates the orbitals for Foster-Boys orbital localization
         !
         use opentrustregion, only: hess_x_type
 

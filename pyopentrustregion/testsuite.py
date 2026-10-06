@@ -348,8 +348,12 @@ class PyInterfaceUnitTests(unittest.TestCase):
         # initialize logging boolean
         test_logger = False
 
-        # call solver python interface with optional arguments
+        # call solver python interface with optional arguments, the result of the mock
+        # is cleared before and read right after the call
+        interface_flag = c_bool.in_dll(lib, "test_solver_interface")
+        interface_flag.value = False
         solver(mock_obj_func, mock_update_orbs, n_param, settings)
+        interface_passed = interface_flag.value
 
         # check if logger was called correctly
         if not test_logger:
@@ -373,9 +377,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
 
         self.assertTrue(
-            c_bool.in_dll(lib, "test_solver_interface").value
-            and test_logger
-            and logger_error_reported,
+            interface_passed and test_logger and logger_error_reported,
             "test_solver_py_interface failed",
         )
         print(" test_solver_py_interface PASSED")
@@ -437,8 +439,12 @@ class PyInterfaceUnitTests(unittest.TestCase):
         # initialize logging boolean
         test_logger = False
 
-        # call stability check python interface with optional arguments
+        # call stability check python interface with optional arguments, the result of
+        # the mock is cleared before and read right after the call
+        interface_flag = c_bool.in_dll(lib, "test_stability_check_interface")
+        interface_flag.value = False
         stable = stability_check(h_diag, mock_hess_x, n_param, settings, kappa=kappa)
+        interface_passed = interface_flag.value
 
         # check if logger was called correctly
         if not test_logger:
@@ -479,7 +485,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
 
         self.assertTrue(
-            c_bool.in_dll(lib, "test_stability_check_interface").value
+            interface_passed
             and test_logger
             and not stable
             and not wrong_direction
@@ -722,6 +728,10 @@ class PyIntegrationTests(unittest.TestCase):
     ).reshape((n_terms, n_param), order="F")
     minimum1_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_minimum1")
     minimum1 = np.frombuffer(minimum1_ctypes, dtype=np.dtype(c_real), count=n_param)
+    near_minimum_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_near_minimum")
+    near_minimum = np.frombuffer(
+        near_minimum_ctypes, dtype=np.dtype(c_real), count=n_param
+    )
     saddle_point_ctypes = (c_real * n_param).in_dll(lib, "hartmann6d_saddle_point")
     saddle_point = np.frombuffer(
         saddle_point_ctypes, dtype=np.dtype(c_real), count=n_param
@@ -848,7 +858,7 @@ class PyIntegrationTests(unittest.TestCase):
         # region near the first minimum, its Hessian and the names of the callbacks
         # that were reached
         state = {
-            "curr": np.array([0.20, 0.15, 0.48, 0.28, 0.31, 0.66]),
+            "curr": self.near_minimum.copy(),
             "hess": None,
             "called": set(),
         }

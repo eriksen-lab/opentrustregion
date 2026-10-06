@@ -61,6 +61,7 @@ extern const c_real hartmann6d_minimum1[N_PARAM];
 const c_real *minimum1 = hartmann6d_minimum1;
 extern const c_real hartmann6d_saddle_point[N_PARAM];
 const c_real *saddle_point = hartmann6d_saddle_point;
+extern const c_real hartmann6d_near_minimum[N_PARAM];
 
 /* Host data handed to the callbacks through the context of the settings: the current
  * point and its Hessian, and flags recording which callbacks were reached. */
@@ -437,7 +438,8 @@ bool test_solver_c(void) {
   bool ok = true;
 
   /* start in the quadratic region near the first minimum */
-  hartmann_context ctx = {.curr_vars = {0.20, 0.15, 0.48, 0.28, 0.31, 0.66}};
+  hartmann_context ctx = {0};
+  memcpy(ctx.curr_vars, hartmann6d_near_minimum, sizeof(ctx.curr_vars));
 
   solver_settings_type settings = solver_settings_init();
   settings.context = &ctx;
