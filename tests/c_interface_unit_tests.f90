@@ -287,7 +287,7 @@ contains
                     "wrong "//trim(case_names(icase))//"."
             end if
 
-            ! check that exactly the callback functions of the internal stability check 
+            ! check that exactly the callback functions of the internal stability check
             ! received the context of the nested settings when one was set
             if ((icase == 1 .and. stability_host_context%n_calls /= 0) .or. &
                 (icase == 2 .and. &
