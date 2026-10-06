@@ -382,7 +382,8 @@ contains
         !
         use opentrustregion, only: update_orbs_type, obj_func_type, &
                                    solver_settings_type, solver, hess_x_type, &
-                                   stability_settings_type, stability_check
+                                   stability_settings_type, stability_check, &
+                                   subsystem_solver_options
 
         character(len=*), intent(in) :: test_name, option
 
@@ -413,26 +414,26 @@ contains
             ! read starting orbitals and integrals
             call setup_fb_context(context, start_files(i_start))
 
-            ! initialize settings and switch on the option, the Jacobi-Davidson method
+            ! initialize settings and switch on the option, which is either a
+            ! subsystem solver option or a logical setting, the Jacobi-Davidson method
             ! is started immediately since the Davidson method converges before
             ! switching on a problem of this size
             call solver_settings%init(error)
             solver_settings%context => context
             select case (option)
             case ("default")
-            case ("jacobi-davidson")
-                solver_settings%subsystem_solver = "jacobi-davidson"
-                solver_settings%jacobi_davidson_start = 0
-            case ("tcg")
-                solver_settings%subsystem_solver = "tcg"
             case ("line search")
                 solver_settings%line_search = .true.
             case ("stability")
                 solver_settings%stability = .true.
             case default
-                write(stderr, *) test_name//" failed: Unknown solver option."
-                check_h2o_fb_solver = .false.
-                return
+                if (.not. any(option == subsystem_solver_options)) then
+                    write(stderr, *) test_name//" failed: Unknown solver option."
+                    check_h2o_fb_solver = .false.
+                    return
+                end if
+                solver_settings%subsystem_solver = option
+                solver_settings%jacobi_davidson_start = 0
             end select
 
             ! run solver

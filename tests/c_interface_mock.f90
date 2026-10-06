@@ -9,7 +9,7 @@ module c_interface_mock
     use opentrustregion, only: stderr
     use c_interface, only: c_rp, c_ip, solver_c_wrapper, stability_check_c_wrapper, &
                            init_solver_settings_c, init_stability_settings_c
-    use test_reference, only: ref_settings, n_param
+    use test_reference, only: ref_solver_settings, ref_stability_settings, n_param
     use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_funptr, c_f_pointer, &
                                            c_f_procpointer, c_associated, c_null_char
 
@@ -36,9 +36,7 @@ contains
         !
         ! this subroutine is a mock routine for the solver C wrapper subroutine
         !
-        use c_interface, only: solver_settings_type_c, update_orbs_c_type, &
-                               hess_x_c_type, obj_func_c_type, precond_c_type, &
-                               project_c_type, conv_check_c_type, logger_c_type
+        use c_interface, only: solver_settings_type_c, logger_c_type
         use test_reference, only: test_update_orbs_c_funptr, test_obj_func_c_funptr, &
                                   test_precond_c_funptr, test_project_c_funptr, &
                                   test_conv_check_c_funptr, operator(/=)
@@ -89,7 +87,7 @@ contains
         call logger_funptr(message, settings_c%context)
 
         ! check optional settings against reference values
-        if (settings_c /= ref_settings) then
+        if (settings_c /= ref_solver_settings) then
             write(stderr, *) "test_solver_py_interface failed: Passed settings "// &
                 "associated with wrong values."
             test_solver_interface = .false.
@@ -107,8 +105,7 @@ contains
         ! this subroutine is a mock routine for the stability check C wrapper
         ! subroutine
         !
-        use c_interface, only: stability_settings_type_c, hess_x_c_type, &
-                               precond_c_type, project_c_type, logger_c_type
+        use c_interface, only: stability_settings_type_c, logger_c_type
         use test_reference, only: tol_c, test_hess_x_c_funptr, test_precond_c_funptr, &
                                   test_project_c_funptr, operator(/=)
 
@@ -162,7 +159,7 @@ contains
         call logger_funptr(message, settings_c%context)
 
         ! check optional settings against reference values
-        if (settings_c /= ref_settings) then
+        if (settings_c /= ref_stability_settings) then
             write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
                 "settings associated with wrong values."
             test_stability_check_interface = .false.
@@ -185,12 +182,16 @@ contains
         ! subroutine
         !
         use c_interface, only: solver_settings_type_c
-        use test_reference, only: assignment(=)
+        use test_reference, only: get_reference_solver_values, unset_callbacks
+        use, intrinsic :: iso_c_binding, only: c_null_funptr, c_null_ptr
 
         type(solver_settings_type_c), intent(inout) :: settings
 
-        ! set reference values
-        settings = ref_settings
+        ! set reference values without callback functions and host contexts
+        call get_reference_solver_values(settings)
+        call unset_callbacks(settings)
+        settings%context = c_null_ptr
+        settings%stability_settings%context = c_null_ptr
 
     end subroutine mock_init_solver_settings_c
 
@@ -201,12 +202,15 @@ contains
         ! initialization subroutine
         !
         use c_interface, only: stability_settings_type_c
-        use test_reference, only: assignment(=)
+        use test_reference, only: get_reference_stability_values, unset_callbacks
+        use, intrinsic :: iso_c_binding, only: c_null_funptr, c_null_ptr
 
         type(stability_settings_type_c), intent(inout) :: settings
 
-        ! set reference values
-        settings = ref_settings
+        ! set reference values without callback functions and host context
+        call get_reference_stability_values(settings)
+        call unset_callbacks(settings)
+        settings%context = c_null_ptr
 
     end subroutine mock_init_stability_settings_c
 

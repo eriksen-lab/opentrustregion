@@ -1409,7 +1409,9 @@ contains
             default_settings => default_solver_settings, error_solver_max_iter, &
             error_update_orbs, error_conv_check, error_solver, error_stability_check, &
             error_obj_func, error_hess_x, error_precond, error_project, &
-            verbosity_error, verbosity_warning
+            verbosity_error, verbosity_warning, subsystem_solver_options, &
+            stability_settings_uninitialized_warning_msg, &
+            started_at_saddle_point_warning_msg, reached_saddle_point_warning_msg
         use test_reference, only: arm_host_context, host_context_reached
 
         real(rp), parameter :: var_thres = 1e-6_rp
@@ -1417,8 +1419,6 @@ contains
         integer(ip), parameter :: fault_origins(n_fault_callbacks) = &
             [error_update_orbs, error_obj_func, error_hess_x, error_precond, &
              error_project, error_conv_check]
-        character(len=*), parameter :: subsystem_solvers(3) = &
-            [character(len=15) :: "davidson", "jacobi-davidson", "tcg"]
         character(len=20) :: call_number
         type(hartmann6d_fault_context_type), target :: fault_context
         real(rp), allocatable :: final_grad(:)
@@ -1583,9 +1583,8 @@ contains
                 "were left uninitialized."
             test_solver = .false.
         end if
-        if (index(context%log_message, " Stability check settings were not "// &
-                  "initialized. All stability check settings are set to default "// &
-                  "values") == 0) then
+        if (index(context%log_message, &
+                  " "//stability_settings_uninitialized_warning_msg) == 0) then
             write(stderr, *) "test_solver failed: Warning not printed when nested "// &
                 "stability check settings were not initialized."
             test_solver = .false.
@@ -1912,11 +1911,8 @@ contains
                 "after saddle point was reached."
             test_solver = .false.
         end if
-        if (index(double_well_context%log_message, " Reached saddle point. This is "// &
-                  "likely due to symmetry and can be avoided by increasing the "// &
-                  "number of random trial vectors. The algorithm will continue by "// &
-                  "moving along eigenvector direction corresponding to negative "// &
-                  "eigenvalue.") == 0) then
+        if (index(double_well_context%log_message, &
+                  " "//reached_saddle_point_warning_msg) == 0) then
             write(stderr, *) "test_solver failed: Warning not printed when saddle "// &
                 "point is reached."
             test_solver = .false.
@@ -1937,9 +1933,8 @@ contains
                 "starting at saddle point."
             test_solver = .false.
         end if
-        if (index(double_well_context%log_message, " Started at saddle point. The "// &
-                  "algorithm will continue by moving along eigenvector direction "// &
-                  "corresponding to negative eigenvalue.") == 0) then
+        if (index(double_well_context%log_message, &
+                  " "//started_at_saddle_point_warning_msg) == 0) then
             write(stderr, *) "test_solver failed: Warning not printed when "// &
                 "starting at saddle point."
             test_solver = .false.
@@ -1972,11 +1967,12 @@ contains
         ! subsystem solver, and check that the error is reported with the origin of the
         ! failing callback function and that the reported counters still agree with the
         ! calls
-        do i_solver = 1, size(subsystem_solvers)
+        do i_solver = 1, size(subsystem_solver_options)
             call run_with_fault(0_ip, 0_ip)
             if (error /= 0) then
                 write(stderr, *) "test_solver failed: Produced error without fault "// &
-                    "with "//trim(subsystem_solvers(i_solver))//" subsystem solver."
+                    "with "//trim(subsystem_solver_options(i_solver))// &
+                    " subsystem solver."
                 test_solver = .false.
                 cycle
             end if
@@ -1989,7 +1985,8 @@ contains
                         write(stderr, *) "test_solver failed: Error of failing "// &
                             trim(fault_callback_names(callback))//" at call "// &
                             trim(call_number)//" not reported with its origin with "// &
-                            trim(subsystem_solvers(i_solver))//" subsystem solver."
+                            trim(subsystem_solver_options(i_solver))// &
+                            " subsystem solver."
                         test_solver = .false.
                         exit
                     end if
@@ -1997,7 +1994,7 @@ contains
                         fault_context, "solver", &
                         "for failing "//trim(fault_callback_names(callback))// &
                         " at call "//trim(call_number)//" with "// &
-                        trim(subsystem_solvers(i_solver))//" subsystem solver", &
+                        trim(subsystem_solver_options(i_solver))//" subsystem solver", &
                         n_hess_x=settings%n_hess_x, &
                         n_update_orbs=settings%n_update_orbs)) then
                         test_solver = .false.
@@ -2034,7 +2031,7 @@ contains
             ! set up settings with every optional callback function
             call settings%init(error)
             settings%context => fault_context
-            settings%subsystem_solver = subsystem_solvers(i_solver)
+            settings%subsystem_solver = subsystem_solver_options(i_solver)
             settings%jacobi_davidson_start = 0
             settings%line_search = .true.
             settings%stability = .true.
@@ -2059,7 +2056,8 @@ contains
         use opentrustregion, only: hess_x_type, stability_settings_type, &
                                    stability_check, error_stability_check_max_iter, &
                                    verbosity_debug, verbosity_warning, error_hess_x, &
-                                   error_precond, error_project
+                                   error_precond, error_project, diag_solver_options, &
+                                   unstable_warning_msg
 
         real(rp) :: vars(n_param), h_diag(n_param), direction(n_param), &
                     hess_eigvals(n_param), hess_eigvecs(n_param, n_param)
@@ -2072,8 +2070,6 @@ contains
         integer(ip), parameter :: &
             fault_callbacks(3) = [fault_hess_x, fault_precond, fault_project], &
             fault_origins(3) = [error_hess_x, error_precond, error_project]
-        character(len=*), parameter :: diag_solvers(2) = &
-            [character(len=15) :: "davidson", "jacobi-davidson"]
         character(len=20) :: call_number
         type(hartmann6d_fault_context_type), target :: fault_context
         type(hartmann6d_context_type), target :: context
@@ -2145,8 +2141,7 @@ contains
                 "not return correct direction for saddle point."
             test_stability_check = .false.
         end if
-        write(msg, '(A, F0.4)') "Solution not stable. Lowest eigenvalue: ", &
-            hess_eigvals(1)
+        write(msg, '(A, F0.4)') unstable_warning_msg, hess_eigvals(1)
         if (adjustl(context%log_message) /= trim(msg)) then
             write(stderr, *) "test_stability_check failed: Warning not printed for "// &
                 "saddle point."
@@ -2303,11 +2298,11 @@ contains
         fault_context%hess = hartmann6d_hessian(saddle_point)
         h_diag = [(fault_context%hess(i, i), i=1, size(h_diag))]
         hess_x_funptr => faulty_hess_x
-        do i_solver = 1, size(diag_solvers)
+        do i_solver = 1, size(diag_solver_options)
             call run_with_fault(0_ip, 0_ip)
             if (error /= 0) then
                 write(stderr, *) "test_stability_check failed: Produced error "// &
-                    "without fault with "//trim(diag_solvers(i_solver))// &
+                    "without fault with "//trim(diag_solver_options(i_solver))// &
                     " diagonalization solver."
                 test_stability_check = .false.
                 cycle
@@ -2321,9 +2316,9 @@ contains
                         write(stderr, *) "test_stability_check failed: Error of "// &
                             "failing "// &
                             trim(fault_callback_names(fault_callbacks(callback)))// &
-                            " at call "//trim(call_number)// &
-                            " not reported with its origin with "// &
-                            trim(diag_solvers(i_solver))//" diagonalization solver."
+                            " at call "//trim(call_number)//" not reported with "// &
+                            "its origin with "//trim(diag_solver_options(i_solver))// &
+                            " diagonalization solver."
                         test_stability_check = .false.
                         exit
                     end if
@@ -2331,8 +2326,8 @@ contains
                         fault_context, "stability_check", "for failing "// &
                         trim(fault_callback_names(fault_callbacks(callback)))// &
                         " at call "//trim(call_number)//" with "// &
-                        trim(diag_solvers(i_solver))//" diagonalization solver", &
-                        n_hess_x=settings%n_hess_x)) then
+                        trim(diag_solver_options(i_solver))// &
+                        " diagonalization solver", n_hess_x=settings%n_hess_x)) then
                         test_stability_check = .false.
                         exit
                     end if
@@ -2359,7 +2354,7 @@ contains
             ! set up settings with every optional callback function
             call settings%init(error)
             settings%context => fault_context
-            settings%diag_solver = diag_solvers(i_solver)
+            settings%diag_solver = diag_solver_options(i_solver)
             settings%jacobi_davidson_start = 0
             settings%precond => faulty_precond
             settings%project => faulty_project
@@ -3611,7 +3606,7 @@ contains
         !
         use opentrustregion, only: solver_settings_type, &
                                    default_settings => default_solver_settings
-        use test_reference, only: operator(/=)
+        use test_reference, only: operator(/=), callbacks_unset
 
         type, extends(solver_settings_type) :: extended_solver_settings_type
         end type
@@ -3643,8 +3638,7 @@ contains
         end if
 
         ! check function pointers and host context
-        if (associated(settings%precond) .or. associated(settings%project) .or. &
-            associated(settings%conv_check) .or. associated(settings%logger)) then
+        if (.not. callbacks_unset(settings)) then
             write(stderr, *) "test_init_solver_settings failed: Function pointers "// &
                 "not discarded."
             test_init_solver_settings = .false.
@@ -3680,7 +3674,7 @@ contains
         !
         use opentrustregion, only: stability_settings_type, &
                                    default_settings => default_stability_settings
-        use test_reference, only: operator(/=)
+        use test_reference, only: operator(/=), callbacks_unset
 
         type, extends(stability_settings_type) :: extended_stability_settings_type
         end type
@@ -3712,8 +3706,7 @@ contains
         end if
 
         ! check function pointers and host context
-        if (associated(settings%precond) .or. associated(settings%project) .or. &
-            associated(settings%logger)) then
+        if (.not. callbacks_unset(settings)) then
             write(stderr, *) "test_init_stability_settings failed: Function "// &
                 "pointers not discarded."
             test_init_stability_settings = .false.
@@ -4641,8 +4634,8 @@ contains
         !
         use opentrustregion, only: &
             solver_settings_type, accept_trust_region_step, trust_radius_shrink_ratio, &
-            trust_radius_expand_ratio, trust_radius_shrink_factor, &
-            trust_radius_expand_factor
+            trust_radius_too_small_warning_msg, trust_radius_expand_ratio, &
+            trust_radius_shrink_factor, trust_radius_expand_factor
 
         logical :: accept_step, max_precision_reached
         real(rp) :: solution(3), trust_radius
@@ -4752,9 +4745,7 @@ contains
                 "or maximum precision not reached when trust radius becomes too small."
             test_accept_trust_region_step = .false.
         end if
-        if (adjustl(context%log_message) /= "Trust radius too small. Convergence "// &
-            "criterion is not fulfilled but calculation should be converged up to "// &
-            "floating point precision.") then
+        if (adjustl(context%log_message) /= trust_radius_too_small_warning_msg) then
             write(stderr, *) "test_accept_trust_region_step failed: Warning not "// &
                 "printed when trust radius becomes too small."
             test_accept_trust_region_step = .false.
@@ -4767,12 +4758,13 @@ contains
         ! this function tests the subroutine which performs a sanity check for the
         ! solver
         !
-        use opentrustregion, only: solver_settings_type, solver_sanity_check, &
-                                   project_warning_msg, random_trial_vector_warning_msg
+        use opentrustregion, only: &
+            solver_settings_type, solver_sanity_check, project_warning_msg, &
+            random_trial_vector_warning_msg, subsystem_solver_options
 
         type(solver_settings_type) :: settings
         real(rp) :: grad(3)
-        integer(ip) :: error
+        integer(ip) :: error, i
         type(test_context_type), target :: context
 
         ! assume tests pass
@@ -4887,28 +4879,16 @@ contains
             test_solver_sanity_check = .false.
         end if
 
-        ! check if subsystem solver is correctly checked
-        settings%subsystem_solver = "davidson"
-        call solver_sanity_check(settings, 3_ip, grad, error)
-        if (error /= 0) then
-            write(stderr, *) "test_solver_sanity_check failed: Error thrown for "// &
-                "davidson subsystem solver."
-            test_solver_sanity_check = .false.
-        end if
-        settings%subsystem_solver = "jacobi-davidson"
-        call solver_sanity_check(settings, 3_ip, grad, error)
-        if (error /= 0) then
-            write(stderr, *) "test_solver_sanity_check failed: Error thrown for "// &
-                "jacobi-davidson subsystem solver."
-            test_solver_sanity_check = .false.
-        end if
-        settings%subsystem_solver = "tcg"
-        call solver_sanity_check(settings, 3_ip, grad, error)
-        if (error /= 0) then
-            write(stderr, *) "test_solver_sanity_check failed: Error thrown for "// &
-                "tcg subsystem solver."
-            test_solver_sanity_check = .false.
-        end if
+        ! check if every subsystem solver option is accepted
+        do i = 1, size(subsystem_solver_options)
+            settings%subsystem_solver = subsystem_solver_options(i)
+            call solver_sanity_check(settings, 3_ip, grad, error)
+            if (error /= 0) then
+                write(stderr, *) "test_solver_sanity_check failed: Error thrown "// &
+                    "for "//trim(subsystem_solver_options(i))//" subsystem solver."
+                test_solver_sanity_check = .false.
+            end if
+        end do
         settings%subsystem_solver = "Jacobi-Davidson"
         call solver_sanity_check(settings, 3_ip, grad, error)
         if (error /= 0 .or. settings%subsystem_solver /= "jacobi-davidson") then
@@ -4953,10 +4933,11 @@ contains
         ! stability check
         !
         use opentrustregion, only: stability_settings_type, stability_sanity_check, &
-                                   project_warning_msg, random_trial_vector_warning_msg
+                                   project_warning_msg, &
+                                   random_trial_vector_warning_msg, diag_solver_options
 
         type(stability_settings_type) :: settings
-        integer(ip) :: error
+        integer(ip) :: error, i
         type(test_context_type), target :: context
 
         ! assume tests pass
@@ -4980,21 +4961,16 @@ contains
             test_stability_sanity_check = .false.
         end if
 
-        ! check if diagonalization solver is correctly checked
-        settings%diag_solver = "davidson"
-        call stability_sanity_check(settings, 3_ip, error)
-        if (error /= 0) then
-            write(stderr, *) "test_stability_sanity_check failed: Error thrown for "// &
-                "davidson diagonalization solver."
-            test_stability_sanity_check = .false.
-        end if
-        settings%diag_solver = "jacobi-davidson"
-        call stability_sanity_check(settings, 3_ip, error)
-        if (error /= 0) then
-            write(stderr, *) "test_stability_sanity_check failed: Error thrown for "// &
-                "jacobi-davidson diagonalization solver."
-            test_stability_sanity_check = .false.
-        end if
+        ! check if every diagonalization solver option is accepted
+        do i = 1, size(diag_solver_options)
+            settings%diag_solver = diag_solver_options(i)
+            call stability_sanity_check(settings, 3_ip, error)
+            if (error /= 0) then
+                write(stderr, *) "test_stability_sanity_check failed: Error thrown "// &
+                    "for "//trim(diag_solver_options(i))//" diagonalization solver."
+                test_stability_sanity_check = .false.
+            end if
+        end do
         settings%diag_solver = "Jacobi-Davidson"
         call stability_sanity_check(settings, 3_ip, error)
         if (error /= 0 .or. settings%diag_solver /= "jacobi-davidson") then
@@ -5369,7 +5345,7 @@ contains
         !
         use opentrustregion, only: obj_func_type, hess_x_type, solver_settings_type, &
                                    truncated_conjugate_gradient, error_hess_x, &
-                                   error_obj_func
+                                   error_obj_func, function_unchanged_warning_msg
 
         real(rp) :: func, trust_radius, ratio, solution_norm
         real(rp), dimension(n_param) :: grad, h_diag, solution
@@ -5519,9 +5495,7 @@ contains
                 "precision not reached when function value does not change."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (index(context%log_message, " Function value barely changed. "// &
-                  "Convergence criterion is not fulfilled but calculation should "// &
-                  "be converged up to floating point precision.") == 0) then
+        if (index(context%log_message, " "//function_unchanged_warning_msg) == 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Warning "// &
                 "not printed when function value does not change."
             test_truncated_conjugate_gradient = .false.
@@ -5609,5 +5583,30 @@ contains
         end if
 
     end function test_string_to_lowercase
+
+    logical(c_bool) function test_option_list() bind(C)
+        !
+        ! this function tests the function which lists options
+        !
+        use opentrustregion, only: option_list
+
+        ! assume tests pass
+        test_option_list = .true.
+
+        ! check that options are quoted, stripped of trailing blanks and separated by
+        ! commas
+        if (option_list([character(len=5) :: "ab", "c", "d e"]) /= &
+            """ab"", ""c"", ""d e""") then
+            write(stderr, *) "test_option_list failed: Several options not listed "// &
+                "correctly."
+            test_option_list = .false.
+        end if
+        if (option_list(["ab"]) /= """ab""") then
+            write(stderr, *) "test_option_list failed: Single option not listed "// &
+                "correctly."
+            test_option_list = .false.
+        end if
+
+    end function test_option_list
 
 end module opentrustregion_unit_tests

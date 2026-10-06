@@ -7,7 +7,8 @@
 module opentrustregion_mock
 
     use opentrustregion, only: rp, ip, stderr, solver, stability_check
-    use test_reference, only: tol, ref_settings, operator(/=)
+    use test_reference, only: tol, ref_solver_settings, ref_stability_settings, &
+                              operator(/=)
 
     implicit none
 
@@ -117,7 +118,7 @@ contains
             call settings%logger("test", settings%stability_settings%context)
 
         ! check if optional settings are correctly passed
-        if (settings /= ref_settings) then
+        if (settings /= ref_solver_settings) then
             test_passed = .false.
             write(stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
                 "settings associated with wrong values."
@@ -196,7 +197,7 @@ contains
         end if
 
         ! check if optional settings are correctly passed
-        if (settings /= ref_settings) then
+        if (settings /= ref_stability_settings) then
             test_passed = .false.
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "optional settings associated with wrong values."

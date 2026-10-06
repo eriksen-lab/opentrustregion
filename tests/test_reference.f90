@@ -6,11 +6,12 @@
 
 module test_reference
 
-    use opentrustregion, only: rp, ip, kw_len, stderr
+    use opentrustregion, only: rp, ip, kw_len, stderr, solver_settings_type, &
+                               stability_settings_type
     use c_interface, only: c_rp, c_ip
-    use, intrinsic :: iso_c_binding, only: c_bool, c_char, c_funptr, c_f_procpointer, &
-                                           c_associated, c_ptr, c_null_ptr, c_loc, &
-                                           c_f_pointer
+    use, intrinsic :: iso_c_binding, only: c_bool, c_char, c_null_char, c_funptr, &
+                                           c_f_procpointer, c_associated, c_ptr, &
+                                           c_null_ptr, c_loc, c_f_pointer
 
     implicit none
 
@@ -22,32 +23,27 @@ module test_reference
     integer(ip), parameter :: n_param = 3_ip
     integer(c_ip), parameter :: n_param_c = int(n_param, kind=c_ip)
 
-    ! derived types for solver settings
-    type ref_settings_type
-        logical :: stability, line_search, max_precision_reached
-        real(rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
-        integer(ip) :: n_random_trial_vectors, n_macro, n_micro, &
-                       jacobi_davidson_start, seed, verbose, n_update_orbs, n_hess_x, &
-                       n_iter
-        character(len=kw_len, kind=c_char) :: subsystem_solver, diag_solver
-    end type
-
-    type, bind(C) :: ref_settings_type_c
-        logical(c_bool) :: stability, line_search, max_precision_reached
-        real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
-        integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
-                         jacobi_davidson_start, seed, verbose, n_update_orbs, &
-                         n_hess_x, n_iter
-        character(kind=c_char) :: subsystem_solver(kw_len + 1), diag_solver(kw_len + 1)
-    end type
-
-    ! general reference parameters
-    type(ref_settings_type) :: ref_settings = ref_settings_type( &
-        stability=.true., line_search=.true., max_precision_reached=.true., &
-        conv_tol=1e-3_rp, start_trust_radius=0.2_rp, global_red_factor=1e-2_rp, &
-        local_red_factor=1e-3_rp, n_random_trial_vectors=5, n_macro=300, n_micro=200, &
-        jacobi_davidson_start=10, seed=33, verbose=3, n_iter=50, n_update_orbs=7, &
-        n_hess_x=11, subsystem_solver="tcg", diag_solver="jacobi-davidson")
+    ! reference settings, every field has a value distinct from every other field of
+    ! the same kind and from its default value, so that a field read from or written to
+    ! the wrong place or not converted at all is detected, the nested stability check
+    ! settings of the reference solver settings are the reference stability check
+    ! settings
+    type(stability_settings_type), parameter :: ref_stability_settings = &
+        stability_settings_type(precond=null(), project=null(), logger=null(), &
+                                initialized=.true., conv_tol=5e-6_rp, &
+                                n_random_trial_vectors=6, n_iter=60, &
+                                jacobi_davidson_start=13, seed=34, verbose=2, &
+                                n_hess_x=12, diag_solver="jacobi-davidson")
+    type(solver_settings_type), parameter :: ref_solver_settings = &
+        solver_settings_type(precond=null(), project=null(), conv_check=null(), &
+                             logger=null(), stability=.true., line_search=.false., &
+                             initialized=.true., max_precision_reached=.true., &
+                             conv_tol=2e-3_rp, start_trust_radius=0.3_rp, &
+                             global_red_factor=3e-2_rp, local_red_factor=4e-3_rp, &
+                             n_random_trial_vectors=5, n_macro=300, n_micro=200, &
+                             jacobi_davidson_start=10, seed=33, verbose=3, &
+                             n_update_orbs=7, n_hess_x=11, subsystem_solver="tcg", &
+                             stability_settings=ref_stability_settings)
 
     ! the callback function pointers are exercised here without host data, so they
     ! are handed an unassociated context
@@ -67,19 +63,26 @@ module test_reference
     logical :: host_context_armed = .false., host_context_wrong = .false., &
                host_context_missing = .false.
 
-    interface assignment(=)
-        module procedure assign_ref_to_solver
-        module procedure assign_ref_to_stability
-        module procedure assign_ref_to_solver_c
-        module procedure assign_ref_to_stability_c
-        module procedure assign_ref_to_ref_c
+    ! checks and operations on all callback functions of settings, so that a new
+    ! callback function only needs to be added here
+    interface callbacks_unset
+        module procedure solver_callbacks_unset
+        module procedure stability_callbacks_unset
+        module procedure solver_callbacks_unset_c
+        module procedure stability_callbacks_unset_c
+    end interface
+
+    interface unset_callbacks
+        module procedure unset_solver_callbacks_c
+        module procedure unset_stability_callbacks_c
+    end interface
+
+    interface callbacks_wrapped
+        module procedure solver_callbacks_wrapped
+        module procedure stability_callbacks_wrapped
     end interface
 
     interface operator(==)
-        module procedure equal_solver_to_ref
-        module procedure equal_stability_to_ref
-        module procedure equal_solver_c_to_ref
-        module procedure equal_stability_c_to_ref
         module procedure equal_solver
         module procedure equal_stability
         module procedure equal_solver_c
@@ -87,10 +90,6 @@ module test_reference
     end interface
 
     interface operator(/=)
-        module procedure not_equal_solver_to_ref
-        module procedure not_equal_stability_to_ref
-        module procedure not_equal_solver_c_to_ref
-        module procedure not_equal_stability_c_to_ref
         module procedure not_equal_solver
         module procedure not_equal_stability
         module procedure not_equal_solver_c
@@ -255,6 +254,581 @@ contains
         host_context_armed = .false.
 
     end function host_context_reached
+
+    function ref_character_to_c(char_f) result(char_c)
+        !
+        ! this function converts a Fortran character string to a C null-terminated
+        ! character array, independently of the conversion routine under test
+        !
+        character(len=*), intent(in) :: char_f
+        character(kind=c_char) :: char_c(len_trim(char_f) + 1)
+
+        integer(ip) :: i
+
+        do i = 1, len_trim(char_f)
+            char_c(i) = char_f(i:i)
+        end do
+        char_c(len_trim(char_f) + 1) = c_null_char
+
+    end function ref_character_to_c
+
+    function ref_character_from_c(char_c) result(char_f)
+        !
+        ! this function converts a C null-terminated character array to a Fortran
+        ! character string, independently of the conversion routine under test
+        !
+        character(kind=c_char), intent(in) :: char_c(*)
+        character(len=:), allocatable :: char_f
+
+        integer(ip) :: i
+
+        char_f = ""
+        i = 1
+        do while (char_c(i) /= c_null_char)
+            char_f = char_f//char_c(i)
+            i = i + 1
+        end do
+
+    end function ref_character_from_c
+
+    logical function equal_solver(lhs, rhs)
+        !
+        ! this function overloads the comparison operator to compare solver settings to
+        ! different solver settings
+        !
+        type(solver_settings_type), intent(in) :: lhs, rhs
+
+        equal_solver = &
+            (lhs%stability .eqv. rhs%stability) .and. &
+            (lhs%line_search .eqv. rhs%line_search) .and. &
+            (lhs%initialized .eqv. rhs%initialized) .and. &
+            (lhs%max_precision_reached .eqv. rhs%max_precision_reached) .and. &
+            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
+            abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
+            abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
+            abs(lhs%local_red_factor - rhs%local_red_factor) <= tol .and. &
+            lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
+            lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
+            lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
+            lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
+            lhs%n_update_orbs == rhs%n_update_orbs .and. &
+            lhs%n_hess_x == rhs%n_hess_x .and. &
+            lhs%subsystem_solver == rhs%subsystem_solver .and. &
+            lhs%stability_settings == rhs%stability_settings
+
+    end function equal_solver
+
+    logical function not_equal_solver(lhs, rhs)
+        !
+        ! this function overloads the negated comparison operator to compare solver
+        ! settings to different solver settings
+        !
+        type(solver_settings_type), intent(in) :: lhs, rhs
+
+        not_equal_solver = .not. (lhs == rhs)
+
+    end function not_equal_solver
+
+    logical function equal_stability(lhs, rhs)
+        !
+        ! this function overloads the comparison operator to compare stability settings
+        ! to different stability settings
+        !
+        type(stability_settings_type), intent(in) :: lhs, rhs
+
+        equal_stability = &
+            (lhs%initialized .eqv. rhs%initialized) .and. &
+            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
+            lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
+            lhs%n_iter == rhs%n_iter .and. &
+            lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
+            lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
+            lhs%n_hess_x == rhs%n_hess_x .and. lhs%diag_solver == rhs%diag_solver
+
+    end function equal_stability
+
+    logical function not_equal_stability(lhs, rhs)
+        !
+        ! this function overloads the negated comparison operator to compare stability
+        ! settings to different stability settings
+        !
+        type(stability_settings_type), intent(in) :: lhs, rhs
+
+        not_equal_stability = .not. (lhs == rhs)
+
+    end function not_equal_stability
+
+    logical function equal_solver_c(lhs_c, rhs)
+        !
+        ! this function overloads the comparison operator to compare C solver settings
+        ! to Fortran solver settings field by field, independently of the conversion
+        ! routines under test
+        !
+        use c_interface, only: solver_settings_type_c
+
+        type(solver_settings_type_c), intent(in) :: lhs_c
+        type(solver_settings_type), intent(in) :: rhs
+
+        equal_solver_c = &
+            (lhs_c%stability .eqv. logical(rhs%stability, kind=c_bool)) .and. &
+            (lhs_c%line_search .eqv. logical(rhs%line_search, kind=c_bool)) .and. &
+            (lhs_c%initialized .eqv. logical(rhs%initialized, kind=c_bool)) .and. &
+            (lhs_c%max_precision_reached .eqv. &
+             logical(rhs%max_precision_reached, kind=c_bool)) .and. &
+            abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
+            abs(lhs_c%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
+            abs(lhs_c%global_red_factor - rhs%global_red_factor) <= tol .and. &
+            abs(lhs_c%local_red_factor - rhs%local_red_factor) <= tol .and. &
+            lhs_c%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
+            lhs_c%n_macro == rhs%n_macro .and. lhs_c%n_micro == rhs%n_micro .and. &
+            lhs_c%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
+            lhs_c%seed == rhs%seed .and. lhs_c%verbose == rhs%verbose .and. &
+            lhs_c%n_update_orbs == rhs%n_update_orbs .and. &
+            lhs_c%n_hess_x == rhs%n_hess_x .and. &
+            ref_character_from_c(lhs_c%subsystem_solver) == &
+            trim(rhs%subsystem_solver) .and. &
+            lhs_c%stability_settings == rhs%stability_settings
+
+    end function equal_solver_c
+
+    logical function not_equal_solver_c(lhs_c, rhs)
+        !
+        ! this function overloads the negated comparison operator to compare C solver
+        ! settings to Fortran solver settings
+        !
+        use c_interface, only: solver_settings_type_c
+
+        type(solver_settings_type_c), intent(in) :: lhs_c
+        type(solver_settings_type), intent(in) :: rhs
+
+        not_equal_solver_c = .not. (lhs_c == rhs)
+
+    end function not_equal_solver_c
+
+    logical function equal_stability_c(lhs_c, rhs)
+        !
+        ! this function overloads the comparison operator to compare C stability
+        ! settings to Fortran stability settings field by field, independently of the
+        ! conversion routines under test
+        !
+        use c_interface, only: stability_settings_type_c
+
+        type(stability_settings_type_c), intent(in) :: lhs_c
+        type(stability_settings_type), intent(in) :: rhs
+
+        equal_stability_c = &
+            (lhs_c%initialized .eqv. logical(rhs%initialized, kind=c_bool)) .and. &
+            abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
+            lhs_c%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
+            lhs_c%n_iter == rhs%n_iter .and. &
+            lhs_c%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
+            lhs_c%seed == rhs%seed .and. lhs_c%verbose == rhs%verbose .and. &
+            lhs_c%n_hess_x == rhs%n_hess_x .and. &
+            ref_character_from_c(lhs_c%diag_solver) == trim(rhs%diag_solver)
+
+    end function equal_stability_c
+
+    logical function not_equal_stability_c(lhs_c, rhs)
+        !
+        ! this function overloads the negated comparison operator to compare C
+        ! stability settings to Fortran stability settings
+        !
+        use c_interface, only: stability_settings_type_c
+
+        type(stability_settings_type_c), intent(in) :: lhs_c
+        type(stability_settings_type), intent(in) :: rhs
+
+        not_equal_stability_c = .not. (lhs_c == rhs)
+
+    end function not_equal_stability_c
+
+    subroutine get_reference_solver_values(values_out, true_logical) bind(C)
+        !
+        ! this subroutine exports the reference solver settings as C settings whose
+        ! fields are set one by one without the conversion routines under test, the
+        ! callback function pointers and host contexts are set to distinct addresses,
+        ! and if the name of a logical (prefixed by "stability_settings." for the
+        ! nested settings) is given, which only the layout tests do, only this logical
+        ! is set so that they can tell swapped logicals apart, otherwise the logicals
+        ! take their reference values
+        !
+        use c_interface, only: solver_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr
+
+        type(solver_settings_type_c), intent(out) :: values_out
+        character(kind=c_char), intent(in), optional :: true_logical(*)
+
+        character(len=:), allocatable :: name
+
+        ! set callback function pointers and host context to distinct addresses
+        values_out%precond = transfer(1_c_intptr_t, c_null_funptr)
+        values_out%project = transfer(2_c_intptr_t, c_null_funptr)
+        values_out%conv_check = transfer(3_c_intptr_t, c_null_funptr)
+        values_out%logger = transfer(4_c_intptr_t, c_null_funptr)
+        values_out%context = transfer(5_c_intptr_t, c_null_ptr)
+
+        ! set logicals
+        name = ""
+        if (present(true_logical)) name = ref_character_from_c(true_logical)
+        if (len(name) == 0) then
+            values_out%stability = ref_solver_settings%stability
+            values_out%line_search = ref_solver_settings%line_search
+            values_out%initialized = ref_solver_settings%initialized
+            values_out%max_precision_reached = ref_solver_settings%max_precision_reached
+        else
+            values_out%stability = name == "stability"
+            values_out%line_search = name == "line_search"
+            values_out%initialized = name == "initialized"
+            values_out%max_precision_reached = name == "max_precision_reached"
+        end if
+
+        ! set reals
+        values_out%conv_tol = ref_solver_settings%conv_tol
+        values_out%start_trust_radius = ref_solver_settings%start_trust_radius
+        values_out%global_red_factor = ref_solver_settings%global_red_factor
+        values_out%local_red_factor = ref_solver_settings%local_red_factor
+
+        ! set integers
+        values_out%n_random_trial_vectors = ref_solver_settings%n_random_trial_vectors
+        values_out%n_macro = ref_solver_settings%n_macro
+        values_out%n_micro = ref_solver_settings%n_micro
+        values_out%jacobi_davidson_start = ref_solver_settings%jacobi_davidson_start
+        values_out%seed = ref_solver_settings%seed
+        values_out%verbose = ref_solver_settings%verbose
+        values_out%n_update_orbs = ref_solver_settings%n_update_orbs
+        values_out%n_hess_x = ref_solver_settings%n_hess_x
+
+        ! set keyword
+        values_out%subsystem_solver = c_null_char
+        values_out%subsystem_solver(:len_trim(ref_solver_settings%subsystem_solver) + &
+                                    1) = &
+            ref_character_to_c(ref_solver_settings%subsystem_solver)
+
+        ! set nested stability check settings
+        call get_reference_stability_values(values_out%stability_settings)
+        if (len(name) > 0) values_out%stability_settings%initialized = &
+            name == "stability_settings.initialized"
+
+    end subroutine get_reference_solver_values
+
+    subroutine get_reference_stability_values(values_out)
+        !
+        ! this subroutine sets C stability check settings to the reference values field
+        ! by field without the conversion routines under test, the callback function
+        ! pointers and host context are set to distinct addresses which also differ
+        ! from those of the solver settings
+        !
+        use c_interface, only: stability_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr
+
+        type(stability_settings_type_c), intent(out) :: values_out
+
+        ! set callback function pointers and host context to distinct addresses
+        values_out%precond = transfer(6_c_intptr_t, c_null_funptr)
+        values_out%project = transfer(7_c_intptr_t, c_null_funptr)
+        values_out%logger = transfer(8_c_intptr_t, c_null_funptr)
+        values_out%context = transfer(9_c_intptr_t, c_null_ptr)
+
+        ! set logical, real and integers
+        values_out%initialized = ref_stability_settings%initialized
+        values_out%conv_tol = ref_stability_settings%conv_tol
+        values_out%n_random_trial_vectors = &
+            ref_stability_settings%n_random_trial_vectors
+        values_out%n_iter = ref_stability_settings%n_iter
+        values_out%jacobi_davidson_start = ref_stability_settings%jacobi_davidson_start
+        values_out%seed = ref_stability_settings%seed
+        values_out%verbose = ref_stability_settings%verbose
+        values_out%n_hess_x = ref_stability_settings%n_hess_x
+
+        ! set keyword
+        values_out%diag_solver = c_null_char
+        values_out%diag_solver(:len_trim(ref_stability_settings%diag_solver) + 1) = &
+            ref_character_to_c(ref_stability_settings%diag_solver)
+
+    end subroutine get_reference_stability_values
+
+    subroutine reference_field(name_c, field_value, keyword_c) bind(C)
+        !
+        ! this subroutine returns the value of a field of the C solver settings
+        ! exported by get_reference_solver_values by its name, prefixed by
+        ! "stability_settings." for the nested settings, which also describe
+        ! standalone stability check settings, a numeric, logical (as 1 or 0) or
+        ! pointer (as its address) field in field_value and a keyword field as a
+        ! null-terminated character array in keyword_c, so that the C and Python tests
+        ! need no values of their own and compare what they read through their own
+        ! declarations with what the Fortran declaration reads
+        !
+        use c_interface, only: solver_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_intptr_t
+
+        character(kind=c_char), intent(in) :: name_c(*)
+        real(c_rp), intent(out) :: field_value
+        character(kind=c_char), intent(out) :: keyword_c(kw_len + 1)
+
+        type(solver_settings_type_c) :: values
+        character(len=:), allocatable :: name
+
+        ! export reference values and select field by name
+        field_value = 0.0_c_rp
+        keyword_c = c_null_char
+        call get_reference_solver_values(values)
+        name = ref_character_from_c(name_c)
+        select case (name)
+        case ("precond")
+            field_value = address(values%precond)
+        case ("project")
+            field_value = address(values%project)
+        case ("conv_check")
+            field_value = address(values%conv_check)
+        case ("logger")
+            field_value = address(values%logger)
+        case ("context")
+            field_value = real(transfer(values%context, 0_c_intptr_t), kind=c_rp)
+        case ("stability")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%stability)
+        case ("line_search")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%line_search)
+        case ("initialized")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%initialized)
+        case ("max_precision_reached")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%max_precision_reached)
+        case ("conv_tol")
+            field_value = values%conv_tol
+        case ("start_trust_radius")
+            field_value = values%start_trust_radius
+        case ("global_red_factor")
+            field_value = values%global_red_factor
+        case ("local_red_factor")
+            field_value = values%local_red_factor
+        case ("n_random_trial_vectors")
+            field_value = values%n_random_trial_vectors
+        case ("n_macro")
+            field_value = values%n_macro
+        case ("n_micro")
+            field_value = values%n_micro
+        case ("jacobi_davidson_start")
+            field_value = values%jacobi_davidson_start
+        case ("seed")
+            field_value = values%seed
+        case ("verbose")
+            field_value = values%verbose
+        case ("n_update_orbs")
+            field_value = values%n_update_orbs
+        case ("n_hess_x")
+            field_value = values%n_hess_x
+        case ("subsystem_solver")
+            keyword_c = values%subsystem_solver
+        case ("stability_settings.precond")
+            field_value = address(values%stability_settings%precond)
+        case ("stability_settings.project")
+            field_value = address(values%stability_settings%project)
+        case ("stability_settings.logger")
+            field_value = address(values%stability_settings%logger)
+        case ("stability_settings.context")
+            field_value = real( &
+                transfer(values%stability_settings%context, 0_c_intptr_t), kind=c_rp)
+        case ("stability_settings.initialized")
+            field_value = &
+                merge(1.0_c_rp, 0.0_c_rp, values%stability_settings%initialized)
+        case ("stability_settings.conv_tol")
+            field_value = values%stability_settings%conv_tol
+        case ("stability_settings.n_random_trial_vectors")
+            field_value = values%stability_settings%n_random_trial_vectors
+        case ("stability_settings.n_iter")
+            field_value = values%stability_settings%n_iter
+        case ("stability_settings.jacobi_davidson_start")
+            field_value = values%stability_settings%jacobi_davidson_start
+        case ("stability_settings.seed")
+            field_value = values%stability_settings%seed
+        case ("stability_settings.verbose")
+            field_value = values%stability_settings%verbose
+        case ("stability_settings.n_hess_x")
+            field_value = values%stability_settings%n_hess_x
+        case ("stability_settings.diag_solver")
+            keyword_c = values%stability_settings%diag_solver
+        case default
+            write(stderr, *) "reference_field: unknown field "//name//"."
+            field_value = huge(1.0_c_rp)
+        end select
+
+    contains
+
+        real(c_rp) function address(funptr)
+            !
+            ! this function returns the address of a C function pointer
+            !
+            type(c_funptr), intent(in) :: funptr
+
+            address = real(transfer(funptr, 0_c_intptr_t), kind=c_rp)
+
+        end function address
+
+    end subroutine reference_field
+
+    logical function solver_callbacks_unset(settings)
+        !
+        ! this function checks that no callback function of solver settings, including
+        ! those of the nested stability check settings, is associated
+        !
+        type(solver_settings_type), intent(in) :: settings
+
+        solver_callbacks_unset = .not. ( &
+            associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%conv_check) .or. associated(settings%logger)) .and. &
+                                 stability_callbacks_unset(settings%stability_settings)
+
+    end function solver_callbacks_unset
+
+    logical function stability_callbacks_unset(settings)
+        !
+        ! this function checks that no callback function of stability check settings is
+        ! associated
+        !
+        type(stability_settings_type), intent(in) :: settings
+
+        stability_callbacks_unset = .not. (associated(settings%precond) .or. &
+                                           associated(settings%project) .or. &
+                                           associated(settings%logger))
+
+    end function stability_callbacks_unset
+
+    logical function solver_callbacks_unset_c(settings_c)
+        !
+        ! this function checks that no callback function of C solver settings, including
+        ! those of the nested stability check settings, is associated
+        !
+        use c_interface, only: solver_settings_type_c
+
+        type(solver_settings_type_c), intent(in) :: settings_c
+
+        solver_callbacks_unset_c = &
+            .not. (c_associated(settings_c%precond) .or. &
+                   c_associated(settings_c%project) .or. &
+                   c_associated(settings_c%conv_check) .or. &
+                   c_associated(settings_c%logger)) .and. &
+            stability_callbacks_unset_c(settings_c%stability_settings)
+
+    end function solver_callbacks_unset_c
+
+    logical function stability_callbacks_unset_c(settings_c)
+        !
+        ! this function checks that no callback function of C stability check settings
+        ! is associated
+        !
+        use c_interface, only: stability_settings_type_c
+
+        type(stability_settings_type_c), intent(in) :: settings_c
+
+        stability_callbacks_unset_c = .not. (c_associated(settings_c%precond) .or. &
+                                             c_associated(settings_c%project) .or. &
+                                             c_associated(settings_c%logger))
+
+    end function stability_callbacks_unset_c
+
+    subroutine unset_solver_callbacks_c(settings_c)
+        !
+        ! this subroutine unsets every callback function of C solver settings,
+        ! including those of the nested stability check settings
+        !
+        use c_interface, only: solver_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_null_funptr
+
+        type(solver_settings_type_c), intent(inout) :: settings_c
+
+        settings_c%precond = c_null_funptr
+        settings_c%project = c_null_funptr
+        settings_c%conv_check = c_null_funptr
+        settings_c%logger = c_null_funptr
+        call unset_stability_callbacks_c(settings_c%stability_settings)
+
+    end subroutine unset_solver_callbacks_c
+
+    subroutine unset_stability_callbacks_c(settings_c)
+        !
+        ! this subroutine unsets every callback function of C stability check settings
+        !
+        use c_interface, only: stability_settings_type_c
+        use, intrinsic :: iso_c_binding, only: c_null_funptr
+
+        type(stability_settings_type_c), intent(inout) :: settings_c
+
+        settings_c%precond = c_null_funptr
+        settings_c%project = c_null_funptr
+        settings_c%logger = c_null_funptr
+
+    end subroutine unset_stability_callbacks_c
+
+    logical function solver_callbacks_wrapped(settings)
+        !
+        ! this function checks that every callback function of solver settings converted
+        ! from C, including those of the nested stability check settings, is associated
+        ! with its wrapper
+        !
+        use c_interface, only: precond_f_wrapper, project_f_wrapper, &
+                               conv_check_f_wrapper, logger_f_wrapper
+
+        type(solver_settings_type), intent(in) :: settings
+
+        solver_callbacks_wrapped = &
+            associated(settings%precond, precond_f_wrapper) .and. &
+            associated(settings%project, project_f_wrapper) .and. &
+            associated(settings%conv_check, conv_check_f_wrapper) .and. &
+            associated(settings%logger, logger_f_wrapper) .and. &
+            stability_callbacks_wrapped(settings%stability_settings)
+
+    end function solver_callbacks_wrapped
+
+    logical function stability_callbacks_wrapped(settings)
+        !
+        ! this function checks that every callback function of stability check
+        ! settings converted from C is associated with its wrapper
+        !
+        use c_interface, only: precond_f_wrapper, project_f_wrapper, logger_f_wrapper
+
+        type(stability_settings_type), intent(in) :: settings
+
+        stability_callbacks_wrapped = &
+            associated(settings%precond, precond_f_wrapper) .and. &
+            associated(settings%project, project_f_wrapper) .and. &
+            associated(settings%logger, logger_f_wrapper)
+
+    end function stability_callbacks_wrapped
+
+    logical(c_bool) function is_default_solver_settings(settings_c) bind(C)
+        !
+        ! this function checks whether C solver settings hold the default values
+        ! without callback functions and host contexts, so that a C test can compare
+        ! against them without values of its own
+        !
+        use opentrustregion, only: default_solver_settings
+        use c_interface, only: solver_settings_type_c
+
+        type(solver_settings_type_c), intent(in) :: settings_c
+
+        is_default_solver_settings = &
+            settings_c == default_solver_settings .and. &
+            callbacks_unset(settings_c) .and. &
+            .not. c_associated(settings_c%context) .and. &
+            .not. c_associated(settings_c%stability_settings%context)
+
+    end function is_default_solver_settings
+
+    logical(c_bool) function is_default_stability_settings(settings_c) bind(C)
+        !
+        ! this function checks whether C stability check settings hold the default
+        ! values without callback functions and host context, so that a C test can
+        ! compare against them without values of its own
+        !
+        use opentrustregion, only: default_stability_settings
+        use c_interface, only: stability_settings_type_c
+
+        type(stability_settings_type_c), intent(in) :: settings_c
+
+        is_default_stability_settings = settings_c == default_stability_settings .and. &
+                                        callbacks_unset(settings_c) .and. &
+                                        .not. c_associated(settings_c%context)
+
+    end function is_default_stability_settings
 
     function test_update_orbs_funptr(update_orbs_funptr, test_name, message, context) &
         result(test_passed)
@@ -1012,554 +1586,5 @@ contains
         end if
 
     end function test_conv_check_c_funptr
-
-    subroutine get_reference_values(ref_settings_out) bind(C)
-        !
-        ! this subroutine exports the reference values for tests
-        !
-        type(ref_settings_type_c), intent(out) :: ref_settings_out
-
-        ref_settings_out = ref_settings
-
-    end subroutine get_reference_values
-
-    subroutine get_default_solver_values(default_values_out) bind(C)
-        !
-        ! this subroutine exports the default values for tests
-        !
-        use opentrustregion, only: default_solver_settings
-        use c_interface, only: solver_settings_type_c, assignment(=)
-
-        type(solver_settings_type_c), intent(out) :: default_values_out
-
-        default_values_out = default_solver_settings
-
-    end subroutine get_default_solver_values
-
-    subroutine get_default_stability_values(default_values_out) bind(C)
-        !
-        ! this subroutine exports the default values for tests
-        !
-        use opentrustregion, only: default_stability_settings
-        use c_interface, only: stability_settings_type_c, assignment(=)
-
-        type(stability_settings_type_c), intent(out) :: default_values_out
-
-        default_values_out = default_stability_settings
-
-    end subroutine get_default_stability_values
-
-    subroutine get_sentinel_solver_values(values_out, true_logical) bind(C)
-        !
-        ! this subroutine exports solver settings whose fields are set one by one to
-        ! distinct sentinel values, so that the C tests can check that every field is
-        ! read back under its own name, the logical numbered true_logical is set
-        ! so that swapped logicals can also be told apart
-        !
-        use c_interface, only: solver_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr, &
-                                               c_null_char
-
-        type(solver_settings_type_c), intent(out) :: values_out
-        integer(c_ip), value, intent(in) :: true_logical
-
-        ! set callback function pointers and host context to distinct addresses
-        values_out%precond = transfer(1_c_intptr_t, c_null_funptr)
-        values_out%project = transfer(2_c_intptr_t, c_null_funptr)
-        values_out%conv_check = transfer(3_c_intptr_t, c_null_funptr)
-        values_out%logger = transfer(4_c_intptr_t, c_null_funptr)
-        values_out%context = transfer(5_c_intptr_t, c_null_ptr)
-
-        ! set logicals
-        values_out%stability = true_logical == 1
-        values_out%line_search = true_logical == 2
-        values_out%initialized = true_logical == 3
-        values_out%max_precision_reached = true_logical == 4
-
-        ! set reals
-        values_out%conv_tol = 1.5_c_rp
-        values_out%start_trust_radius = 2.5_c_rp
-        values_out%global_red_factor = 3.5_c_rp
-        values_out%local_red_factor = 4.5_c_rp
-
-        ! set integers
-        values_out%n_random_trial_vectors = 11
-        values_out%n_macro = 12
-        values_out%n_micro = 13
-        values_out%jacobi_davidson_start = 14
-        values_out%seed = 15
-        values_out%verbose = 16
-        values_out%n_update_orbs = 17
-        values_out%n_hess_x = 18
-
-        ! set keyword
-        values_out%subsystem_solver = c_null_char
-        values_out%subsystem_solver(1:6) = transfer("solver", &
-                                                    values_out%subsystem_solver(1:6))
-
-        ! set nested stability settings
-        call get_sentinel_stability_values(values_out%stability_settings)
-
-    end subroutine get_sentinel_solver_values
-
-    subroutine get_sentinel_stability_values(values_out)
-        !
-        ! this subroutine sets the fields of stability check settings one by one to
-        ! distinct sentinel values, which also differ from those of the solver
-        ! settings, for the nested stability settings exported by
-        ! get_sentinel_solver_values
-        !
-        use c_interface, only: stability_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr, &
-                                               c_null_char
-
-        type(stability_settings_type_c), intent(out) :: values_out
-
-        ! set callback function pointers and host context to distinct addresses
-        values_out%precond = transfer(6_c_intptr_t, c_null_funptr)
-        values_out%project = transfer(7_c_intptr_t, c_null_funptr)
-        values_out%logger = transfer(8_c_intptr_t, c_null_funptr)
-        values_out%context = transfer(9_c_intptr_t, c_null_ptr)
-
-        ! set logical
-        values_out%initialized = .true.
-
-        ! set real
-        values_out%conv_tol = 5.5_c_rp
-
-        ! set integers
-        values_out%n_random_trial_vectors = 21
-        values_out%n_iter = 22
-        values_out%jacobi_davidson_start = 23
-        values_out%seed = 24
-        values_out%verbose = 25
-        values_out%n_hess_x = 26
-
-        ! set keyword
-        values_out%diag_solver = c_null_char
-        values_out%diag_solver(1:9) = transfer("stability", values_out%diag_solver(1:9))
-
-    end subroutine get_sentinel_stability_values
-
-    subroutine assign_ref_to_solver(lhs, rhs)
-        !
-        ! this subroutine overloads the assignment operator to set solver settings to
-        ! reference values
-        !
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type), intent(out) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        ! unassociate function pointers
-        lhs%precond => null()
-        lhs%project => null()
-        lhs%conv_check => null()
-        lhs%logger => null()
-
-        ! set reference values
-        lhs%stability = rhs%stability
-        lhs%line_search = rhs%line_search
-        lhs%max_precision_reached = rhs%max_precision_reached
-        lhs%conv_tol = rhs%conv_tol
-        lhs%start_trust_radius = rhs%start_trust_radius
-        lhs%global_red_factor = rhs%global_red_factor
-        lhs%local_red_factor = rhs%local_red_factor
-        lhs%n_random_trial_vectors = rhs%n_random_trial_vectors
-        lhs%n_macro = rhs%n_macro
-        lhs%n_micro = rhs%n_micro
-        lhs%jacobi_davidson_start = rhs%jacobi_davidson_start
-        lhs%seed = rhs%seed
-        lhs%verbose = rhs%verbose
-        lhs%n_update_orbs = rhs%n_update_orbs
-        lhs%n_hess_x = rhs%n_hess_x
-        lhs%subsystem_solver = rhs%subsystem_solver
-
-        ! set nested stability check settings
-        lhs%stability_settings = rhs
-
-        ! set initialization logical
-        lhs%initialized = .true.
-
-    end subroutine assign_ref_to_solver
-
-    subroutine assign_ref_to_stability(lhs, rhs)
-        !
-        ! this subroutine overloads the assignment operator to set stability settings
-        ! to reference values
-        !
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type), intent(out) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        ! unassociate function pointers
-        lhs%precond => null()
-        lhs%project => null()
-        lhs%logger => null()
-
-        ! set reference values
-        lhs%conv_tol = rhs%conv_tol
-        lhs%n_random_trial_vectors = rhs%n_random_trial_vectors
-        lhs%n_iter = rhs%n_iter
-        lhs%jacobi_davidson_start = rhs%jacobi_davidson_start
-        lhs%seed = rhs%seed
-        lhs%verbose = rhs%verbose
-        lhs%n_hess_x = rhs%n_hess_x
-        lhs%diag_solver = rhs%diag_solver
-
-        ! set initialization logical
-        lhs%initialized = .true.
-
-    end subroutine assign_ref_to_stability
-
-    subroutine assign_ref_to_solver_c(lhs_c, rhs)
-        !
-        ! this subroutine overloads the assignment operator to set C solver settings to
-        ! reference values
-        !
-        use c_interface, only: solver_settings_type_c, assignment(=)
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type_c), intent(out) :: lhs_c
-        type(ref_settings_type), intent(in) :: rhs
-
-        type(solver_settings_type) :: lhs
-
-        lhs = rhs
-        lhs_c = lhs
-
-    end subroutine assign_ref_to_solver_c
-
-    subroutine assign_ref_to_stability_c(lhs_c, rhs)
-        !
-        ! this subroutine overloads the assignment operator to set C stability settings
-        ! to reference values
-        !
-        use c_interface, only: stability_settings_type_c, assignment(=)
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type_c), intent(out) :: lhs_c
-        type(ref_settings_type), intent(in) :: rhs
-
-        type(stability_settings_type) :: lhs
-
-        lhs = rhs
-        lhs_c = lhs
-
-    end subroutine assign_ref_to_stability_c
-
-    subroutine assign_ref_to_ref_c(lhs, rhs)
-        !
-        ! this subroutine overloads the assignment operator to convert reference values
-        ! to their C counterpart
-        !
-        use c_interface, only: character_to_c
-
-        type(ref_settings_type_c), intent(out) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        lhs%stability = logical(rhs%stability, kind=c_bool)
-        lhs%line_search = logical(rhs%line_search, kind=c_bool)
-        lhs%max_precision_reached = logical(rhs%max_precision_reached, kind=c_bool)
-        lhs%conv_tol = real(rhs%conv_tol, kind=c_rp)
-        lhs%start_trust_radius = real(rhs%start_trust_radius, kind=c_rp)
-        lhs%global_red_factor = real(rhs%global_red_factor, kind=c_rp)
-        lhs%local_red_factor = real(rhs%local_red_factor, kind=c_rp)
-        lhs%n_random_trial_vectors = int(rhs%n_random_trial_vectors, kind=c_ip)
-        lhs%n_macro = int(rhs%n_macro, kind=c_ip)
-        lhs%n_micro = int(rhs%n_micro, kind=c_ip)
-        lhs%jacobi_davidson_start = int(rhs%jacobi_davidson_start, kind=c_ip)
-        lhs%seed = int(rhs%seed, kind=c_ip)
-        lhs%verbose = int(rhs%verbose, kind=c_ip)
-        lhs%n_iter = int(rhs%n_iter, kind=c_ip)
-        lhs%n_update_orbs = int(rhs%n_update_orbs, kind=c_ip)
-        lhs%n_hess_x = int(rhs%n_hess_x, kind=c_ip)
-        lhs%subsystem_solver = character_to_c(rhs%subsystem_solver)
-        lhs%diag_solver = character_to_c(rhs%diag_solver)
-
-    end subroutine assign_ref_to_ref_c
-
-    logical function equal_solver_to_ref(lhs, rhs)
-        !
-        ! this function overloads the comparison operator to compare solver settings to
-        ! reference values
-        !
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type), intent(in) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        equal_solver_to_ref = &
-            (lhs%stability .eqv. rhs%stability) .and. &
-            (lhs%line_search .eqv. rhs%line_search) .and. &
-            (lhs%max_precision_reached .eqv. rhs%max_precision_reached) .and. &
-            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
-            abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
-            abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
-            abs(lhs%local_red_factor - rhs%local_red_factor) <= tol .and. &
-            lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
-            lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
-            lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
-            lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%n_update_orbs == rhs%n_update_orbs .and. &
-            lhs%n_hess_x == rhs%n_hess_x .and. &
-            lhs%subsystem_solver == rhs%subsystem_solver .and. &
-            lhs%stability_settings == rhs
-
-    end function equal_solver_to_ref
-
-    logical function not_equal_solver_to_ref(lhs, rhs)
-        !
-        ! this function overloads the negated comparison operator to compare solver
-        ! settings to reference values
-        !
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type), intent(in) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        not_equal_solver_to_ref = .not. (lhs == rhs)
-
-    end function not_equal_solver_to_ref
-
-    logical function equal_stability_to_ref(lhs, rhs)
-        !
-        ! this function overloads the comparison operator to compare stability settings
-        ! to reference values
-        !
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type), intent(in) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        equal_stability_to_ref = &
-            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
-            lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
-            lhs%n_iter == rhs%n_iter .and. &
-            lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
-            lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%n_hess_x == rhs%n_hess_x .and. lhs%diag_solver == rhs%diag_solver
-
-    end function equal_stability_to_ref
-
-    logical function not_equal_stability_to_ref(lhs, rhs)
-        !
-        ! this function overloads the negated comparison operator to compare stability
-        ! settings to reference values
-        !
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type), intent(in) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        not_equal_stability_to_ref = .not. (lhs == rhs)
-
-    end function not_equal_stability_to_ref
-
-    logical function equal_solver_c_to_ref(lhs_c, rhs)
-        !
-        ! this function overloads the comparison operator to compare solver settings to
-        ! reference values
-        !
-        use c_interface, only: solver_settings_type_c, assignment(=)
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type_c), intent(in) :: lhs_c
-        type(ref_settings_type), intent(in) :: rhs
-
-        type(solver_settings_type) :: lhs
-
-        lhs = lhs_c
-        equal_solver_c_to_ref = lhs == rhs
-
-    end function equal_solver_c_to_ref
-
-    logical function not_equal_solver_c_to_ref(lhs, rhs)
-        !
-        ! this function overloads the negated comparison operator to compare solver
-        ! settings to reference values
-        !
-        use c_interface, only: solver_settings_type_c
-
-        type(solver_settings_type_c), intent(in) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        not_equal_solver_c_to_ref = .not. (lhs == rhs)
-
-    end function not_equal_solver_c_to_ref
-
-    logical function equal_stability_c_to_ref(lhs_c, rhs)
-        !
-        ! this function overloads the comparison operator to compare stability settings
-        ! to reference values
-        !
-        use c_interface, only: stability_settings_type_c, assignment(=)
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type_c), intent(in) :: lhs_c
-        type(ref_settings_type), intent(in) :: rhs
-
-        type(stability_settings_type) :: lhs
-
-        lhs = lhs_c
-        equal_stability_c_to_ref = lhs == rhs
-
-    end function equal_stability_c_to_ref
-
-    logical function not_equal_stability_c_to_ref(lhs, rhs)
-        !
-        ! this function overloads the negated comparison operator to compare stability
-        ! settings to reference values
-        !
-        use c_interface, only: stability_settings_type_c
-
-        type(stability_settings_type_c), intent(in) :: lhs
-        type(ref_settings_type), intent(in) :: rhs
-
-        not_equal_stability_c_to_ref = .not. (lhs == rhs)
-
-    end function not_equal_stability_c_to_ref
-
-    logical function equal_solver(lhs, rhs)
-        !
-        ! this function overloads the comparison operator to compare solver settings to
-        ! different solver settings
-        !
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type), intent(in) :: lhs, rhs
-
-        equal_solver = &
-            (lhs%stability .eqv. rhs%stability) .and. &
-            (lhs%line_search .eqv. rhs%line_search) .and. &
-            (lhs%initialized .eqv. rhs%initialized) .and. &
-            (lhs%max_precision_reached .eqv. rhs%max_precision_reached) .and. &
-            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
-            abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
-            abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
-            abs(lhs%local_red_factor - rhs%local_red_factor) <= tol .and. &
-            lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
-            lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
-            lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
-            lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%n_update_orbs == rhs%n_update_orbs .and. &
-            lhs%n_hess_x == rhs%n_hess_x .and. &
-            lhs%subsystem_solver == rhs%subsystem_solver .and. &
-            lhs%stability_settings == rhs%stability_settings
-
-    end function equal_solver
-
-    logical function not_equal_solver(lhs, rhs)
-        !
-        ! this function overloads the negated comparison operator to compare solver
-        ! settings to different solver settings
-        !
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type), intent(in) :: lhs, rhs
-
-        not_equal_solver = .not. (lhs == rhs)
-
-    end function not_equal_solver
-
-    logical function equal_stability(lhs, rhs)
-        !
-        ! this function overloads the comparison operator to compare stability settings
-        ! to different stability settings
-        !
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type), intent(in) :: lhs, rhs
-
-        equal_stability = &
-            (lhs%initialized .eqv. rhs%initialized) .and. &
-            abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
-            lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
-            lhs%n_iter == rhs%n_iter .and. &
-            lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
-            lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%n_hess_x == rhs%n_hess_x .and. lhs%diag_solver == rhs%diag_solver
-
-    end function equal_stability
-
-    logical function not_equal_stability(lhs, rhs)
-        !
-        ! this function overloads the negated comparison operator to compare stability
-        ! settings to different stability settings
-        !
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type), intent(in) :: lhs, rhs
-
-        not_equal_stability = .not. (lhs == rhs)
-
-    end function not_equal_stability
-
-    logical function equal_solver_c(lhs_c, rhs)
-        !
-        ! this function overloads the comparison operator to compare solver settings to
-        ! different solver settings
-        !
-        use c_interface, only: solver_settings_type_c, assignment(=)
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type_c), intent(in) :: lhs_c
-        type(solver_settings_type), intent(in) :: rhs
-
-        type(solver_settings_type) :: lhs
-
-        lhs = lhs_c
-        equal_solver_c = lhs == rhs
-
-    end function equal_solver_c
-
-    logical function not_equal_solver_c(lhs_c, rhs)
-        !
-        ! this function overloads the negated comparison operator to compare solver
-        ! settings to different solver settings
-        !
-        use c_interface, only: solver_settings_type_c
-        use opentrustregion, only: solver_settings_type
-
-        type(solver_settings_type_c), intent(in) :: lhs_c
-        type(solver_settings_type), intent(in) :: rhs
-
-        not_equal_solver_c = .not. (lhs_c == rhs)
-
-    end function not_equal_solver_c
-
-    logical function equal_stability_c(lhs_c, rhs)
-        !
-        ! this function overloads the comparison operator to compare stability settings
-        ! to different stability settings
-        !
-        use c_interface, only: stability_settings_type_c, assignment(=)
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type_c), intent(in) :: lhs_c
-        type(stability_settings_type), intent(in) :: rhs
-
-        type(stability_settings_type) :: lhs
-
-        lhs = lhs_c
-        equal_stability_c = lhs == rhs
-
-    end function equal_stability_c
-
-    logical function not_equal_stability_c(lhs_c, rhs)
-        !
-        ! this function overloads the negated comparison operator to compare stability
-        ! settings to different stability settings
-        !
-        use c_interface, only: stability_settings_type_c
-        use opentrustregion, only: stability_settings_type
-
-        type(stability_settings_type_c), intent(in) :: lhs_c
-        type(stability_settings_type), intent(in) :: rhs
-
-        not_equal_stability_c = .not. (lhs_c == rhs)
-
-    end function not_equal_stability_c
 
 end module test_reference

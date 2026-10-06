@@ -45,8 +45,34 @@ module opentrustregion
                               verbosity_warning = 2, verbosity_info = 3, &
                               verbosity_debug = 4
 
-    ! define log messages
+    ! define the options of the subsystem solver and of the diagonalization solver
     character(len=*), parameter :: &
+        subsystem_solver_options(3) = &
+            [character(len=15) :: "davidson", "jacobi-davidson", "tcg"], &
+        diag_solver_options(2) = [character(len=15) :: "davidson", "jacobi-davidson"]
+
+    ! define warning messages, which the tests compare against
+    character(len=*), parameter :: &
+        settings_uninitialized_warning_msg = &
+            "Settings were not initialized. All settings are set to default values", &
+        stability_settings_uninitialized_warning_msg = &
+            "Stability check settings were not initialized. All stability check "// &
+            "settings are set to default values", &
+        started_at_saddle_point_warning_msg = &
+            "Started at saddle point. The algorithm will continue by moving along "// &
+            "eigenvector direction corresponding to negative eigenvalue.", &
+        reached_saddle_point_warning_msg = &
+            "Reached saddle point. This is likely due to symmetry and can be "// &
+            "avoided by increasing the number of random trial vectors. The "// &
+            "algorithm will continue by moving along eigenvector direction "// &
+            "corresponding to negative eigenvalue.", &
+        unstable_warning_msg = "Solution not stable. Lowest eigenvalue: ", &
+        function_unchanged_warning_msg = &
+            "Function value barely changed. Convergence criterion is not fulfilled "// &
+            "but calculation should be converged up to floating point precision.", &
+        trust_radius_too_small_warning_msg = &
+            "Trust radius too small. Convergence criterion is not fulfilled but "// &
+            "calculation should be converged up to floating point precision.", &
         random_trial_vector_warning_msg = "Number of random trial vectors should "// &
                                           "be smaller than half the number of "// &
                                           "parameters.", &
@@ -229,15 +255,13 @@ contains
             call settings%init(error)
             call add_error_origin(error, error_solver, settings)
             if (error /= 0) return
-            call settings%log("Settings were not initialized. All settings are set "// &
-                              "to default values", verbosity_warning)
+            call settings%log(settings_uninitialized_warning_msg, verbosity_warning)
         end if
         if (.not. settings%stability_settings%initialized) then
             call settings%stability_settings%init(error)
             call add_error_origin(error, error_solver, settings)
             if (error /= 0) return
-            call settings%log("Stability check settings were not initialized. All "// &
-                              "stability check settings are set to default values", &
+            call settings%log(stability_settings_uninitialized_warning_msg, &
                               verbosity_warning)
         end if
 
@@ -397,19 +421,11 @@ contains
                             error = error_solver + 1
                             return
                         else if (imacro == 1) then
-                            call settings%log("Started at saddle point. The "// &
-                                              "algorithm will continue by moving "// &
-                                              "along eigenvector direction "// &
-                                              "corresponding to negative eigenvalue.", &
+                            call settings%log(started_at_saddle_point_warning_msg, &
                                               verbosity_warning)
                         else
-                            call settings%log( &
-                                "Reached saddle point. This is likely due to "// &
-                                "symmetry and can be avoided by increasing the "// &
-                                "number of random trial vectors. The algorithm "// &
-                                "will continue by moving along eigenvector "// &
-                                "direction corresponding to negative eigenvalue.", &
-                                verbosity_warning)
+                            call settings%log(reached_saddle_point_warning_msg, &
+                                              verbosity_warning)
                         end if
                         max_precision_reached = .false.
                         cycle
@@ -530,8 +546,7 @@ contains
             call settings%init(error)
             call add_error_origin(error, error_stability_check, settings)
             if (error /= 0) return
-            call settings%log("Settings were not initialized. All settings are set "// &
-                              "to default values", verbosity_warning)
+            call settings%log(settings_uninitialized_warning_msg, verbosity_warning)
         end if
 
         ! initialize random number generator
@@ -660,7 +675,7 @@ contains
             if (present(kappa)) kappa = 0.0_rp
         else
             if (present(kappa)) kappa = solution
-            write(msg, '(A, F0.4)') "Solution not stable. Lowest eigenvalue: ", eigval
+            write(msg, '(A, F0.4)') unstable_warning_msg, eigval
             call settings%log(msg, verbosity_warning)
         end if
 
@@ -2544,10 +2559,7 @@ contains
                 end if
             end do
         else
-            call settings%log("Function value barely changed. Convergence "// &
-                              "criterion is not fulfilled but calculation should "// &
-                              "be converged up to floating point precision.", &
-                              verbosity_warning)
+            call settings%log(function_unchanged_warning_msg, verbosity_warning)
             max_precision_reached = .true.
         end if
 
@@ -2579,10 +2591,7 @@ contains
             trust_radius = trust_radius_shrink_factor * trust_radius
             accept_trust_region_step = .false.
             if (trust_radius < numerical_zero) then
-                call settings%log("Trust radius too small. Convergence criterion "// &
-                                  "is not fulfilled but calculation should be "// &
-                                  "converged up to floating point precision.", &
-                                  verbosity_warning)
+                call settings%log(trust_radius_too_small_warning_msg, verbosity_warning)
                 max_precision_reached = .true.
                 return
             end if
@@ -2655,12 +2664,10 @@ contains
         end if
 
         ! check for character options
-        if (.not. (settings%subsystem_solver == "davidson" .or. &
-                   settings%subsystem_solver == "jacobi-davidson" .or. &
-                   settings%subsystem_solver == "tcg")) then
-            call settings%log("Subsystem solver option unknown. Possible values "// &
-                              "are ""davidson"", ""jacobi-davidson"", and ""tcg"" "// &
-                              "(truncated conjugate gradient)", verbosity_error, .true.)
+        if (.not. any(settings%subsystem_solver == subsystem_solver_options)) then
+            call settings%log( &
+                "Subsystem solver option unknown. Possible values are "// &
+                option_list(subsystem_solver_options)//".", verbosity_error, .true.)
             error = 1
             return
         end if
@@ -2695,11 +2702,10 @@ contains
         end if
 
         ! check for character options
-        if (.not. (settings%diag_solver == "davidson" .or. &
-                   settings%diag_solver == "jacobi-davidson")) then
-            call settings%log("Diagonalization solver option unknown. Possible "// &
-                              "values are ""davidson"" and ""jacobi-davidson""", &
-                              verbosity_error, .true.)
+        if (.not. any(settings%diag_solver == diag_solver_options)) then
+            call settings%log( &
+                "Diagonalization solver option unknown. Possible values are "// &
+                option_list(diag_solver_options)//".", verbosity_error, .true.)
             error = 1
             return
         end if
@@ -2748,5 +2754,23 @@ contains
         end do
 
     end function string_to_lowercase
+
+    function option_list(options) result(list)
+        !
+        ! this function lists options as quoted words separated by commas
+        !
+        character(len=*), intent(in) :: options(:)
+        character(len=:), allocatable :: list
+
+        integer(ip) :: i
+
+        ! append every option in quotes
+        list = ""
+        do i = 1, size(options)
+            if (i > 1) list = list//", "
+            list = list//""""//trim(options(i))//""""
+        end do
+
+    end function option_list
 
 end module opentrustregion

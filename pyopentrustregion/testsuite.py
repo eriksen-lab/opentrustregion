@@ -11,7 +11,7 @@ from importlib import resources
 from ctypes import (
     CDLL,
     c_bool,
-    c_char,
+    c_char_p,
     c_void_p,
     Array,
     byref,
@@ -115,6 +115,7 @@ fortran_tests = {
         "level_shifted_diag_precond",
         "minres",
         "newton_step",
+        "option_list",
         "orthogonal_projection",
         "print_message",
         "print_results",
@@ -170,6 +171,32 @@ fortran_tests = {
 for tests in fortran_tests.values():
     for test in tests:
         getattr(lib, f"test_{test}").restype = c_bool
+
+# define signatures of the Fortran functions providing the reference settings
+lib.reference_field.restype = None
+lib.get_reference_solver_values.argtypes = [
+    POINTER(SolverSettings.c_struct),
+    c_char_p,
+]
+lib.get_reference_solver_values.restype = None
+
+
+def reference(name, field_type):
+    """
+    this function returns the reference value of a settings field by its name,
+    prefixed by "stability_settings." for the nested settings, which also describe
+    standalone stability check settings, from the Fortran test reference module
+    """
+    value = c_real()
+    keyword = dict(SolverSettings.c_struct._fields_)["subsystem_solver"]()
+    lib.reference_field(name.encode(), byref(value), keyword)
+    if issubclass(field_type, Array):
+        return keyword.value.decode()
+    if field_type == c_bool:
+        return bool(value.value)
+    if field_type == c_int:
+        return int(value.value)
+    return value.value
 
 
 # define function to add tests to test classes
@@ -233,51 +260,6 @@ class PyInterfaceUnitTests(unittest.TestCase):
         print(50 * "-")
         print("Running unit tests for Python interface...")
         print(50 * "-")
-
-        # get combined fields
-        combined_fields = (
-            SolverSettings.c_struct._fields_ + StabilitySettings.c_struct._fields_
-        )
-
-        # get non-duplicate fields and allocate memory for reference values
-        fields = []
-        seen_names = set()
-        # loop by type order
-        for curr_type in (c_bool, c_real, c_int):
-            # solver fields of this type
-            for name, t in combined_fields:
-                if t == curr_type and name not in seen_names and name != "initialized":
-                    fields.append((name + "_ref", t))
-                    seen_names.add(name)
-
-        # handle fixed-size c_char arrays (strings)
-        for name, t in combined_fields:
-            if (
-                issubclass(t, Array)
-                and getattr(t, "_type_", None) is c_char
-                and name not in seen_names
-            ):
-                fields.append((name + "_ref", t))
-                seen_names.add(name)
-
-        # create class to read reference values
-        class RefSettingsC(Structure):
-            _fields_ = fields
-
-        # create instance
-        ref_settings = RefSettingsC()
-
-        # call Fortran to fill values
-        lib.get_reference_values.argtypes = [POINTER(RefSettingsC)]
-        lib.get_reference_values.restype = None
-        lib.get_reference_values(byref(ref_settings))
-
-        # extract Python values
-        for name, _ in fields:
-            ref_value = getattr(ref_settings, name)
-            if isinstance(ref_value, bytes):
-                ref_value = ref_value.decode("utf-8")
-            setattr(cls, name, ref_value)
 
         return super().setUpClass()
 
@@ -349,7 +331,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 or (isinstance(field_type, type) and issubclass(field_type, Structure))
             ):
                 continue
-            setattr(settings, field_name, getattr(self, field_name + "_ref"))
+            setattr(settings, field_name, reference(field_name, field_type))
 
         # set reference values for nested stability check settings
         for field_info in settings.stability_settings.c_struct._fields_:
@@ -359,7 +341,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             setattr(
                 settings.stability_settings,
                 field_name,
-                getattr(self, field_name + "_ref"),
+                reference("stability_settings." + field_name, field_type),
             )
 
         # initialize logging boolean
@@ -442,7 +424,11 @@ class PyInterfaceUnitTests(unittest.TestCase):
             field_name, field_type = field_info[:2]
             if field_type == c_void_p or field_name == "initialized":
                 continue
-            setattr(settings, field_name, getattr(self, field_name + "_ref"))
+            setattr(
+                settings,
+                field_name,
+                reference("stability_settings." + field_name, field_type),
+            )
 
         # allocate memory for descent direction
         kappa = np.empty(n_param, dtype=np.float64)
@@ -538,13 +524,12 @@ class PyInterfaceUnitTests(unittest.TestCase):
             elif isinstance(field_type, type) and issubclass(field_type, Structure):
                 continue
             else:
-                ref_value = getattr(self, field_name + "_ref")
+                ref_value = reference(field_name, field_type)
                 if field_type == c_real:
                     match = np.isclose(getattr(settings, field_name), ref_value)
                 else:
                     match = getattr(settings, field_name) == ref_value
                 if not match:
-                    print(field_name, getattr(settings, field_name), ref_value)
                     print(
                         f" test_solver_settings failed: Field {field_name} not "
                         "initialized correctly."
@@ -581,7 +566,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
                     )
                     test_passed = False
             else:
-                ref_value = getattr(self, field_name + "_ref")
+                ref_value = reference("stability_settings." + field_name, field_type)
                 if field_type == c_real:
                     match = np.isclose(
                         getattr(stability_settings, field_name), ref_value
@@ -657,13 +642,12 @@ class PyInterfaceUnitTests(unittest.TestCase):
                     )
                     test_passed = False
             else:
-                ref_value = getattr(self, field_name + "_ref")
+                ref_value = reference("stability_settings." + field_name, field_type)
                 if field_type == c_real:
                     match = np.isclose(getattr(settings, field_name), ref_value)
                 else:
                     match = getattr(settings, field_name) == ref_value
                 if not match:
-                    print(field_name, getattr(settings, field_name), ref_value)
                     print(
                         f" test_stability_settings failed: Field {field_name} not "
                         "initialized correctly."
@@ -798,98 +782,57 @@ class PyIntegrationTests(unittest.TestCase):
         """
         this function checks that every field of the Python settings structures,
         including the nested stability settings, is read back under its own name from
-        settings whose fields Fortran sets one by one to distinct sentinel values
+        settings whose fields Fortran sets one by one to the reference values
         """
         test_passed = True
-        lib.get_sentinel_solver_values.argtypes = [
-            POINTER(SolverSettings.c_struct),
-            c_int,
+
+        # names of the logicals, prefixed for the nested settings
+        logicals = [
+            name
+            for name, field_type in SolverSettings.c_struct._fields_
+            if field_type == c_bool
+        ] + [
+            "stability_settings." + name
+            for name, field_type in StabilitySettings.c_struct._fields_
+            if field_type == c_bool
         ]
-        lib.get_sentinel_solver_values.restype = None
+
+        def read(settings_c, name):
+            for part in name.split("."):
+                settings_c = getattr(settings_c, part)
+            return settings_c
 
         # check that every logical is read back under its own name, only one is set at
         # a time so that swapped logicals can be told apart
-        for i in range(1, 5):
-            s = SolverSettings.c_struct()
-            lib.get_sentinel_solver_values(byref(s), i)
-            if (s.stability, s.line_search, s.initialized, s.max_precision_reached) != (
-                i == 1,
-                i == 2,
-                i == 3,
-                i == 4,
-            ):
-                print(" test_settings_layout failed: Logical fields misplaced.")
-                test_passed = False
+        for true_logical in logicals:
+            settings_c = SolverSettings.c_struct()
+            lib.get_reference_solver_values(byref(settings_c), true_logical.encode())
+            for name in logicals:
+                if read(settings_c, name) != (name == true_logical):
+                    print(f" test_settings_layout failed: Field {name} misplaced.")
+                    test_passed = False
 
         # check that every other field is read back under its own name
-        s = SolverSettings.c_struct()
-        lib.get_sentinel_solver_values(byref(s), 1)
-        if (s.precond, s.project, s.conv_check, s.logger, s.context) != (1, 2, 3, 4, 5):
-            print(" test_settings_layout failed: Pointer fields misplaced.")
-            test_passed = False
-        if (
-            s.conv_tol,
-            s.start_trust_radius,
-            s.global_red_factor,
-            s.local_red_factor,
-        ) != (1.5, 2.5, 3.5, 4.5):
-            print(" test_settings_layout failed: Real fields misplaced.")
-            test_passed = False
-        if (
-            s.n_random_trial_vectors,
-            s.n_macro,
-            s.n_micro,
-            s.jacobi_davidson_start,
-            s.seed,
-            s.verbose,
-            s.n_update_orbs,
-            s.n_hess_x,
-        ) != tuple(range(11, 19)):
-            print(" test_settings_layout failed: Integer fields misplaced.")
-            test_passed = False
-        if s.subsystem_solver != b"solver":
-            print(" test_settings_layout failed: Keyword field misplaced.")
-            test_passed = False
-
-        # check the nested stability settings, which share their type with the settings
-        # of a standalone stability check
-        ss = s.stability_settings
-        if (ss.precond, ss.project, ss.logger, ss.context) != (6, 7, 8, 9):
-            print(
-                " test_settings_layout failed: Nested stability pointer fields "
-                "misplaced."
-            )
-            test_passed = False
-        if not ss.initialized:
-            print(
-                " test_settings_layout failed: Nested stability logical field "
-                "misplaced."
-            )
-            test_passed = False
-        if ss.conv_tol != 5.5:
-            print(
-                " test_settings_layout failed: Nested stability real field misplaced."
-            )
-            test_passed = False
-        if (
-            ss.n_random_trial_vectors,
-            ss.n_iter,
-            ss.jacobi_davidson_start,
-            ss.seed,
-            ss.verbose,
-            ss.n_hess_x,
-        ) != tuple(range(21, 27)):
-            print(
-                " test_settings_layout failed: Nested stability integer fields "
-                "misplaced."
-            )
-            test_passed = False
-        if ss.diag_solver != b"stability":
-            print(
-                " test_settings_layout failed: Nested stability keyword field "
-                "misplaced."
-            )
-            test_passed = False
+        settings_c = SolverSettings.c_struct()
+        lib.get_reference_solver_values(byref(settings_c), None)
+        for struct, prefix in [
+            (settings_c, ""),
+            (settings_c.stability_settings, "stability_settings."),
+        ]:
+            for name, field_type in struct._fields_:
+                if field_type == c_bool or field_type == StabilitySettings.c_struct:
+                    continue
+                value = getattr(struct, name)
+                if field_type == c_void_p:
+                    value = value or 0
+                elif issubclass(field_type, Array):
+                    value = value.decode()
+                if value != reference(prefix + name, field_type):
+                    print(
+                        f" test_settings_layout failed: Field {prefix + name} "
+                        "misplaced."
+                    )
+                    test_passed = False
         self.assertTrue(test_passed, "test_settings_layout failed")
         print(" test_settings_layout PASSED")
 

@@ -286,6 +286,20 @@ static void stability_logger(const char *message, void *context) {
 }
 
 /* ------------------------------------------------------------------
+ * Reference settings provided by test_reference.f90, so that these tests need no
+ * values of their own: the reference value of a field by its name, prefixed by
+ * "stability_settings." for the nested settings, C settings filled with these values
+ * field by field with only the named logical set if one is named instead of NULL, and
+ * comparisons with the default settings
+ * ------------------------------------------------------------------ */
+
+void reference_field(const char *name, c_real *value, char *keyword);
+void get_reference_solver_values(solver_settings_type *settings,
+                                 const char *true_logical);
+bool is_default_solver_settings(const solver_settings_type *settings);
+bool is_default_stability_settings(const stability_settings_type *settings);
+
+/* ------------------------------------------------------------------
  * Helpers
  * ------------------------------------------------------------------ */
 
@@ -296,248 +310,107 @@ static int vec_close(const c_real *a, const c_real *b, c_real tol) {
   return 1;
 }
 
+static bool check_field(c_real value, const char *name) {
+  c_real ref_value;
+  char ref_keyword[OTR_KW_LEN + 1];
+  reference_field(name, &ref_value, ref_keyword);
+  if (value != ref_value) {
+    fprintf(stderr, "test_settings_layout failed: Field %s misplaced.\n", name);
+    return false;
+  }
+  return true;
+}
+
+static bool check_keyword(const char *keyword, const char *name) {
+  c_real ref_value;
+  char ref_keyword[OTR_KW_LEN + 1];
+  reference_field(name, &ref_value, ref_keyword);
+  if (strcmp(keyword, ref_keyword) != 0) {
+    fprintf(stderr, "test_settings_layout failed: Field %s misplaced.\n", name);
+    return false;
+  }
+  return true;
+}
+
 /* ------------------------------------------------------------------
  * Tests
  * ------------------------------------------------------------------ */
 
 bool test_settings_layout(void) {
-  /* get settings with a distinct sentinel value in every field */
-  void get_sentinel_solver_values(solver_settings_type * settings, c_int true_logical);
-
   bool ok = true;
 
   /* check that every logical is read back under its own name, only one is set at a
    * time so that swapped logicals can be told apart */
-  for (c_int i = 1; i <= 4; i++) {
+  static const char *logicals[] = {"stability", "line_search", "initialized",
+                                   "max_precision_reached",
+                                   "stability_settings.initialized"};
+  for (int i = 0; i < 5; i++) {
     solver_settings_type s = {0};
-    get_sentinel_solver_values(&s, i);
-    if (s.stability != (i == 1) || s.line_search != (i == 2) ||
-        s.initialized != (i == 3) || s.max_precision_reached != (i == 4)) {
-      fprintf(stderr, "test_settings_layout failed: Logical fields misplaced.\n");
-      ok = false;
+    get_reference_solver_values(&s, logicals[i]);
+    bool read[] = {s.stability, s.line_search, s.initialized, s.max_precision_reached,
+                   s.stability_settings.initialized};
+    for (int j = 0; j < 5; j++) {
+      if (read[j] != (i == j)) {
+        fprintf(stderr, "test_settings_layout failed: Field %s misplaced.\n",
+                logicals[j]);
+        ok = false;
+      }
     }
   }
 
   /* check that every other field is read back under its own name */
   solver_settings_type s = {0};
-  get_sentinel_solver_values(&s, 1);
-  if ((uintptr_t)s.precond != 1 || (uintptr_t)s.project != 2 ||
-      (uintptr_t)s.conv_check != 3 || (uintptr_t)s.logger != 4 ||
-      (uintptr_t)s.context != 5) {
-    fprintf(stderr, "test_settings_layout failed: Pointer fields misplaced.\n");
-    ok = false;
-  }
-  if (s.conv_tol != 1.5 || s.start_trust_radius != 2.5 || s.global_red_factor != 3.5 ||
-      s.local_red_factor != 4.5) {
-    fprintf(stderr, "test_settings_layout failed: Real fields misplaced.\n");
-    ok = false;
-  }
-  if (s.n_random_trial_vectors != 11 || s.n_macro != 12 || s.n_micro != 13 ||
-      s.jacobi_davidson_start != 14 || s.seed != 15 || s.verbose != 16 ||
-      s.n_update_orbs != 17 || s.n_hess_x != 18) {
-    fprintf(stderr, "test_settings_layout failed: Integer fields misplaced.\n");
-    ok = false;
-  }
-  if (strcmp(s.subsystem_solver, "solver") != 0) {
-    fprintf(stderr, "test_settings_layout failed: Keyword field misplaced.\n");
-    ok = false;
-  }
+  get_reference_solver_values(&s, NULL);
+  ok &= check_field((uintptr_t)s.precond, "precond");
+  ok &= check_field((uintptr_t)s.project, "project");
+  ok &= check_field((uintptr_t)s.conv_check, "conv_check");
+  ok &= check_field((uintptr_t)s.logger, "logger");
+  ok &= check_field((uintptr_t)s.context, "context");
+  ok &= check_field(s.conv_tol, "conv_tol");
+  ok &= check_field(s.start_trust_radius, "start_trust_radius");
+  ok &= check_field(s.global_red_factor, "global_red_factor");
+  ok &= check_field(s.local_red_factor, "local_red_factor");
+  ok &= check_field(s.n_random_trial_vectors, "n_random_trial_vectors");
+  ok &= check_field(s.n_macro, "n_macro");
+  ok &= check_field(s.n_micro, "n_micro");
+  ok &= check_field(s.jacobi_davidson_start, "jacobi_davidson_start");
+  ok &= check_field(s.seed, "seed");
+  ok &= check_field(s.verbose, "verbose");
+  ok &= check_field(s.n_update_orbs, "n_update_orbs");
+  ok &= check_field(s.n_hess_x, "n_hess_x");
+  ok &= check_keyword(s.subsystem_solver, "subsystem_solver");
 
   /* check the nested stability settings, which share their type with the settings
    * of a standalone stability check */
   stability_settings_type ss = s.stability_settings;
-  if ((uintptr_t)ss.precond != 6 || (uintptr_t)ss.project != 7 ||
-      (uintptr_t)ss.logger != 8 || (uintptr_t)ss.context != 9) {
-    fprintf(stderr, "test_settings_layout failed: Nested stability pointer fields "
-                    "misplaced.\n");
-    ok = false;
-  }
-  if (!ss.initialized) {
-    fprintf(stderr, "test_settings_layout failed: Nested stability logical field "
-                    "misplaced.\n");
-    ok = false;
-  }
-  if (ss.conv_tol != 5.5) {
-    fprintf(stderr, "test_settings_layout failed: Nested stability real field "
-                    "misplaced.\n");
-    ok = false;
-  }
-  if (ss.n_random_trial_vectors != 21 || ss.n_iter != 22 ||
-      ss.jacobi_davidson_start != 23 || ss.seed != 24 || ss.verbose != 25 ||
-      ss.n_hess_x != 26) {
-    fprintf(stderr, "test_settings_layout failed: Nested stability integer fields "
-                    "misplaced.\n");
-    ok = false;
-  }
-  if (strcmp(ss.diag_solver, "stability") != 0) {
-    fprintf(stderr, "test_settings_layout failed: Nested stability keyword field "
-                    "misplaced.\n");
-    ok = false;
-  }
+  ok &= check_field((uintptr_t)ss.precond, "stability_settings.precond");
+  ok &= check_field((uintptr_t)ss.project, "stability_settings.project");
+  ok &= check_field((uintptr_t)ss.logger, "stability_settings.logger");
+  ok &= check_field((uintptr_t)ss.context, "stability_settings.context");
+  ok &= check_field(ss.conv_tol, "stability_settings.conv_tol");
+  ok &= check_field(ss.n_random_trial_vectors,
+                    "stability_settings.n_random_trial_vectors");
+  ok &= check_field(ss.n_iter, "stability_settings.n_iter");
+  ok &=
+      check_field(ss.jacobi_davidson_start, "stability_settings.jacobi_davidson_start");
+  ok &= check_field(ss.seed, "stability_settings.seed");
+  ok &= check_field(ss.verbose, "stability_settings.verbose");
+  ok &= check_field(ss.n_hess_x, "stability_settings.n_hess_x");
+  ok &= check_keyword(ss.diag_solver, "stability_settings.diag_solver");
 
   return ok;
 }
 
 bool test_solver_settings_init(void) {
-  /* get defaults */
-  void get_default_solver_values(solver_settings_type * settings);
-  solver_settings_type defaults = {0};
-  get_default_solver_values(&defaults);
-
-  /* call function */
-  solver_settings_type s = solver_settings_init();
-
-  /* compare values */
   bool ok = true;
-  if (!s.initialized) {
-    fprintf(stderr, "test_solver_settings_init failed: Settings not initialized.\n");
-    ok = false;
-  }
-  if (s.stability != defaults.stability) {
-    fprintf(stderr, "test_solver_settings_init failed: Stability parameter wrong.\n");
-    ok = false;
-  }
-  if (s.line_search != defaults.line_search) {
-    fprintf(stderr, "test_solver_settings_init failed: Line search parameter wrong.\n");
-    ok = false;
-  }
-  if (fabs(s.conv_tol - defaults.conv_tol) > 1e-15) {
-    fprintf(stderr, "test_solver_settings_init failed: Convergence tolerance parameter "
-                    "wrong.\n");
-    ok = false;
-  }
-  if (fabs(s.start_trust_radius - defaults.start_trust_radius) > 1e-15) {
-    fprintf(stderr, "test_solver_settings_init failed: Starting trust radius parameter "
-                    "wrong.\n");
-    ok = false;
-  }
-  if (fabs(s.global_red_factor - defaults.global_red_factor) > 1e-15) {
-    fprintf(stderr, "test_solver_settings_init failed: Global reduction factor "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (fabs(s.local_red_factor - defaults.local_red_factor) > 1e-15) {
-    fprintf(stderr, "test_solver_settings_init failed: Local reduction factor "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (s.n_macro != defaults.n_macro) {
-    fprintf(stderr, "test_solver_settings_init failed: Number of macro iterations "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (s.n_micro != defaults.n_micro) {
-    fprintf(stderr, "test_solver_settings_init failed: Number of micro iterations "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (s.jacobi_davidson_start != defaults.jacobi_davidson_start) {
-    fprintf(stderr,
-            "test_solver_settings_init failed: Jacobi-Davidson starting parameter "
-            "wrong.\n");
-    ok = false;
-  }
-  if (s.n_random_trial_vectors != defaults.n_random_trial_vectors) {
-    fprintf(stderr, "test_solver_settings_init failed: Number of random trial vectors "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (s.seed != defaults.seed) {
-    fprintf(stderr, "test_solver_settings_init failed: Seed parameter wrong.\n");
-    ok = false;
-  }
-  if (s.verbose != defaults.verbose) {
-    fprintf(stderr, "test_solver_settings_init failed: Verbosity parameter wrong.\n");
-    ok = false;
-  }
-  if (strcmp(s.subsystem_solver, defaults.subsystem_solver) != 0) {
-    fprintf(stderr, "test_solver_settings_init failed: Subsystem solver parameter "
-                    "wrong.\n");
-    ok = false;
-  }
-  if (s.precond || s.project || s.conv_check || s.logger) {
-    fprintf(stderr, "test_solver_settings_init failed: Callback pointers should be "
-                    "NULL.\n");
-    ok = false;
-  }
-  if (s.context) {
-    fprintf(stderr, "test_solver_settings_init failed: Host context should be "
-                    "NULL.\n");
-    ok = false;
-  }
 
-  /* compare nested stability check values */
-  stability_settings_type stability_defaults = defaults.stability_settings;
-  stability_settings_type ss = s.stability_settings;
-  if (!ss.initialized) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability settings not "
-                    "initialized.\n");
-    ok = false;
-  }
-  if (fabs(ss.conv_tol - stability_defaults.conv_tol) > 1e-20) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability convergence "
-                    "tolerance parameter wrong.\n");
-    ok = false;
-  }
-  if (ss.n_random_trial_vectors != stability_defaults.n_random_trial_vectors) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability number of "
-                    "random trial vectors parameter wrong.\n");
-    ok = false;
-  }
-  if (ss.n_iter != stability_defaults.n_iter) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability number of "
-                    "iterations parameter wrong.\n");
-    ok = false;
-  }
-  if (ss.jacobi_davidson_start != stability_defaults.jacobi_davidson_start) {
+  /* call function and compare with the default settings without callback functions
+   * and host contexts */
+  solver_settings_type s = solver_settings_init();
+  if (!is_default_solver_settings(&s)) {
     fprintf(stderr,
-            "test_solver_settings_init failed: Nested stability Jacobi-Davidson "
-            "starting parameter wrong.\n");
-    ok = false;
-  }
-  if (ss.seed != stability_defaults.seed) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability seed "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (ss.verbose != stability_defaults.verbose) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability verbosity "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (ss.n_hess_x != stability_defaults.n_hess_x) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability number of "
-                    "Hessian linear transformations parameter wrong.\n");
-    ok = false;
-  }
-  if (strcmp(ss.diag_solver, stability_defaults.diag_solver) != 0) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability diagonal "
-                    "solver parameter wrong.\n");
-    ok = false;
-  }
-  if (ss.precond || ss.project || ss.logger) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability callback "
-                    "pointers should be NULL.\n");
-    ok = false;
-  }
-  if (ss.context) {
-    fprintf(stderr, "test_solver_settings_init failed: Nested stability host context "
-                    "should be NULL.\n");
-    ok = false;
-  }
-  if (s.max_precision_reached != defaults.max_precision_reached) {
-    fprintf(stderr, "test_solver_settings_init failed: Maximum precision reached "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (s.n_update_orbs != defaults.n_update_orbs) {
-    fprintf(stderr, "test_solver_settings_init failed: Total number of orbital "
-                    "updates parameter wrong.\n");
-    ok = false;
-  }
-  if (s.n_hess_x != defaults.n_hess_x) {
-    fprintf(stderr, "test_solver_settings_init failed: Total number of Hessian "
-                    "linear transformations parameter wrong.\n");
+            "test_solver_settings_init failed: Settings not initialized to "
+            "the default values without callback functions and host contexts.\n");
     ok = false;
   }
 
@@ -545,70 +418,15 @@ bool test_solver_settings_init(void) {
 }
 
 bool test_stability_settings_init(void) {
-  /* get defaults */
-  void get_default_stability_values(stability_settings_type * settings);
-  stability_settings_type defaults = {0};
-  get_default_stability_values(&defaults);
-
-  /* call function */
-  stability_settings_type s = stability_settings_init();
-
-  /* compare values */
   bool ok = true;
-  if (!s.initialized) {
-    fprintf(stderr, "test_stability_settings_init failed: Settings not initialized.\n");
-    ok = false;
-  }
-  if (fabs(s.conv_tol - defaults.conv_tol) > 1e-20) {
+
+  /* call function and compare with the default settings without callback functions
+   * and host contexts */
+  stability_settings_type s = stability_settings_init();
+  if (!is_default_stability_settings(&s)) {
     fprintf(stderr,
-            "test_stability_settings_init failed: Convergence tolerance parameter "
-            "wrong.\n");
-    ok = false;
-  }
-  if (s.n_random_trial_vectors != defaults.n_random_trial_vectors) {
-    fprintf(stderr,
-            "test_stability_settings_init failed: Number of random trial vectors "
-            "parameter wrong.\n");
-    ok = false;
-  }
-  if (s.n_iter != defaults.n_iter) {
-    fprintf(stderr,
-            "test_stability_settings_init failed: Number of iterations parameter "
-            "wrong.\n");
-    ok = false;
-  }
-  if (s.jacobi_davidson_start != defaults.jacobi_davidson_start) {
-    fprintf(stderr, "test_stability_settings_init failed: Jacobi-Davidson starting "
-                    "parameter wrong.\n");
-    ok = false;
-  }
-  if (s.seed != defaults.seed) {
-    fprintf(stderr, "test_stability_settings_init failed: Seed parameter wrong.\n");
-    ok = false;
-  }
-  if (s.verbose != defaults.verbose) {
-    fprintf(stderr,
-            "test_stability_settings_init failed: Verbosity parameter wrong.\n");
-    ok = false;
-  }
-  if (s.n_hess_x != defaults.n_hess_x) {
-    fprintf(stderr, "test_stability_settings_init failed: Total number of Hessian "
-                    "linear transformations parameter wrong.\n");
-    ok = false;
-  }
-  if (strcmp(s.diag_solver, defaults.diag_solver) != 0) {
-    fprintf(stderr, "test_stability_settings_init failed: Diagonal solver parameter "
-                    "wrong.\n");
-    ok = false;
-  }
-  if (s.precond || s.project || s.logger) {
-    fprintf(stderr, "test_stability_settings_init failed: Callback pointers should be "
-                    "NULL.\n");
-    ok = false;
-  }
-  if (s.context) {
-    fprintf(stderr, "test_stability_settings_init failed: Host context should be "
-                    "NULL.\n");
+            "test_stability_settings_init failed: Settings not initialized "
+            "to the default values without callback functions and host context.\n");
     ok = false;
   }
 
