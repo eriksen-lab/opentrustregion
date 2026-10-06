@@ -1297,11 +1297,12 @@ contains
                 call add_error_origin(error, error_project, settings)
                 if (error /= 0) return
             end if
-            call gram_schmidt(neg_curv_vec, reshape(grad / grad_norm, &
-                                                    [size(grad), 1]), settings, error)
             ! if the negative curvature direction is linearly dependent on the gradient
             ! direction it cannot usefully be added as a separate trial vector, so fall
-            ! back to using only the gradient direction
+            ! back to using only the gradient direction without logging an error
+            call gram_schmidt(neg_curv_vec, &
+                              reshape(grad / grad_norm, [size(grad), 1]), settings, &
+                              error, silent_on_error=.true.)
             if (error == error_gram_schmidt_lin_dep) then
                 error = 0
             else if (error /= 0) then

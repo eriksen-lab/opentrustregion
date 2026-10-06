@@ -6,18 +6,19 @@
 
 module opentrustregion_mock
 
-    use opentrustregion, only: rp, ip, stderr, solver, stability_check, &
-                               update_orbs_type, hess_x_type, obj_func_type
+    use opentrustregion, only: rp, ip, stderr, solver, stability_check
     use test_reference, only: tol, ref_settings, operator(/=)
 
     implicit none
 
     logical :: test_passed
 
-    ! output values the mock solver writes into the settings object, so that a test can
-    ! check the C wrapper hands them back
-    integer(ip), parameter :: mock_n_update_orbs = 3, mock_n_hess_x = 5, &
-                              mock_stability_n_hess_x = 2
+    ! output values the mock solver and stability check return or write into the
+    ! settings object, so that a test can check the C wrappers hand them back
+    integer(ip), parameter :: mock_error = 7, mock_n_update_orbs = 3, &
+                              mock_n_hess_x = 5, mock_stability_n_hess_x = 2, &
+                              mock_stability_check_n_hess_x = 4, &
+                              mock_solver_n_nested_calls = 2
 
     ! create function pointers to ensure that routines comply with interface
     procedure(solver), pointer :: mock_solver_ptr => mock_solver
@@ -31,7 +32,7 @@ contains
         !
         ! this subroutine is a mock routine for solver to test the C interface
         !
-        use opentrustregion, only: solver_settings_type
+        use opentrustregion, only: solver_settings_type, update_orbs_type, obj_func_type
         use test_reference, only: test_update_orbs_funptr, test_obj_func_funptr, &
                                   test_precond_funptr, test_project_funptr, &
                                   test_conv_check_funptr
@@ -61,9 +62,6 @@ contains
             write(stderr, *) "test_solver_c_wrapper failed: Passed number of "// &
                 "parameters wrong."
         end if
-
-        ! set output quantities
-        error = 0
 
         ! check if optional preconditioner subroutine is correctly passed
         if (.not. associated(settings%precond)) then
@@ -125,7 +123,8 @@ contains
                 "settings associated with wrong values."
         end if
 
-        ! set output fields
+        ! set output quantities and fields
+        error = mock_error
         settings%max_precision_reached = .false.
         settings%n_update_orbs = mock_n_update_orbs
         settings%n_hess_x = mock_n_hess_x
@@ -139,7 +138,7 @@ contains
         ! this subroutine is a mock routine for the stability check to test the C
         ! interface
         !
-        use opentrustregion, only: stability_settings_type
+        use opentrustregion, only: stability_settings_type, hess_x_type
         use test_reference, only: test_hess_x_funptr, test_precond_funptr, &
                                   test_project_funptr
 
@@ -154,7 +153,7 @@ contains
         test_passed = .true.
 
         ! check Hessian diagonal
-        if (any(abs(h_diag - 3.0_rp) > tol)) then
+        if (size(h_diag) /= 3 .or. any(abs(h_diag - 3.0_rp) > tol)) then
             test_passed = .false.
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal wrong."
@@ -164,11 +163,6 @@ contains
         test_passed = test_passed .and. test_hess_x_funptr( &
             hess_x_funptr, "stability_check_c_wrapper", &
             " by given Hessian linear transformation subroutine", settings%context)
-
-        ! set output quantities
-        stable = .false.
-        if (present(kappa)) kappa = 1.0_rp
-        error = 0
 
         ! check if optional preconditioner subroutine is correctly passed
         if (.not. associated(settings%precond)) then
@@ -207,6 +201,12 @@ contains
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "optional settings associated with wrong values."
         end if
+
+        ! set output quantities and fields
+        stable = .true.
+        if (present(kappa)) kappa = 1.0_rp
+        error = mock_error
+        settings%n_hess_x = mock_stability_check_n_hess_x
 
     end subroutine mock_stability_check
 

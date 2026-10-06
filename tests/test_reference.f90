@@ -55,10 +55,12 @@ module test_reference
 
     ! host context handed to the callback functions by the tests that exercise it,
     ! together with the bookkeeping those callback functions keep, so that a test can
-    ! check the context reached all of them unchanged
+    ! check the context reached all of them unchanged, and the error code the C mock
+    ! callback functions report
     type :: host_context_type
         integer(ip) :: n_calls = 0
         logical :: logger_called = .false.
+        integer(c_ip) :: mock_error = 0
     end type
     type(host_context_type), target :: host_context, stability_host_context
 
@@ -147,6 +149,26 @@ contains
 
     end subroutine check_host_context_c
 
+    function host_context_error(context_c) result(error)
+        !
+        ! this function returns the error code a C callback function reports, which a
+        ! test sets in the host context to check that the error is passed on, and no
+        ! error for a missing or foreign context
+        !
+        type(c_ptr), intent(in) :: context_c
+        integer(c_ip) :: error
+
+        type(host_context_type), pointer :: context
+
+        error = 0
+        if (c_associated(context_c, c_loc(host_context)) .or. &
+            c_associated(context_c, c_loc(stability_host_context))) then
+            call c_f_pointer(context_c, context)
+            error = context%mock_error
+        end if
+
+    end function host_context_error
+
     subroutine reset_host_context()
         !
         ! this subroutine clears the bookkeeping of the callback functions and arms the
@@ -156,6 +178,8 @@ contains
         stability_host_context%n_calls = 0
         host_context%logger_called = .false.
         stability_host_context%logger_called = .false.
+        host_context%mock_error = 0
+        stability_host_context%mock_error = 0
         host_context_armed = .true.
         host_context_wrong = .false.
         host_context_missing = .false.
@@ -1081,8 +1105,8 @@ contains
     subroutine get_sentinel_stability_values(values_out)
         !
         ! this subroutine sets the fields of stability check settings one by one to
-        ! distinct sentinel values, which also differ from those of the solver 
-        ! settings, for the nested stability settings exported by 
+        ! distinct sentinel values, which also differ from those of the solver
+        ! settings, for the nested stability settings exported by
         ! get_sentinel_solver_values
         !
         use c_interface, only: stability_settings_type_c
