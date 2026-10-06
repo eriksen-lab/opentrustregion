@@ -7,7 +7,8 @@
 module opentrustregion_system_tests
 
     use opentrustregion, only: rp, ip, stderr
-    use, intrinsic :: iso_c_binding, only: c_bool
+    use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_char, c_f_pointer, &
+                                           c_null_char
 
     implicit none
 
@@ -36,8 +37,6 @@ contains
         !
         ! this subroutine sets the path to test data
         !
-        use, intrinsic :: iso_c_binding, only: c_ptr, c_char, c_f_pointer, c_null_char
-
         type(c_ptr), intent(in), value :: path
         character(kind=c_char), pointer :: c_path(:)
         integer(ip) :: len, i
@@ -489,8 +488,8 @@ contains
         ! this function performs the stability check for the Foster-Boys localization
         ! of the occupied orbitals of water at the minimum and at a saddle point with
         ! a diagonalization solver and checks that the minimum is found to be stable
-        ! and the saddle point to be unstable with a returned direction along which
-        ! the objective function decreases
+        ! and the saddle point to be unstable with a returned direction along the
+        ! eigenvector of the lowest eigenvalue of the Hessian
         !
         use opentrustregion, only: hess_x_type, stability_settings_type, stability_check
 
@@ -500,13 +499,18 @@ contains
         procedure(hess_x_type), pointer :: hess_x_funptr
         type(stability_settings_type) :: settings
         class(*), pointer :: context_ptr
-        integer(ip) :: error, i_point, i
-        real(rp) :: kappa(n_param), grad(n_param), h_diag(n_param), func, step_func
-        logical :: stable, descent
+        integer(ip) :: error, i_point, i, info
+        real(rp) :: kappa(n_param), grad(n_param), h_diag(n_param), func, &
+                    unit_vector(n_param), hess(n_param, n_param), eigvals(n_param), &
+                    work(3 * n_param)
+        logical :: stable
+        real(rp), parameter :: direction_tol = 1e-6_rp
         character(len=*), parameter :: point_names(2) = &
             [character(len=12) :: "minimum", "saddle point"]
         character(len=*), parameter :: point_files(2) = &
             [character(len=24) :: "h2o_minimum_mo_coeff.bin", "h2o_saddle_mo_coeff.bin"]
+
+        external :: dsyev
 
         ! assume test passes
         check_h2o_fb_stability_check = .true.
@@ -547,21 +551,41 @@ contains
                 cycle
             end if
 
-            ! the saddle point has to be found to be unstable and the objective
-            ! function has to decrease for a step along the returned direction
+            ! the saddle point has to be found to be unstable
             if (stable) then
                 write(stderr, *) test_name// &
                     " failed: Saddle point not found to be unstable."
                 check_h2o_fb_stability_check = .false.
             end if
-            descent = .false.
-            do i = 0, 5
-                step_func = obj_func(10.0_rp**(-i) * kappa, error, context_ptr)
-                if (error == 0 .and. step_func < func) descent = .true.
+
+            ! the returned direction has to be the eigenvector of the lowest eigenvalue
+            ! of the Hessian, which is assembled from its linear transformations of the
+            ! unit vectors and diagonalized, since the saddle point has several
+            ! unstable modes and the objective function decreases along almost any
+            ! direction from it
+            do i = 1, n_param
+                unit_vector = 0.0_rp
+                unit_vector(i) = 1.0_rp
+                call hess_x_funptr(unit_vector, hess(:, i), error, context_ptr)
+                if (error /= 0) exit
             end do
-            if (.not. descent) then
-                write(stderr, *) test_name//" failed: Objective function does not "// &
-                    "decrease along returned direction at the saddle point."
+            if (error /= 0) then
+                write(stderr, *) test_name//" failed: Hessian linear "// &
+                    "transformation produced error at the saddle point."
+                check_h2o_fb_stability_check = .false.
+                cycle
+            end if
+            call dsyev("V", "U", n_param, hess, n_param, eigvals, work, &
+                       size(work, kind=ip), info)
+            if (info /= 0) then
+                write(stderr, *) test_name//" failed: Diagonalization of the "// &
+                    "Hessian at the saddle point failed."
+                check_h2o_fb_stability_check = .false.
+                cycle
+            end if
+            if (abs(abs(dot_product(kappa, hess(:, 1))) - 1.0_rp) > direction_tol) then
+                write(stderr, *) test_name//" failed: Returned direction at the "// &
+                    "saddle point is not the lowest eigenvector of the Hessian."
                 check_h2o_fb_stability_check = .false.
             end if
         end do

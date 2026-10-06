@@ -21,14 +21,7 @@ from ctypes import (
 )
 from unittest.mock import patch
 from pathlib import Path
-
-# check if numpy is available
-try:
-    import numpy as np
-
-    NUMPY_AVAILABLE = True
-except ImportError:
-    NUMPY_AVAILABLE = False
+import numpy as np
 
 # check if pyopentrustregion is installed or import module in same directory
 try:
@@ -250,7 +243,6 @@ class CInterfaceUnitTests(unittest.TestCase):
         return super().setUpClass()
 
 
-@unittest.skipUnless(NUMPY_AVAILABLE, "NumPy not available.")
 class PyInterfaceUnitTests(unittest.TestCase):
     """
     this class contains unit tests for the Python interface
@@ -756,7 +748,6 @@ class CIntegrationTests(unittest.TestCase):
         return super().setUpClass()
 
 
-@unittest.skipUnless(NUMPY_AVAILABLE, "NumPy not available.")
 class PyIntegrationTests(unittest.TestCase):
     """
     this class contains integration tests that drive the real library (not the mock
@@ -771,8 +762,7 @@ class PyIntegrationTests(unittest.TestCase):
         print("Running integration tests for Python interface...")
         print(50 * "-")
 
-        # read the Hartmann 6D problem here rather than in the class body, so that
-        # a missing NumPy skips these tests instead of failing the import
+        # read the Hartmann 6D problem from the library
         def read_array(name, *shape):
             size = int(np.prod(shape))
             array = (c_real * size).in_dll(lib, name)
@@ -989,15 +979,17 @@ class PyIntegrationTests(unittest.TestCase):
                 "internal stability check was not populated."
             )
             test_passed = False
-        if (
-            not {"stability_precond", "stability_project", "stability_logger"}
-            <= state["called"]
-        ):
-            print(
-                " test_solver_py failed: The internal stability check did not use the "
-                "callbacks set on the nested stability settings."
-            )
-            test_passed = False
+        for name, description in [
+            ("stability_precond", "Preconditioner"),
+            ("stability_project", "Projection"),
+            ("stability_logger", "Logger"),
+        ]:
+            if name not in state["called"]:
+                print(
+                    f" test_solver_py failed: {description} set on the nested "
+                    "stability settings was not called by the internal stability check."
+                )
+                test_passed = False
         self.assertTrue(test_passed, "test_solver_py failed")
         print(" test_solver_py PASSED")
 
@@ -1072,7 +1064,7 @@ class PyIntegrationTests(unittest.TestCase):
 
         # the descent direction at the saddle should align with the known
         # negative-curvature eigenvector
-        if not np.allclose(abs(np.dot(kappa, self.unstable_mode)), 1.0, atol=1e-6):
+        if abs(abs(np.dot(kappa, self.unstable_mode)) - 1.0) > 1e-6:
             print(
                 " test_stability_check_py failed: Stability check does not return "
                 "correct direction for saddle point."

@@ -6,9 +6,10 @@
 
 module opentrustregion_mock
 
-    use opentrustregion, only: rp, ip, stderr, solver, stability_check
-    use test_reference, only: tol, ref_solver_settings, ref_stability_settings, &
-                              operator(/=)
+    use opentrustregion, only: rp, ip, stderr, solver, stability_check, &
+                               solver_settings_type
+    use c_interface, only: c_callbacks_type
+    use test_reference, only: tol, ref_stability_settings, operator(/=)
 
     implicit none
 
@@ -18,8 +19,17 @@ module opentrustregion_mock
     ! settings object, so that a test can check the C wrappers hand them back
     integer(ip), parameter :: mock_error = 7, mock_n_update_orbs = 3, &
                               mock_n_hess_x = 5, mock_stability_n_hess_x = 2, &
-                              mock_stability_check_n_hess_x = 4, &
-                              mock_solver_n_nested_calls = 3
+                              mock_stability_check_n_hess_x = 4
+
+    ! number of calls the mock solver makes to the optional callback functions of
+    ! the internal stability check, the preconditioner, projection and logging
+    ! function, with the context of the nested settings
+    integer(ip), parameter :: mock_solver_n_nested_calls = 3
+
+    ! settings and callback bundle of the nested settings the mock solver received,
+    ! so that a test can check what the C wrapper handed over
+    type(solver_settings_type) :: received_solver_settings
+    type(c_callbacks_type) :: received_stability_callbacks
 
     ! create function pointers to ensure that routines comply with interface
     procedure(solver), pointer :: mock_solver_ptr => mock_solver
@@ -33,7 +43,7 @@ contains
         !
         ! this subroutine is a mock routine for solver to test the C interface
         !
-        use opentrustregion, only: solver_settings_type, update_orbs_type, obj_func_type
+        use opentrustregion, only: update_orbs_type, obj_func_type
         use test_reference, only: check_update_orbs_funptr, check_obj_func_funptr, &
                                   check_precond_funptr, check_project_funptr, &
                                   check_conv_check_funptr, n_param_ref => n_param
@@ -106,28 +116,29 @@ contains
             call settings%logger("test", settings%context)
         end if
 
-        ! check if the internal stability check inherits the solver's optional callback
-        ! functions and calls them with the nested settings' context
+        ! call the optional callback functions as the internal stability check does
+        ! with the nested settings' context, whose callback bundle decides whether the
+        ! solver's C functions or the nested settings' own are called
         if (associated(settings%precond)) then
             test_passed = test_passed .and. check_precond_funptr( &
-                settings%precond, "solver_c_wrapper", &
-                " by preconditioner inherited by the internal stability check", &
-                settings%stability_settings%context)
+                settings%precond, "solver_c_wrapper", " by preconditioner of the "// &
+                "internal stability check", settings%stability_settings%context)
         end if
         if (associated(settings%project)) then
             test_passed = test_passed .and. check_project_funptr( &
-                settings%project, "solver_c_wrapper", " by projection inherited by "// &
-                "the internal stability check", settings%stability_settings%context)
+                settings%project, "solver_c_wrapper", " by projection of the "// &
+                "internal stability check", settings%stability_settings%context)
         end if
         if (associated(settings%logger)) &
             call settings%logger("test", settings%stability_settings%context)
 
-        ! check if optional settings are correctly passed
-        if (settings /= ref_solver_settings) then
-            test_passed = .false.
-            write(stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
-                "settings associated with wrong values."
-        end if
+        ! record the settings and the callback bundle of the nested settings
+        received_solver_settings = settings
+        received_stability_callbacks = c_callbacks_type()
+        select type (callbacks => settings%stability_settings%context)
+        type is (c_callbacks_type)
+            received_stability_callbacks = callbacks
+        end select
 
         ! set output quantities and fields
         error = mock_error
@@ -159,7 +170,11 @@ contains
         test_passed = .true.
 
         ! check Hessian diagonal
-        if (size(h_diag) /= n_param .or. any(abs(h_diag - 3.0_rp) > tol)) then
+        if (size(h_diag) /= n_param) then
+            test_passed = .false.
+            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+                "Hessian diagonal has wrong size."
+        else if (any(abs(h_diag - 3.0_rp) > tol)) then
             test_passed = .false.
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal wrong."

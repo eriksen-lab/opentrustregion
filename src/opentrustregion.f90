@@ -577,7 +577,11 @@ contains
             ! Jacobi-Davidson correction equations
             use_jacobi_davidson = settings%diag_solver /= "davidson" .and. &
                                   iter > settings%jacobi_davidson_start
-            minres_tol = 3.0_rp**(-(iter - settings%jacobi_davidson_start - 1))
+            if (use_jacobi_davidson) then
+                minres_tol = 3.0_rp**(-(iter - settings%jacobi_davidson_start - 1))
+            else
+                minres_tol = 0.0_rp
+            end if
             call add_trial_vector(residual, 0.0_rp, h_diag, use_jacobi_davidson, &
                                   solution, eigval, minres_tol, hess_x_funptr, &
                                   red_space_basis, h_basis, settings, error)

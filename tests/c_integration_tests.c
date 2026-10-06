@@ -512,15 +512,29 @@ bool test_solver_c(void) {
                     "the internal stability check was not populated.\n");
     ok = false;
   }
-  if (!ctx.stability_precond_called || !ctx.stability_project_called ||
-      !ctx.stability_logger_called) {
-    fprintf(stderr, "test_solver_c failed: The internal stability check did not use "
-                    "the callbacks set on the nested stability settings.\n");
+  if (!ctx.stability_precond_called) {
+    fprintf(stderr, "test_solver_c failed: Preconditioner set on the nested stability "
+                    "settings was not called by the internal stability check.\n");
     ok = false;
   }
-  if (!ctx.nested_check_ran || ctx.nested_check_error != 0) {
+  if (!ctx.stability_project_called) {
+    fprintf(stderr, "test_solver_c failed: Projection set on the nested stability "
+                    "settings was not called by the internal stability check.\n");
+    ok = false;
+  }
+  if (!ctx.stability_logger_called) {
+    fprintf(stderr, "test_solver_c failed: Logger set on the nested stability "
+                    "settings was not called by the internal stability check.\n");
+    ok = false;
+  }
+  if (!ctx.nested_check_ran) {
     fprintf(stderr, "test_solver_c failed: A stability check nested inside the "
-                    "running solve did not complete.\n");
+                    "running solve did not run.\n");
+    ok = false;
+  }
+  if (ctx.nested_check_error != 0) {
+    fprintf(stderr, "test_solver_c failed: A stability check nested inside the "
+                    "running solve produced an error.\n");
     ok = false;
   }
   if (ctx.outer_used_inner_hess_x) {

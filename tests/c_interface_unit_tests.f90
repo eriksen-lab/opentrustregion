@@ -27,6 +27,12 @@ module c_interface_unit_tests
     procedure(project_c_type), pointer :: mock_project_ptr => mock_project
     procedure(conv_check_c_type), pointer :: mock_conv_check_ptr => mock_conv_check
     procedure(logger_c_type), pointer :: mock_logger_ptr => mock_logger
+    procedure(precond_c_type), pointer :: mock_stability_precond_ptr => &
+        mock_stability_precond
+    procedure(project_c_type), pointer :: mock_stability_project_ptr => &
+        mock_stability_project
+    procedure(logger_c_type), pointer :: mock_stability_logger_ptr => &
+        mock_stability_logger
 
 contains
 
@@ -200,25 +206,78 @@ contains
 
     end subroutine mock_logger
 
+    function mock_stability_precond(residual, mu, precond_residual, context_c) &
+        result(error) bind(C)
+        !
+        ! this function is a test function for a C preconditioner function the nested
+        ! stability check settings provide of their own, which behaves like the
+        ! solver's but is a different function
+        !
+        real(c_rp), intent(in) :: residual(*), mu
+        real(c_rp), intent(out) :: precond_residual(*)
+        type(c_ptr), intent(in), value :: context_c
+        integer(c_ip) :: error
+
+        error = mock_precond(residual, mu, precond_residual, context_c)
+
+    end function mock_stability_precond
+
+    function mock_stability_project(vector, context_c) result(error) bind(C)
+        !
+        ! this function is a test function for a C projection function the nested
+        ! stability check settings provide of their own, which behaves like the
+        ! solver's but is a different function
+        !
+        real(c_rp), intent(inout), target :: vector(*)
+        type(c_ptr), intent(in), value :: context_c
+        integer(c_ip) :: error
+
+        error = mock_project(vector, context_c)
+
+    end function mock_stability_project
+
+    subroutine mock_stability_logger(message_c, context_c) bind(C)
+        !
+        ! this subroutine is a test subroutine for a C logging function the nested
+        ! stability check settings provide of their own, which behaves like the
+        ! solver's but is a different function
+        !
+        character(kind=c_char), intent(in) :: message_c(*)
+        type(c_ptr), intent(in), value :: context_c
+
+        call mock_logger(message_c, context_c)
+
+    end subroutine mock_stability_logger
+
     logical(c_bool) function test_solver_c_wrapper() bind(C)
         !
         ! this function tests the C wrapper for the solver
         !
         use c_interface, only: solver_settings_type_c, solver, solver_c_wrapper
-        use opentrustregion, only: standard_solver => solver
+        use opentrustregion, only: standard_solver => solver, solver_settings_type, &
+                                   default_stability_settings
         use opentrustregion_mock, only: &
             mock_solver, test_passed, mock_error, mock_n_update_orbs, mock_n_hess_x, &
-            mock_stability_n_hess_x, mock_solver_n_nested_calls
+            mock_stability_n_hess_x, mock_solver_n_nested_calls, &
+            received_solver_settings, received_stability_callbacks
         use test_reference, only: get_reference_solver_values, stability_host_context, &
                                   host_context, arm_host_context_c, &
-                                  host_context_reached, unset_callbacks
+                                  host_context_reached, unset_callbacks, &
+                                  ref_solver_settings, operator(/=)
 
         type(c_funptr) :: update_orbs_c_funptr, obj_func_c_funptr
         type(solver_settings_type_c) :: settings
+        type(solver_settings_type) :: expected_settings
+        procedure(precond_c_type), pointer :: expected_precond
+        procedure(project_c_type), pointer :: expected_project
+        procedure(logger_c_type), pointer :: expected_logger
+        type(c_ptr) :: expected_context
+        integer(ip) :: expected_nested_calls
         integer(c_ip) :: error
         integer(ip) :: icase
-        character(len=22), parameter :: case_names(2) = &
-            [character(len=22) :: "without nested context", "with nested context"]
+        character(len=34), parameter :: case_names(4) = &
+            [character(len=34) :: "without nested context", "with nested context", &
+             "with nested callback functions", "with uninitialized nested settings"]
 
         ! assume tests pass
         test_solver_c_wrapper = .true.
@@ -230,13 +289,15 @@ contains
         update_orbs_c_funptr = c_funloc(mock_update_orbs)
         obj_func_c_funptr = c_funloc(mock_obj_func)
 
-        ! run once without and once with a context on the nested stability check
-        ! settings, the callback functions of the internal stability check have to
-        ! receive the solver's context in the former and the nested one in the latter
+        ! run with nested stability check settings that provide neither callback
+        ! functions nor a context of their own, that provide a context, that provide
+        ! a context and callback functions and that provide both but were not
+        ! initialized, the callback bundle of the nested settings has to hold the
+        ! nested settings' own callback functions and context where these were provided
+        ! and initialized and the solver's otherwise
         do icase = 1, size(case_names)
             ! associate optional settings with the reference values and callback
-            ! functions, the nested stability check settings provide none of their
-            ! own
+            ! functions
             call get_reference_solver_values(settings)
             call unset_callbacks(settings%stability_settings)
             settings%stability_settings%context = c_null_ptr
@@ -245,10 +306,37 @@ contains
             settings%conv_check = c_funloc(mock_conv_check)
             settings%logger = c_funloc(mock_logger)
 
-            ! set host contexts
+            ! set host contexts and the nested settings' own callback functions
             call arm_host_context_c(settings%context)
-            if (icase == 2) &
+            if (icase >= 2) &
                 settings%stability_settings%context = c_loc(stability_host_context)
+            if (icase >= 3) then
+                settings%stability_settings%precond = c_funloc(mock_stability_precond)
+                settings%stability_settings%project = c_funloc(mock_stability_project)
+                settings%stability_settings%logger = c_funloc(mock_stability_logger)
+            end if
+            if (icase == 4) settings%stability_settings%initialized = .false.
+
+            ! set expected settings, nested callback functions and context
+            expected_settings = ref_solver_settings
+            if (icase == 4) &
+                expected_settings%stability_settings = default_stability_settings
+            if (icase == 3) then
+                expected_precond => mock_stability_precond
+                expected_project => mock_stability_project
+                expected_logger => mock_stability_logger
+            else
+                expected_precond => mock_precond
+                expected_project => mock_project
+                expected_logger => mock_logger
+            end if
+            if (icase == 2 .or. icase == 3) then
+                expected_context = c_loc(stability_host_context)
+                expected_nested_calls = mock_solver_n_nested_calls
+            else
+                expected_context = c_loc(host_context)
+                expected_nested_calls = 0
+            end if
 
             ! clear the result of the mock so that a missing call is detected
             test_passed = .false.
@@ -262,6 +350,40 @@ contains
                 test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Called logging "// &
                     "subroutine wrong "//trim(case_names(icase))//"."
+            end if
+
+            ! check if optional settings are correctly passed
+            if (received_solver_settings /= expected_settings) then
+                test_solver_c_wrapper = .false.
+                write(stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
+                    "settings associated with wrong values "// &
+                    trim(case_names(icase))//"."
+            end if
+
+            ! check the callback bundle of the nested settings
+            if (.not. associated(received_stability_callbacks%precond, &
+                                 expected_precond)) then
+                test_solver_c_wrapper = .false.
+                write(stderr, *) "test_solver_c_wrapper failed: Preconditioner of "// &
+                    "internal stability check wrong "//trim(case_names(icase))//"."
+            end if
+            if (.not. associated(received_stability_callbacks%project, &
+                                 expected_project)) then
+                test_solver_c_wrapper = .false.
+                write(stderr, *) "test_solver_c_wrapper failed: Projection of "// &
+                    "internal stability check wrong "//trim(case_names(icase))//"."
+            end if
+            if (.not. associated(received_stability_callbacks%logger, &
+                                 expected_logger)) then
+                test_solver_c_wrapper = .false.
+                write(stderr, *) "test_solver_c_wrapper failed: Logging function "// &
+                    "of internal stability check wrong "//trim(case_names(icase))//"."
+            end if
+            if (.not. c_associated(received_stability_callbacks%host_context, &
+                                   expected_context)) then
+                test_solver_c_wrapper = .false.
+                write(stderr, *) "test_solver_c_wrapper failed: Context of "// &
+                    "internal stability check wrong "//trim(case_names(icase))//"."
             end if
 
             ! check if output variables are as expected
@@ -296,15 +418,14 @@ contains
                     "wrong "//trim(case_names(icase))//"."
             end if
 
-            ! check that exactly the callback functions of the internal stability check
-            ! received the context of the nested settings when one was set
-            if ((icase == 1 .and. stability_host_context%n_calls /= 0) .or. &
-                (icase == 2 .and. &
-                 stability_host_context%n_calls /= mock_solver_n_nested_calls)) then
+            ! check that the callback functions of the internal stability check received
+            ! the context of the nested settings exactly when it was provided and
+            ! initialized
+            if (stability_host_context%n_calls /= expected_nested_calls) then
                 test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Callback functions "// &
-                    "of internal stability check did not receive context of nested "// &
-                    "settings "//trim(case_names(icase))//"."
+                    "of internal stability check received context of nested "// &
+                    "settings wrongly "//trim(case_names(icase))//"."
             end if
 
             ! check that the host context reached the callback functions unchanged
@@ -380,6 +501,7 @@ contains
             test_passed = .false.
 
             ! call stability check
+            stable = .false.
             error = stability_check_c_wrapper(h_diag, hess_x_c_funptr, n_param_c, &
                                               stable, settings, kappa_c_ptr)
 
@@ -932,6 +1054,8 @@ contains
         settings%logger = c_funloc(mock_logger)
         settings%context = c_loc(host_context)
         settings%stability_settings%precond = c_funloc(mock_precond)
+        settings%stability_settings%project = c_funloc(mock_project)
+        settings%stability_settings%logger = c_funloc(mock_logger)
         settings%stability_settings%context = c_loc(host_context)
 
         ! initialize settings
@@ -1016,7 +1140,10 @@ contains
                                   callbacks_wrapped
 
         type(solver_settings_type_c) :: settings_c
-        type(solver_settings_type) :: settings, flipped_settings
+        type(solver_settings_type) :: settings, expected_settings
+        integer(ip) :: i
+        character(len=21), parameter :: logical_names(3) = &
+            [character(len=21) :: "stability", "line_search", "max_precision_reached"]
 
         ! assume test passes
         test_assign_solver_f_c = .true.
@@ -1042,25 +1169,27 @@ contains
             test_assign_solver_f_c = .false.
         end if
 
-        ! convert again with the logicals other than initialized flipped, since a
-        ! logical cannot differ from its default value and the other logicals at once,
-        ! a logical that is not converted is otherwise missed whenever it happens to
-        ! hold its reference value
-        call get_reference_solver_values(settings_c)
-        settings_c%stability = .not. settings_c%stability
-        settings_c%line_search = .not. settings_c%line_search
-        settings_c%max_precision_reached = .not. settings_c%max_precision_reached
-        flipped_settings = ref_solver_settings
-        flipped_settings%stability = .not. flipped_settings%stability
-        flipped_settings%line_search = .not. flipped_settings%line_search
-        flipped_settings%max_precision_reached = &
-            .not. flipped_settings%max_precision_reached
-        settings = settings_c
-        if (settings /= flipped_settings) then
-            write(stderr, *) "test_assign_solver_f_c failed: Flipped logicals not "// &
-                "converted correctly."
-            test_assign_solver_f_c = .false.
-        end if
+        ! convert again with only one of the logicals other than initialized set at a
+        ! time, since the logicals cannot all differ from each other and from their
+        ! default values, so that a logical that is swapped with another or not
+        ! converted is detected
+        do i = 1, size(logical_names)
+            call get_reference_solver_values(settings_c, &
+                                             trim(logical_names(i))//c_null_char)
+            settings_c%initialized = .true.
+            settings_c%stability_settings%initialized = .true.
+            expected_settings = ref_solver_settings
+            expected_settings%stability = logical_names(i) == "stability"
+            expected_settings%line_search = logical_names(i) == "line_search"
+            expected_settings%max_precision_reached = &
+                logical_names(i) == "max_precision_reached"
+            settings = settings_c
+            if (settings /= expected_settings) then
+                write(stderr, *) "test_assign_solver_f_c failed: Settings with "// &
+                    "only "//trim(logical_names(i))//" set not converted correctly."
+                test_assign_solver_f_c = .false.
+            end if
+        end do
 
         ! convert initialized C settings without callback functions and check that no
         ! callback functions are associated
@@ -1168,6 +1297,9 @@ contains
 
         type(solver_settings_type) :: settings
         type(solver_settings_type_c) :: settings_c
+        integer(ip) :: i
+        character(len=21), parameter :: logical_names(3) = &
+            [character(len=21) :: "stability", "line_search", "max_precision_reached"]
 
         ! assume test passes
         test_assign_solver_c_f = .true.
@@ -1190,19 +1322,22 @@ contains
             test_assign_solver_c_f = .false.
         end if
 
-        ! convert again with the logicals other than initialized flipped, since a
-        ! logical cannot differ from its default value and the other logicals at once,
-        ! a logical that is not converted is otherwise missed whenever it happens to
-        ! hold its reference value
-        settings%stability = .not. settings%stability
-        settings%line_search = .not. settings%line_search
-        settings%max_precision_reached = .not. settings%max_precision_reached
-        settings_c = settings
-        if (settings_c /= settings) then
-            write(stderr, *) "test_assign_solver_c_f failed: Flipped logicals not "// &
-                "converted correctly."
-            test_assign_solver_c_f = .false.
-        end if
+        ! convert again with only one of the logicals other than initialized set at a
+        ! time, since the logicals cannot all differ from each other and from their
+        ! default values, so that a logical that is swapped with another or not
+        ! converted is detected
+        do i = 1, size(logical_names)
+            settings = ref_solver_settings
+            settings%stability = logical_names(i) == "stability"
+            settings%line_search = logical_names(i) == "line_search"
+            settings%max_precision_reached = logical_names(i) == "max_precision_reached"
+            settings_c = settings
+            if (settings_c /= settings) then
+                write(stderr, *) "test_assign_solver_c_f failed: Settings with "// &
+                    "only "//trim(logical_names(i))//" set not converted correctly."
+                test_assign_solver_c_f = .false.
+            end if
+        end do
 
     end function test_assign_solver_c_f
 

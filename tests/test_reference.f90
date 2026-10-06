@@ -9,9 +9,9 @@ module test_reference
     use opentrustregion, only: rp, ip, kw_len, stderr, solver_settings_type, &
                                stability_settings_type
     use c_interface, only: c_rp, c_ip
-    use, intrinsic :: iso_c_binding, only: c_bool, c_char, c_null_char, c_funptr, &
-                                           c_f_procpointer, c_associated, c_ptr, &
-                                           c_null_ptr, c_loc, c_f_pointer
+    use, intrinsic :: iso_c_binding, only: &
+        c_bool, c_char, c_null_char, c_funptr, c_null_funptr, c_f_procpointer, &
+        c_associated, c_ptr, c_null_ptr, c_loc, c_f_pointer, c_intptr_t
 
     implicit none
 
@@ -27,9 +27,9 @@ module test_reference
     ! from every other field of the same kind and from its default value, so that a
     ! field read from or written to the wrong place or not converted at all is
     ! detected, the logicals, which cannot all differ from each other and from their
-    ! default values, are told apart by tests that set them one at a time or flip
-    ! them, the nested stability check settings of the reference solver settings are
-    ! the reference stability check settings
+    ! default values, are told apart by tests that set them one at a time, the nested
+    ! stability check settings of the reference solver settings are the reference
+    ! stability check settings
     type(stability_settings_type), parameter :: ref_stability_settings = &
         stability_settings_type(precond=null(), project=null(), logger=null(), &
                                 initialized=.true., conv_tol=5e-6_rp, &
@@ -259,12 +259,11 @@ contains
         ! fields are set one by one without the conversion routines under test, the
         ! callback function pointers and host contexts are set to distinct addresses,
         ! and if the name of a logical (prefixed by "stability_settings." for the
-        ! nested settings) is given, which only the layout tests do, only this logical
-        ! is set so that they can tell swapped logicals apart, otherwise the logicals
-        ! take their reference values
+        ! nested settings) is given, only this logical is set so that the layout and
+        ! conversion tests can tell swapped logicals apart, otherwise the logicals take
+        ! their reference values
         !
         use c_interface, only: solver_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr
 
         type(solver_settings_type_c), intent(out) :: values_out
         character(kind=c_char), intent(in), optional :: true_logical(*)
@@ -328,7 +327,6 @@ contains
         ! from those of the solver settings
         !
         use c_interface, only: stability_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_intptr_t, c_null_funptr, c_null_ptr
 
         type(stability_settings_type_c), intent(out) :: values_out
 
@@ -366,7 +364,6 @@ contains
         ! declarations with what the Fortran declaration reads
         !
         use c_interface, only: solver_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_intptr_t
 
         character(kind=c_char), intent(in) :: name_c(*)
         real(c_rp), intent(out) :: field_value
@@ -478,7 +475,6 @@ contains
         ! including those of the nested stability check settings
         !
         use c_interface, only: solver_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_null_funptr
 
         type(solver_settings_type_c), intent(inout) :: settings_c
 
@@ -495,7 +491,6 @@ contains
         ! this subroutine unsets every callback function of C stability check settings
         !
         use c_interface, only: stability_settings_type_c
-        use, intrinsic :: iso_c_binding, only: c_null_funptr
 
         type(stability_settings_type_c), intent(inout) :: settings_c
 
@@ -1489,7 +1484,7 @@ contains
 
         procedure(conv_check_c_type), pointer :: conv_check_funptr
         logical(c_bool) :: converged
-        integer(ip) :: error
+        integer(c_ip) :: error
 
         ! assume tests pass
         test_passed = .true.

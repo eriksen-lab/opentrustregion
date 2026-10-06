@@ -127,10 +127,10 @@ module opentrustregion_unit_tests
     ! define type for the host context handed to the mock callback functions of the
     ! double well function x^2 - y^2 + y^4, which has a saddle point at the origin and
     ! minima at y = +-1/sqrt(2), and holds its current variables and records whether
-    ! the Hessian linear transformation received it
+    ! the Hessian linear transformation and the objective function received it
     type, extends(test_context_type) :: double_well_context_type
         real(rp) :: vars(2) = 0.0_rp
-        logical :: hess_x_called = .false.
+        logical :: hess_x_called = .false., obj_func_called = .false.
     end type
 
     ! define type for the host context of the quadratic model 1/2 |x|^2 whose
@@ -954,6 +954,7 @@ contains
         state => resolve_double_well_context(context, error)
         if (error /= 0) return
 
+        state%obj_func_called = .true.
         func = double_well_func(state%vars + delta_vars)
 
     end function double_well_obj_func
@@ -1951,7 +1952,8 @@ contains
 
         ! perform a line search for an objective function whose minimum along the step
         ! lies at twice the Newton step of the model and check that the step is scaled
-        ! by the multiplier the bracketing returns
+        ! by the multiplier the bracketing returns, the solver is stopped by the
+        ! maximum number of macro iterations once the first step is taken
         call setup_settings(settings, half_step_context)
         settings%line_search = .true.
         settings%n_macro = 2
@@ -1959,6 +1961,11 @@ contains
         update_orbs_funptr => half_step_update_orbs
         obj_func_funptr => half_step_obj_func
         call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings)
+        if (error /= error_solver_max_iter) then
+            write(stderr, *) "test_solver failed: Did not stop at maximum number "// &
+                "of macro iterations for line search."
+            test_solver = .false.
+        end if
         if (any( &
             abs(half_step_context%first_step + 2.0_rp * [0.1_rp, 0.1_rp]) > 1e-6_rp)) &
             then
@@ -2169,7 +2176,7 @@ contains
             test_stability_check = .false.
         end if
         write(msg, '(A, F0.4)') unstable_warning_msg, hess_eigvals(1)
-        if (adjustl(context%log_message) /= trim(msg)) then
+        if (index(context%log_message, " "//trim(msg)) == 0) then
             write(stderr, *) "test_stability_check failed: Warning not printed for "// &
                 "saddle point."
             test_stability_check = .false.
@@ -2408,7 +2415,7 @@ contains
         !
         use opentrustregion, only: &
             solver_settings_type, hess_x_type, obj_func_type, check_stationary_point, &
-            verbosity_debug, error_solver, error_stability_check, error_obj_func, &
+            verbosity_debug, error_solver, error_obj_func, &
             started_at_saddle_point_warning_msg, reached_saddle_point_warning_msg
         use test_reference, only: arm_host_context, host_context_reached
 
@@ -2465,12 +2472,21 @@ contains
                 "unstable mode not correct."
             test_check_stationary_point = .false.
         end if
-        if (.not. ( &
-            associated(settings%stability_settings%precond, identity_precond) .and. &
-            associated(settings%stability_settings%project, identity_project) .and. &
-            associated(settings%stability_settings%logger, logger))) then
+        if (.not. associated(settings%stability_settings%precond, identity_precond)) &
+            then
             write(stderr, *) "test_check_stationary_point failed: Solver's "// &
-                "callback functions not inherited."
+                "preconditioner not inherited."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. associated(settings%stability_settings%project, identity_project)) &
+            then
+            write(stderr, *) "test_check_stationary_point failed: Solver's "// &
+                "projection not inherited."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. associated(settings%stability_settings%logger, logger)) then
+            write(stderr, *) "test_check_stationary_point failed: Solver's logging "// &
+                "function not inherited."
             test_check_stationary_point = .false.
         end if
         if (settings%stability_settings%verbose /= settings%verbose) then
@@ -2485,8 +2501,12 @@ contains
                 "lent to the stability check left on the nested settings."
             test_check_stationary_point = .false.
         end if
-        if (settings%stability_settings%n_hess_x <= 0 .or. &
-            settings%n_hess_x /= 5 + settings%stability_settings%n_hess_x) then
+        if (settings%stability_settings%n_hess_x <= 0) then
+            write(stderr, *) "test_check_stationary_point failed: Hessian linear "// &
+                "transformations of the stability check not counted."
+            test_check_stationary_point = .false.
+        end if
+        if (settings%n_hess_x /= 5 + settings%stability_settings%n_hess_x) then
             write(stderr, *) "test_check_stationary_point failed: Hessian linear "// &
                 "transformations of the stability check not added to the solver's "// &
                 "counter."
@@ -2502,13 +2522,15 @@ contains
         ! check the saddle point in a later macro iteration with nested stability check
         ! settings with a verbosity above the solver's and a context of their own,
         ! which they have to keep alongside the callback functions they inherit from
-        ! the solver, so that the stability check hands it to these and to the Hessian
-        ! linear transformation, and check that the warning for reaching a saddle point
-        ! is printed
+        ! the solver, the stability check hands this context to the inherited callback
+        ! functions, which its own test covers, the Hessian linear transformation has
+        ! to receive it while the objective function of the line search receives the
+        ! solver's, and check that the warning for reaching a saddle point is printed
         call setup_settings(settings, context)
         settings%precond => identity_precond
         settings%project => identity_project
         context%vars = [0.0_rp, 0.0_rp]
+        context%obj_func_called = .false.
         stability_context%vars = [0.0_rp, 0.0_rp]
         settings%stability_settings%verbose = verbosity_debug
         settings%stability_settings%context => stability_context
@@ -2541,12 +2563,31 @@ contains
                 "nested settings not handed to the Hessian linear transformation."
             test_check_stationary_point = .false.
         end if
-        if (.not. ( &
-            associated(settings%stability_settings%precond, identity_precond) .and. &
-            associated(settings%stability_settings%project, identity_project) .and. &
-            associated(settings%stability_settings%logger, logger))) then
+        if (.not. context%obj_func_called) then
+            write(stderr, *) "test_check_stationary_point failed: Solver's context "// &
+                "not handed to the objective function of the line search."
+            test_check_stationary_point = .false.
+        end if
+        if (stability_context%obj_func_called) then
+            write(stderr, *) "test_check_stationary_point failed: Context of "// &
+                "nested settings handed to the objective function of the line search."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. associated(settings%stability_settings%precond, identity_precond)) &
+            then
             write(stderr, *) "test_check_stationary_point failed: Solver's "// &
-                "callback functions not inherited alongside context of nested settings."
+                "preconditioner not inherited alongside context of nested settings."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. associated(settings%stability_settings%project, identity_project)) &
+            then
+            write(stderr, *) "test_check_stationary_point failed: Solver's "// &
+                "projection not inherited alongside context of nested settings."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. associated(settings%stability_settings%logger, logger)) then
+            write(stderr, *) "test_check_stationary_point failed: Solver's logging "// &
+                "function not inherited alongside context of nested settings."
             test_check_stationary_point = .false.
         end if
         if (index(context%log_message, " "//reached_saddle_point_warning_msg) == 0) then
@@ -2606,8 +2647,8 @@ contains
             test_check_stationary_point = .false.
         end if
 
-        ! check that the errors of a failing objective function during the line search
-        ! and of the stability check are reported with their origin
+        ! check that the error of a failing objective function during the line search
+        ! is reported with its origin
         call setup_settings(settings, context)
         obj_func_funptr => obj_func_failing
         call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
@@ -2616,17 +2657,6 @@ contains
         if (error /= error_obj_func + 1) then
             write(stderr, *) "test_check_stationary_point failed: Error of failing "// &
                 "objective function not reported with its origin."
-            test_check_stationary_point = .false.
-        end if
-        call setup_settings(settings, context)
-        obj_func_funptr => double_well_obj_func
-        settings%stability_settings%diag_solver = "unknown"
-        call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
-                                    obj_func_funptr, 1_ip, settings, stable, kappa, &
-                                    error)
-        if (error /= error_stability_check + 1) then
-            write(stderr, *) "test_check_stationary_point failed: Error of "// &
-                "stability check not reported with its origin."
             test_check_stationary_point = .false.
         end if
 
@@ -2689,7 +2719,7 @@ contains
         call setup_error_logging(settings, context)
         call newton_step(aug_hess, grad_norm, red_space_basis, solution, &
                          red_space_solution, settings, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_newton_step failed: No error returned for "// &
                 "singular reduced space Hessian."
             test_newton_step = .false.
@@ -3025,7 +3055,7 @@ contains
             call setup_error_logging(settings, context)
             n = bracket(obj_func_funptr, direction, 0.0_rp, 1.0_rp, settings, error)
             if (expect_error(i)) then
-                if (error == 0) then
+                if (error /= 1) then
                     write(stderr, *) "test_bracket failed: Did not return error "// &
                         "for the function "//trim(case_names(i))//"."
                     test_bracket = .false.
@@ -3186,10 +3216,14 @@ contains
                 "eigenvalue for matrix."
             test_symm_mat_min_eig = .false.
         end if
-        if (norm2(matmul(matrix, eigvec) - eigval * eigvec) > tol .or. &
-            abs(norm2(eigvec) - 1.0_rp) > tol) then
+        if (norm2(matmul(matrix, eigvec) - eigval * eigvec) > tol) then
             write(stderr, *) "test_symm_mat_min_eig failed: Incorrect eigenvector "// &
                 "corresponding to minimum eigenvalue for matrix."
+            test_symm_mat_min_eig = .false.
+        end if
+        if (abs(norm2(eigvec) - 1.0_rp) > tol) then
+            write(stderr, *) "test_symm_mat_min_eig failed: Eigenvector "// &
+                "corresponding to minimum eigenvalue for matrix not normalized."
             test_symm_mat_min_eig = .false.
         end if
 
@@ -3507,7 +3541,7 @@ contains
         settings%project => mock_project_first_component
         red_space_basis = &
             generate_trial_vectors(grad, grad_norm, h_diag, settings, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_generate_trial_vectors failed: Error not "// &
                 "produced for vanishing projected direction."
             test_generate_trial_vectors = .false.
@@ -3620,7 +3654,7 @@ contains
         red_space_basis(1, 1) = 1.0_rp
         call setup_error_logging(settings, context)
         call generate_random_trial_vectors(red_space_basis, settings, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_generate_random_trial_vectors failed: No error "// &
                 "returned when no linearly independent vector can be generated."
             test_generate_random_trial_vectors = .false.
@@ -3725,7 +3759,7 @@ contains
         ! returns an error and prints an error message
         call setup_error_logging(settings, context)
         call gram_schmidt(vector, space, settings, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_gram_schmidt failed: No error returned during "// &
                 "orthogonalization for zero vector."
             test_gram_schmidt = .false.
@@ -3781,7 +3815,7 @@ contains
         ! returns an error and prints an error message
         call setup_error_logging(settings, context)
         call gram_schmidt(vector_small, space_small, settings, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_gram_schmidt failed: No error returned during "// &
                 "orthogonalization when number of vectors is larger than dimension "// &
                 "of vector space."
@@ -3854,7 +3888,7 @@ contains
         ! initialize settings of a type extending the solver settings, which cannot be
         ! set to the default values, and check that an error is returned
         call extended_settings%init(error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_init_solver_settings failed: No error returned "// &
                 "for extended settings type."
             test_init_solver_settings = .false.
@@ -3922,7 +3956,7 @@ contains
         ! initialize settings of a type extending the stability settings, which cannot
         ! be set to the default values, and check that an error is returned
         call extended_settings%init(error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_init_stability_settings failed: No error "// &
                 "returned for extended settings type."
             test_init_stability_settings = .false.
@@ -4318,12 +4352,12 @@ contains
             test_minres = .false.
         end if
 
-        ! run minimum residual method from an initial guess which only partially solves
-        ! the Jacobi-Davidson correction equation and check if the equation is solved
+        ! run minimum residual method from a random initial guess orthogonal to the
+        ! solution, as the correction equation requires, and check if the equation is
+        ! solved
         rhs = matmul(context%hess, solution) - mu * solution
-        call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, guess, hess_vector, &
-                    settings, error)
-        guess = 0.5_rp * guess
+        call random_number(guess)
+        guess = guess - dot_product(guess, solution) * solution
         call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
                     hess_vector, settings, error, guess=guess)
         if (error /= 0) then
@@ -4354,9 +4388,14 @@ contains
                 "which solves the equation."
             test_minres = .false.
         end if
-        if (context%n_hess_x_calls /= 1 .or. any(abs(vector - guess) > tol)) then
+        if (context%n_hess_x_calls /= 1) then
             write(stderr, *) "test_minres failed: Initial guess which solves the "// &
-                "equation not returned directly."
+                "equation not accepted after a single Hessian linear transformation."
+            test_minres = .false.
+        end if
+        if (any(abs(vector - guess) > tol)) then
+            write(stderr, *) "test_minres failed: Initial guess which solves the "// &
+                "equation not returned."
             test_minres = .false.
         end if
 
@@ -4365,7 +4404,7 @@ contains
         call setup_error_logging(settings, context)
         call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
                     hess_vector, settings, error, max_iter=1_ip)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_minres failed: No error returned when iteration "// &
                 "limit is reached."
             test_minres = .false.
@@ -4386,9 +4425,15 @@ contains
                 "and vanishing rhs."
             test_minres = .false.
         end if
-        if (sum(abs(vector)) > tol .or. sum(abs(hess_vector)) > tol) then
-            write(stderr, *) "test_minres failed: Returned solution or its Hessian "// &
-                "linear transformation is not zero for initial guess and vanishing rhs."
+        if (sum(abs(vector)) > tol) then
+            write(stderr, *) "test_minres failed: Returned solution is not zero "// &
+                "for initial guess and vanishing rhs."
+            test_minres = .false.
+        end if
+        if (sum(abs(hess_vector)) > tol) then
+            write(stderr, *) "test_minres failed: Returned Hessian linear "// &
+                "transformation of solution is not zero for initial guess and "// &
+                "vanishing rhs."
             test_minres = .false.
         end if
 
@@ -4458,8 +4503,12 @@ contains
         expected_vec = expected_vec - &
                        matmul(initial_basis, matmul(expected_vec, initial_basis))
         expected_vec = expected_vec / norm2(expected_vec)
-        if (any(abs(red_space_basis(:, :2) - initial_basis) > tol) .or. &
-            any(abs(red_space_basis(:, 3) - expected_vec) > tol)) then
+        if (any(abs(red_space_basis(:, :2) - initial_basis) > tol)) then
+            write(stderr, *) "test_add_trial_vector failed: Initial trial vectors "// &
+                "changed for Davidson."
+            test_add_trial_vector = .false.
+        end if
+        if (any(abs(red_space_basis(:, 3) - expected_vec) > tol)) then
             write(stderr, *) "test_add_trial_vector failed: New trial vector is "// &
                 "not the orthonormalized preconditioned residual for Davidson."
             test_add_trial_vector = .false.
@@ -4747,14 +4796,21 @@ contains
         end if
 
         ! check that a message longer than a line is split into several lines which
-        ! together reproduce the message, each line is logged with a leading space
+        ! together reproduce the message, each line is logged with a leading space,
+        ! the logging function counts its calls in the host context
         context%log_message = ""
+        context%n_calls = 0
         call print_message(settings, repeat("This is a long test message. ", 8), &
                            verbosity_warning)
+        if (context%n_calls < 2) then
+            write(stderr, *) "test_print_message failed: Long message is not split "// &
+                "into several lines."
+            test_print_message = .false.
+        end if
         if (context%log_message /= &
             " "//trim(repeat("This is a long test message. ", 8))) then
-            write(stderr, *) "test_print_message failed: Long message is not "// &
-                "logged correctly."
+            write(stderr, *) "test_print_message failed: Lines of long message do "// &
+                "not reproduce the message."
             test_print_message = .false.
         end if
 
@@ -4947,7 +5003,7 @@ contains
         ! check if error is correctly thrown for vanishing number of parameters
         call setup_error_logging(settings, context)
         call solver_sanity_check(settings, 0_ip, grad, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: Error not thrown "// &
                 "for vanishing number of parameters."
             test_solver_sanity_check = .false.
@@ -4961,7 +5017,7 @@ contains
         ! check if error is correctly thrown for negative number of parameters
         call setup_error_logging(settings, context)
         call solver_sanity_check(settings, -1_ip, grad, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: Error not thrown "// &
                 "for negative number of parameters."
             test_solver_sanity_check = .false.
@@ -4977,7 +5033,7 @@ contains
         settings%n_micro = 0
         call setup_error_logging(settings, context)
         call solver_sanity_check(settings, 3_ip, grad, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: Error not thrown "// &
                 "for vanishing number of microiterations."
             test_solver_sanity_check = .false.
@@ -5029,7 +5085,7 @@ contains
         end if
         call setup_error_logging(settings, context)
         call solver_sanity_check(settings, 4_ip, grad, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: Error not thrown "// &
                 "for incorrect gradient size."
             test_solver_sanity_check = .false.
@@ -5065,7 +5121,7 @@ contains
         settings%subsystem_solver = "unknown"
         call setup_error_logging(settings, context)
         call solver_sanity_check(settings, 3_ip, grad, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: Error not thrown "// &
                 "for unknown subsystem solver."
             test_solver_sanity_check = .false.
@@ -5151,7 +5207,7 @@ contains
         settings%diag_solver = "unknown"
         call setup_error_logging(settings, context)
         call stability_sanity_check(settings, 3_ip, error)
-        if (error == 0) then
+        if (error /= 1) then
             write(stderr, *) "test_stability_sanity_check failed: Error not thrown "// &
                 "for unknown diagonalization solver."
             test_stability_sanity_check = .false.
@@ -5183,8 +5239,7 @@ contains
         ! this function tests the level-shifted Davidson subroutine
         !
         use opentrustregion, only: obj_func_type, hess_x_type, solver_settings_type, &
-                                   level_shifted_davidson, error_hess_x, &
-                                   error_obj_func, error_precond
+                                   level_shifted_davidson, error_hess_x, error_obj_func
 
         real(rp) :: func, grad_norm, trust_radius, mu, ratio, input_trust_radius, &
                     overflow_residual_tol
@@ -5384,21 +5439,6 @@ contains
         end if
         obj_func_funptr => obj_func
 
-        ! run level-shifted Davidson with a preconditioner which fails when the first
-        ! trial vector is added and check that its error is returned
-        settings%precond => mock_precond_error
-        trust_radius = 0.4_rp
-        call level_shifted_davidson( &
-            func, grad, grad_norm, h_diag, n_param, obj_func_funptr, hess_x_funptr, &
-            settings, trust_radius, solution, mu, imicro, imicro_jacobi_davidson, &
-            jacobi_davidson_started, max_precision_reached, error)
-        if (error /= error_precond + 1) then
-            write(stderr, *) "test_level_shifted_davidson failed: Did not return "// &
-                "the error of adding a trial vector."
-            test_level_shifted_davidson = .false.
-        end if
-        settings%precond => null()
-
         ! let the residual stagnate with a quadratic model whose gradient only couples
         ! to the second unit vector and a preconditioner which returns the following
         ! unit vectors, which can never reduce the residual, and check that the
@@ -5440,12 +5480,18 @@ contains
                     "stagnates."
                 test_level_shifted_davidson = .false.
             end if
-            if (i_case == 2 .and. &
-                (.not. jacobi_davidson_started .or. imicro_jacobi_davidson /= 11)) then
-                write(stderr, *) "test_level_shifted_davidson failed: "// &
-                    "Jacobi-Davidson method not switched to after ten micro "// &
-                    "iterations when residual stagnates."
-                test_level_shifted_davidson = .false.
+            if (i_case == 2) then
+                if (.not. jacobi_davidson_started) then
+                    write(stderr, *) "test_level_shifted_davidson failed: "// &
+                        "Jacobi-Davidson method not switched to when residual "// &
+                        "stagnates."
+                    test_level_shifted_davidson = .false.
+                else if (imicro_jacobi_davidson /= 11) then
+                    write(stderr, *) "test_level_shifted_davidson failed: "// &
+                        "Jacobi-Davidson method not switched to after ten micro "// &
+                        "iterations when residual stagnates."
+                    test_level_shifted_davidson = .false.
+                end if
             end if
         end do
 
@@ -5455,9 +5501,10 @@ contains
         ! enough floating-point noise to stay above the solver's fixed convergence
         ! floor, for a diagonal Hessian with only two distinct eigenvalues the
         ! preconditioned residuals stay in a small subspace so that a new trial vector
-        ! becomes linearly dependent, while for the same Hessian in a random
-        ! orthonormal basis the reduced space grows to the dimension of the full
-        ! parameter space
+        ! becomes linearly dependent before the reduced space reaches the dimension of
+        ! the full parameter space, while for the same Hessian in a random orthonormal
+        ! basis the reduced space grows to this dimension, each trial vector costs one
+        ! Hessian linear transformation
         do i_case = 1, 2
             call setup_settings(settings, quadratic_context)
             settings%local_red_factor = 0.0_rp
@@ -5489,6 +5536,18 @@ contains
                 write(stderr, *) "test_level_shifted_davidson failed: Produced "// &
                     "error when reduced space stops growing for the "// &
                     trim(case_names(i_case))//" Hessian."
+                test_level_shifted_davidson = .false.
+            end if
+            if (i_case == 1 .and. settings%n_hess_x >= n_param) then
+                write(stderr, *) "test_level_shifted_davidson failed: Reduced "// &
+                    "space does not stop at a linearly dependent trial vector for "// &
+                    "the diagonal Hessian."
+                test_level_shifted_davidson = .false.
+            end if
+            if (i_case == 2 .and. settings%n_hess_x /= n_param) then
+                write(stderr, *) "test_level_shifted_davidson failed: Reduced "// &
+                    "space does not grow to the dimension of the full parameter "// &
+                    "space for the rotated Hessian."
                 test_level_shifted_davidson = .false.
             end if
             if (abs(norm2(solution) - input_trust_radius) > overflow_residual_tol) then

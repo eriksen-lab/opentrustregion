@@ -10,8 +10,9 @@ module c_interface_mock
     use c_interface, only: c_rp, c_ip, solver_c_wrapper, stability_check_c_wrapper, &
                            init_solver_settings_c, init_stability_settings_c
     use test_reference, only: ref_solver_settings, ref_stability_settings, n_param
-    use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_funptr, c_f_pointer, &
-                                           c_f_procpointer, c_associated, c_null_char
+    use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_null_ptr, c_funptr, &
+                                           c_f_pointer, c_f_procpointer, c_associated, &
+                                           c_null_char
 
     implicit none
 
@@ -36,7 +37,7 @@ contains
                                    settings_c) result(error_c) &
         bind(C, name="mock_solver")
         !
-        ! this function is a mock routine for the solver C wrapper subroutine
+        ! this function is a mock routine for the solver C wrapper function
         !
         use c_interface, only: solver_settings_type_c, logger_c_type, obj_func_c_type
         use test_reference, only: check_update_orbs_c_funptr, check_obj_func_c_funptr, &
@@ -129,8 +130,7 @@ contains
                                             stable_c, settings_c, kappa_c_ptr) &
         result(error_c) bind(C, name="mock_stability_check")
         !
-        ! this function is a mock routine for the stability check C wrapper
-        ! subroutine
+        ! this function is a mock routine for the stability check C wrapper function
         !
         use c_interface, only: stability_settings_type_c, logger_c_type, hess_x_c_type
         use test_reference, only: tol_c, check_hess_x_c_funptr, &
@@ -227,7 +227,6 @@ contains
         !
         use c_interface, only: solver_settings_type_c
         use test_reference, only: get_reference_solver_values, unset_callbacks
-        use, intrinsic :: iso_c_binding, only: c_null_ptr
 
         type(solver_settings_type_c), intent(inout) :: settings
 
@@ -247,7 +246,6 @@ contains
         !
         use c_interface, only: stability_settings_type_c
         use test_reference, only: get_reference_stability_values, unset_callbacks
-        use, intrinsic :: iso_c_binding, only: c_null_ptr
 
         type(stability_settings_type_c), intent(inout) :: settings
 
