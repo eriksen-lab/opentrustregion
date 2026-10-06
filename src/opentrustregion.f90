@@ -228,15 +228,13 @@ contains
         integer(ip), intent(out) :: error
         type(solver_settings_type), intent(inout) :: settings
 
-        real(rp) :: trust_radius, func, grad_norm, grad_rms, mu, new_func, n_kappa, &
-                    kappa_norm
+        real(rp) :: trust_radius, func, grad_norm, grad_rms, mu, n_kappa, kappa_norm
         real(rp), allocatable :: kappa(:), grad(:), h_diag(:), solution(:), &
                                  precond_kappa(:)
         logical :: max_precision_reached, macro_converged, stable, &
-                   jacobi_davidson_started, conv_check_passed, lend_context
-        integer(ip) :: imacro, imicro, imicro_jacobi_davidson, i
+                   jacobi_davidson_started, conv_check_passed
+        integer(ip) :: imacro, imicro, imicro_jacobi_davidson
         character(len=300) :: msg
-        integer(ip), parameter :: stability_n_points = 21
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp), external :: dnrm2, ddot
 
@@ -375,72 +373,21 @@ contains
             end if
             if (grad_rms < settings%conv_tol .or. max_precision_reached .or. &
                 conv_check_passed) then
-                ! always perform stability check if starting at stationary point
+                ! always perform stability check if starting at stationary point and
+                ! continue along the unstable mode if the stationary point is unstable
                 if (settings%stability .or. imacro == 1) then
-                    ! inherit preconditioning, projection and logging functions from
-                    ! solver if not provided for stability check
-                    if (.not. associated(settings%stability_settings%precond)) &
-                        settings%stability_settings%precond => settings%precond
-                    if (.not. associated(settings%stability_settings%project)) &
-                        settings%stability_settings%project => settings%project
-                    if (.not. associated(settings%stability_settings%logger)) &
-                        settings%stability_settings%logger => settings%logger
-
-                    ! inherit solver's verbosity setting and context
-                    settings%stability_settings%verbose = &
-                        max(settings%stability_settings%verbose, settings%verbose)
-                    lend_context = .not. associated(settings%stability_settings%context)
-                    if (lend_context) &
-                        settings%stability_settings%context => settings%context
-                    call stability_check(h_diag, hess_x_funptr, stable, error, &
-                                         settings%stability_settings, kappa=kappa)
-                    if (lend_context) settings%stability_settings%context => null()
-                    call add_error_origin(error, error_stability_check, settings)
-                    settings%n_hess_x = settings%n_hess_x + &
-                                        settings%stability_settings%n_hess_x
+                    call check_stationary_point(func, h_diag, hess_x_funptr, obj_func, &
+                                                imacro, settings, stable, kappa, error)
                     if (error /= 0) return
-
                     if (.not. stable) then
-                        ! logarithmic line search
-                        do i = 1, stability_n_points
-                            n_kappa = 10.0_rp**(-(i - 1) / real( &
-                                stability_n_points - 1, kind=rp) * 10.0_rp)
-                            new_func = &
-                                obj_func(n_kappa * kappa, error, settings%context)
-                            call add_error_origin(error, error_obj_func, settings)
-                            if (error /= 0) return
-                            if (new_func < func) then
-                                kappa = n_kappa * kappa
-                                exit
-                            end if
-                        end do
-                        if (new_func >= func) then
-                            call settings%log("Line search was unable to find "// &
-                                              "lower objective function along "// &
-                                              "unstable mode.", verbosity_error, .true.)
-                            error = error_solver + 1
-                            return
-                        else if (imacro == 1) then
-                            call settings%log(started_at_saddle_point_warning_msg, &
-                                              verbosity_warning)
-                        else
-                            call settings%log(reached_saddle_point_warning_msg, &
-                                              verbosity_warning)
-                        end if
                         max_precision_reached = .false.
                         cycle
-                    else
-                        settings%max_precision_reached = max_precision_reached .and. &
-                                                         .not. conv_check_passed
-                        macro_converged = .true.
-                        exit
                     end if
-                else
-                    settings%max_precision_reached = max_precision_reached .and. &
-                                                     .not. conv_check_passed
-                    macro_converged = .true.
-                    exit
                 end if
+                settings%max_precision_reached = max_precision_reached .and. &
+                                                 .not. conv_check_passed
+                macro_converged = .true.
+                exit
             end if
 
             if (settings%subsystem_solver == "davidson" .or. &
@@ -688,6 +635,82 @@ contains
         flush(stderr)
 
     end subroutine stability_check
+
+    subroutine check_stationary_point(func, h_diag, hess_x_funptr, obj_func, imacro, &
+                                      settings, stable, kappa, error)
+        !
+        ! this subroutine performs the stability check at a stationary point with the
+        ! nested stability check settings, which inherit the solver's preconditioning,
+        ! projection and logging functions, its verbosity if higher and, for the
+        ! duration of the check, its host context unless they provide their own, and,
+        ! if the stationary point is unstable, performs a logarithmic line search along
+        ! the unstable mode and returns the step along it
+        !
+        real(rp), intent(in) :: func, h_diag(:)
+        procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
+        procedure(obj_func_type), intent(in), pointer :: obj_func
+        integer(ip), intent(in) :: imacro
+        type(solver_settings_type), intent(inout) :: settings
+        logical, intent(out) :: stable
+        real(rp), intent(out) :: kappa(:)
+        integer(ip), intent(out) :: error
+
+        real(rp) :: n_kappa, new_func
+        logical :: lend_context
+        integer(ip) :: i
+        integer(ip), parameter :: stability_n_points = 21
+
+        ! initialize error flag
+        error = 0
+
+        ! inherit preconditioning, projection and logging functions from solver if not
+        ! provided for stability check
+        if (.not. associated(settings%stability_settings%precond)) &
+            settings%stability_settings%precond => settings%precond
+        if (.not. associated(settings%stability_settings%project)) &
+            settings%stability_settings%project => settings%project
+        if (.not. associated(settings%stability_settings%logger)) &
+            settings%stability_settings%logger => settings%logger
+
+        ! inherit solver's verbosity setting and context
+        settings%stability_settings%verbose = &
+            max(settings%stability_settings%verbose, settings%verbose)
+        lend_context = .not. associated(settings%stability_settings%context)
+        if (lend_context) settings%stability_settings%context => settings%context
+
+        ! perform stability check and add its Hessian linear transformations to the
+        ! solver's
+        call stability_check(h_diag, hess_x_funptr, stable, error, &
+                             settings%stability_settings, kappa=kappa)
+        if (lend_context) settings%stability_settings%context => null()
+        call add_error_origin(error, error_stability_check, settings)
+        settings%n_hess_x = settings%n_hess_x + settings%stability_settings%n_hess_x
+        if (error /= 0) return
+        if (stable) return
+
+        ! logarithmic line search along unstable mode
+        do i = 1, stability_n_points
+            n_kappa = 10.0_rp** &
+                      (-(i - 1) / real(stability_n_points - 1, kind=rp) * 10.0_rp)
+            new_func = obj_func(n_kappa * kappa, error, settings%context)
+            call add_error_origin(error, error_obj_func, settings)
+            if (error /= 0) return
+            if (new_func < func) then
+                kappa = n_kappa * kappa
+                exit
+            end if
+        end do
+        if (new_func >= func) then
+            call settings%log("Line search was unable to find lower objective "// &
+                              "function along unstable mode.", verbosity_error, .true.)
+            error = error_solver + 1
+        else if (imacro == 1) then
+            call settings%log(started_at_saddle_point_warning_msg, verbosity_warning)
+        else
+            call settings%log(reached_saddle_point_warning_msg, verbosity_warning)
+        end if
+
+    end subroutine check_stationary_point
 
     subroutine newton_step(aug_hess, grad_norm, red_space_basis, solution, &
                            red_space_solution, settings, error)

@@ -103,6 +103,7 @@ fortran_tests = {
         "add_trial_vector",
         "bisection",
         "bracket",
+        "check_stationary_point",
         "extend_symm_matrix",
         "generate_random_trial_vectors",
         "generate_trial_vectors",

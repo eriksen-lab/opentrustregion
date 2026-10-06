@@ -747,6 +747,47 @@ contains
 
     end subroutine identity_hess_x
 
+    subroutine identity_precond(residual, mu, precond_residual, error, context)
+        !
+        ! this subroutine describes an identity preconditioner which needs no test
+        ! context
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: residual(:)
+        real(rp), intent(in) :: mu
+        real(rp), intent(out), target :: precond_residual(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        precond_residual = residual + 0.0_rp * mu
+
+        error = 0
+
+    end subroutine identity_precond
+
+    subroutine identity_project(vector, error, context)
+        !
+        ! this subroutine describes an identity projection which needs no test context
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector = vector + 0.0_rp
+
+        error = 0
+
+    end subroutine identity_project
+
     subroutine stationary_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                       error, context)
         !
@@ -1407,11 +1448,9 @@ contains
         use opentrustregion, only: &
             update_orbs_type, obj_func_type, solver_settings_type, solver, &
             default_settings => default_solver_settings, error_solver_max_iter, &
-            error_update_orbs, error_conv_check, error_solver, error_stability_check, &
-            error_obj_func, error_hess_x, error_precond, error_project, &
-            verbosity_error, verbosity_warning, subsystem_solver_options, &
-            stability_settings_uninitialized_warning_msg, &
-            started_at_saddle_point_warning_msg, reached_saddle_point_warning_msg
+            error_update_orbs, error_conv_check, error_obj_func, error_hess_x, &
+            error_precond, error_project, verbosity_warning, subsystem_solver_options, &
+            stability_settings_uninitialized_warning_msg
         use test_reference, only: arm_host_context, host_context_reached
 
         real(rp), parameter :: var_thres = 1e-6_rp
@@ -1427,7 +1466,6 @@ contains
         type(solver_settings_type) :: settings, uninitialized_settings
         real(rp) :: start_vars(n_param)
         type(hartmann6d_recording_context_type), target :: context
-        type(hartmann6d_context_type), target :: stability_context
         type(double_well_context_type), target :: double_well_context
 
         ! assume tests pass
@@ -1445,15 +1483,6 @@ contains
         update_orbs_funptr => update_orbs
         obj_func_funptr => obj_func
 
-        ! set a custom logger only on the nested stability check settings and check
-        ! that the internal stability check does not replace it, since starting exactly
-        ! at a stationary point always triggers it on the first iteration
-        settings%stability_settings%logger => logger
-
-        ! raise the solver verbosity above the nested stability check settings' default
-        ! verbosity and check that it gets propagated to the nested settings
-        settings%verbose = 2_ip
-
         ! check that the objective function is not evaluated without displacement,
         ! which only the line search does
         context%obj_func_zero_step = .false.
@@ -1470,16 +1499,6 @@ contains
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
             write(stderr, *) "test_solver failed: Produced error."
-            test_solver = .false.
-        end if
-        if (.not. associated(settings%stability_settings%logger, logger)) then
-            write(stderr, *) "test_solver failed: Custom logger set on nested "// &
-                "stability check settings was overwritten."
-            test_solver = .false.
-        end if
-        if (settings%stability_settings%verbose < settings%verbose) then
-            write(stderr, *) "test_solver failed: Solver verbosity was not "// &
-                "propagated to nested stability check settings."
             test_solver = .false.
         end if
         call hartmann6d_gradient(context%vars, final_grad)
@@ -1508,56 +1527,6 @@ contains
         end if
         test_solver = test_solver .and. &
                       logical(host_context_reached("solver", context), kind=c_bool)
-        if (associated(settings%stability_settings%context)) then
-            write(stderr, *) "test_solver failed: Host context lent to the "// &
-                "internal stability check was left on the nested settings."
-            test_solver = .false.
-        end if
-
-        ! start at saddle point again but give the nested stability check settings a
-        ! verbosity above the solver's, which it has to keep, and a context of its own,
-        ! the internal stability check hands it to the Hessian linear transformation
-        ! instead of the solver's and leaves it in place, the logging function is
-        ! removed so that only the Hessian linear transformation is called during the
-        ! internal stability check, which only runs once at the stationary starting
-        ! point since the stability check is not requested, so the Hessian at the
-        ! saddle point is all the Hessian linear transformation of its context needs
-        context%vars = saddle_point
-        settings%verbose = 0_ip
-        settings%stability_settings%verbose = verbosity_error
-        settings%stability_settings%logger => null()
-        call arm_host_context(settings, context)
-        stability_context%n_calls = 0
-        stability_context%hess = hartmann6d_hessian(saddle_point)
-        settings%stability_settings%context => stability_context
-        context%n_update_orbs_calls = 0
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
-        if (error /= 0) then
-            write(stderr, *) "test_solver failed: Produced error when nested "// &
-                "stability check settings have a context of their own."
-            test_solver = .false.
-        end if
-        test_solver = test_solver .and. &
-                      logical(host_context_reached("solver", context), kind=c_bool)
-        test_solver = test_solver .and. logical( &
-            call_counts_match(context, "solver", "when settings object is reused", &
-                              n_update_orbs=settings%n_update_orbs), kind=c_bool)
-        if (stability_context%n_calls == 0) then
-            write(stderr, *) "test_solver failed: Hessian linear transformation "// &
-                "did not receive the context of the nested stability check settings."
-            test_solver = .false.
-        end if
-        if (.not. associated(settings%stability_settings%context, stability_context)) &
-            then
-            write(stderr, *) "test_solver failed: Context of the nested stability "// &
-                "check settings was replaced."
-            test_solver = .false.
-        end if
-        if (settings%stability_settings%verbose /= verbosity_error) then
-            write(stderr, *) "test_solver failed: Verbosity of the nested "// &
-                "stability check settings above the solver's was replaced."
-            test_solver = .false.
-        end if
 
         ! start at saddle point again with nested stability check settings that were
         ! not initialized, the solver initializes them before handing down its context,
@@ -1594,14 +1563,11 @@ contains
         ! stability check finds the saddle point unstable and the solver stops before
         ! solving a trust region subproblem, so all Hessian linear transformations are
         ! the internal stability check's and have to be added to the solver's counter,
-        ! a stale counter has to be reset first, and the internal stability check has
-        ! to inherit the solver's preconditioner, projection and logging functions
+        ! a stale counter has to be reset first
         context%vars = saddle_point
         call settings%init(error)
         settings%n_macro = 1
         settings%n_hess_x = 1000
-        settings%precond => step_recording_precond
-        settings%project => mock_project
         call setup_error_logging(settings, context)
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= error_solver_max_iter) then
@@ -1622,27 +1588,6 @@ contains
         if (settings%n_hess_x /= settings%stability_settings%n_hess_x) then
             write(stderr, *) "test_solver failed: Hessian linear transformations "// &
                 "of the internal stability check not added to the solver's counter."
-            test_solver = .false.
-        end if
-        if (.not. (associated(settings%stability_settings%precond, &
-                              step_recording_precond) .and. &
-                   associated(settings%stability_settings%project, mock_project) .and. &
-                   associated(settings%stability_settings%logger, logger))) then
-            write(stderr, *) "test_solver failed: Internal stability check did not "// &
-                "inherit the solver's preconditioner, projection and logging functions."
-            test_solver = .false.
-        end if
-
-        ! start at saddle point with nested stability check settings which the
-        ! stability check rejects and check that its error is returned
-        context%vars = saddle_point
-        call settings%init(error)
-        settings%context => context
-        settings%stability_settings%diag_solver = "unknown"
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
-        if (error /= error_stability_check + 1) then
-            write(stderr, *) "test_solver failed: Did not return the error of the "// &
-                "internal stability check."
             test_solver = .false.
         end if
 
@@ -1909,53 +1854,6 @@ contains
         if (abs(double_well_context%vars(2)) < 0.5_rp) then
             write(stderr, *) "test_solver failed: Did not continue to minimum "// &
                 "after saddle point was reached."
-            test_solver = .false.
-        end if
-        if (index(double_well_context%log_message, &
-                  " "//reached_saddle_point_warning_msg) == 0) then
-            write(stderr, *) "test_solver failed: Warning not printed when saddle "// &
-                "point is reached."
-            test_solver = .false.
-        end if
-
-        ! start at the saddle point of the double well function and check that the
-        ! optimization continues to a minimum with a warning
-        call setup_settings(settings, double_well_context)
-        double_well_context%vars = [0.0_rp, 0.0_rp]
-        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings)
-        if (error /= 0) then
-            write(stderr, *) "test_solver failed: Produced error when starting at "// &
-                "saddle point."
-            test_solver = .false.
-        end if
-        if (abs(double_well_context%vars(2)) < 0.5_rp) then
-            write(stderr, *) "test_solver failed: Did not continue to minimum when "// &
-                "starting at saddle point."
-            test_solver = .false.
-        end if
-        if (index(double_well_context%log_message, &
-                  " "//started_at_saddle_point_warning_msg) == 0) then
-            write(stderr, *) "test_solver failed: Warning not printed when "// &
-                "starting at saddle point."
-            test_solver = .false.
-        end if
-
-        ! start at the saddle point of the double well function with an objective
-        ! function that no displacement lowers and check that the failed line search
-        ! along the unstable mode returns an error and prints an error message
-        call settings%init(error)
-        double_well_context%vars = [0.0_rp, 0.0_rp]
-        obj_func_funptr => raised_double_well_obj_func
-        call setup_error_logging(settings, double_well_context)
-        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings)
-        if (error /= error_solver + 1) then
-            write(stderr, *) "test_solver failed: Did not return error when line "// &
-                "search along unstable mode fails."
-            test_solver = .false.
-        end if
-        if (len_trim(double_well_context%log_message) == 0) then
-            write(stderr, *) "test_solver failed: No error message printed when "// &
-                "line search along unstable mode fails."
             test_solver = .false.
         end if
 
@@ -2366,6 +2264,207 @@ contains
         end subroutine run_with_fault
 
     end function test_stability_check
+
+    logical(c_bool) function test_check_stationary_point() bind(C)
+        !
+        ! this function tests the subroutine which performs the stability check at a
+        ! stationary point and the line search along an unstable mode
+        !
+        use opentrustregion, only: &
+            solver_settings_type, hess_x_type, obj_func_type, check_stationary_point, &
+            verbosity_debug, error_solver, error_stability_check, error_obj_func, &
+            started_at_saddle_point_warning_msg, reached_saddle_point_warning_msg
+        use test_reference, only: arm_host_context, host_context_reached
+
+        type(solver_settings_type) :: settings
+        type(double_well_context_type), target :: context, stability_context
+        procedure(hess_x_type), pointer :: hess_x_funptr
+        procedure(obj_func_type), pointer :: obj_func_funptr
+        real(rp) :: kappa(2)
+        logical :: stable
+        integer(ip) :: error
+
+        ! the double well function x^2 - y^2 + y^4 has the Hessian diagonal (2, -2) at
+        ! its saddle point at the origin, where the logarithmic line search along the
+        ! unstable mode first lowers the function at a tenth to the power of one half
+        ! of the unit step, and the Hessian diagonal (2, 4) at its minima
+        real(rp), parameter :: saddle_h_diag(2) = [2.0_rp, -2.0_rp], &
+                               minimum_h_diag(2) = [2.0_rp, 4.0_rp], &
+                               saddle_step = 10.0_rp**(-0.5_rp)
+
+        ! assume tests pass
+        test_check_stationary_point = .true.
+
+        ! set function pointers
+        hess_x_funptr => double_well_hess_x
+        obj_func_funptr => double_well_obj_func
+
+        ! check the saddle point in the first macro iteration with nested stability
+        ! check settings without callback functions, verbosity or context of their own,
+        ! which have to inherit the solver's for the duration of the check, and check
+        ! that the Hessian linear transformations of the check are added to the
+        ! solver's counter, that the step along the unstable mode is returned and that
+        ! the warning for starting at a saddle point is printed
+        call setup_settings(settings, context)
+        settings%precond => identity_precond
+        settings%project => identity_project
+        settings%n_hess_x = 5
+        context%vars = [0.0_rp, 0.0_rp]
+        call arm_host_context(settings, context)
+        call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
+                                    obj_func_funptr, 1_ip, settings, stable, kappa, &
+                                    error)
+        if (error /= 0 .or. stable) then
+            write(stderr, *) "test_check_stationary_point failed: Produced error "// &
+                "or saddle point not found to be unstable."
+            test_check_stationary_point = .false.
+        end if
+        if (abs(kappa(1)) > tol .or. abs(abs(kappa(2)) - saddle_step) > tol) then
+            write(stderr, *) "test_check_stationary_point failed: Step along "// &
+                "unstable mode not correct."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. ( &
+            associated(settings%stability_settings%precond, identity_precond) .and. &
+            associated(settings%stability_settings%project, identity_project) .and. &
+            associated(settings%stability_settings%logger, logger))) then
+            write(stderr, *) "test_check_stationary_point failed: Solver's "// &
+                "callback functions not inherited."
+            test_check_stationary_point = .false.
+        end if
+        if (settings%stability_settings%verbose /= settings%verbose) then
+            write(stderr, *) "test_check_stationary_point failed: Solver's "// &
+                "verbosity not inherited."
+            test_check_stationary_point = .false.
+        end if
+        test_check_stationary_point = test_check_stationary_point .and. logical( &
+            host_context_reached("check_stationary_point", context), kind=c_bool)
+        if (associated(settings%stability_settings%context)) then
+            write(stderr, *) "test_check_stationary_point failed: Host context "// &
+                "lent to the stability check left on the nested settings."
+            test_check_stationary_point = .false.
+        end if
+        if (settings%stability_settings%n_hess_x <= 0 .or. &
+            settings%n_hess_x /= 5 + settings%stability_settings%n_hess_x) then
+            write(stderr, *) "test_check_stationary_point failed: Hessian linear "// &
+                "transformations of the stability check not added to the solver's "// &
+                "counter."
+            test_check_stationary_point = .false.
+        end if
+        if (index(context%log_message, " "//started_at_saddle_point_warning_msg) == 0) &
+            then
+            write(stderr, *) "test_check_stationary_point failed: Warning not "// &
+                "printed for starting at saddle point."
+            test_check_stationary_point = .false.
+        end if
+
+        ! check the saddle point in a later macro iteration with nested stability check
+        ! settings with a verbosity above the solver's and a context of their own,
+        ! which they have to keep, and check that the warning for reaching a saddle
+        ! point is printed
+        call setup_settings(settings, context)
+        context%vars = [0.0_rp, 0.0_rp]
+        stability_context%vars = [0.0_rp, 0.0_rp]
+        stability_context%n_calls = 0
+        settings%stability_settings%verbose = verbosity_debug
+        settings%stability_settings%context => stability_context
+        call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
+                                    obj_func_funptr, 2_ip, settings, stable, kappa, &
+                                    error)
+        if (error /= 0 .or. stable) then
+            write(stderr, *) "test_check_stationary_point failed: Produced error "// &
+                "or saddle point not found to be unstable in later macro iteration."
+            test_check_stationary_point = .false.
+        end if
+        if (settings%stability_settings%verbose /= verbosity_debug) then
+            write(stderr, *) "test_check_stationary_point failed: Verbosity of "// &
+                "nested settings above the solver's replaced."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. associated(settings%stability_settings%context, &
+                             stability_context) .or. stability_context%n_calls == 0) &
+            then
+            write(stderr, *) "test_check_stationary_point failed: Context of "// &
+                "nested settings replaced or not handed to the stability check."
+            test_check_stationary_point = .false.
+        end if
+        if (index(context%log_message, " "//reached_saddle_point_warning_msg) == 0) then
+            write(stderr, *) "test_check_stationary_point failed: Warning not "// &
+                "printed for reaching saddle point."
+            test_check_stationary_point = .false.
+        end if
+
+        ! check a minimum with nested stability check settings which provide their own
+        ! logging function while the solver has none, which they have to keep, and
+        ! check that the minimum is found to be stable without a step
+        call setup_settings(settings, context)
+        settings%logger => null()
+        settings%stability_settings%logger => logger
+        context%vars = [0.0_rp, 1.0_rp / sqrt(2.0_rp)]
+        call check_stationary_point(double_well_func(context%vars), minimum_h_diag, &
+                                    hess_x_funptr, obj_func_funptr, 2_ip, settings, &
+                                    stable, kappa, error)
+        if (error /= 0 .or. .not. stable) then
+            write(stderr, *) "test_check_stationary_point failed: Produced error "// &
+                "or minimum not found to be stable."
+            test_check_stationary_point = .false.
+        end if
+        if (any(abs(kappa) > tol)) then
+            write(stderr, *) "test_check_stationary_point failed: Step returned "// &
+                "for minimum."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. associated(settings%stability_settings%logger, logger)) then
+            write(stderr, *) "test_check_stationary_point failed: Logging function "// &
+                "of nested settings replaced."
+            test_check_stationary_point = .false.
+        end if
+
+        ! check that an error is returned and an error message is printed when no step
+        ! along the unstable mode lowers the objective function
+        call setup_settings(settings, context)
+        call setup_error_logging(settings, context)
+        context%vars = [0.0_rp, 0.0_rp]
+        obj_func_funptr => raised_double_well_obj_func
+        call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
+                                    obj_func_funptr, 1_ip, settings, stable, kappa, &
+                                    error)
+        if (error /= error_solver + 1) then
+            write(stderr, *) "test_check_stationary_point failed: No error "// &
+                "returned when line search along unstable mode fails."
+            test_check_stationary_point = .false.
+        end if
+        if (len_trim(context%log_message) == 0) then
+            write(stderr, *) "test_check_stationary_point failed: No error message "// &
+                "printed when line search along unstable mode fails."
+            test_check_stationary_point = .false.
+        end if
+
+        ! check that the errors of a failing objective function during the line search
+        ! and of the stability check are reported with their origin
+        call setup_settings(settings, context)
+        obj_func_funptr => obj_func_failing
+        call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
+                                    obj_func_funptr, 1_ip, settings, stable, kappa, &
+                                    error)
+        if (error /= error_obj_func + 1) then
+            write(stderr, *) "test_check_stationary_point failed: Error of failing "// &
+                "objective function not reported with its origin."
+            test_check_stationary_point = .false.
+        end if
+        call setup_settings(settings, context)
+        obj_func_funptr => double_well_obj_func
+        settings%stability_settings%diag_solver = "unknown"
+        call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
+                                    obj_func_funptr, 1_ip, settings, stable, kappa, &
+                                    error)
+        if (error /= error_stability_check + 1) then
+            write(stderr, *) "test_check_stationary_point failed: Error of "// &
+                "stability check not reported with its origin."
+            test_check_stationary_point = .false.
+        end if
+
+    end function test_check_stationary_point
 
     logical(c_bool) function test_newton_step() bind(C)
         !
