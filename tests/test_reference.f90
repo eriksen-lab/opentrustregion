@@ -9,9 +9,10 @@ module test_reference
     use opentrustregion, only: rp, ip, kw_len, stderr, solver_settings_type, &
                                stability_settings_type
     use c_interface, only: c_rp, c_ip
-    use, intrinsic :: iso_c_binding, only: &
-        c_bool, c_char, c_null_char, c_funptr, c_null_funptr, c_f_procpointer, &
-        c_associated, c_ptr, c_null_ptr, c_loc, c_f_pointer, c_intptr_t
+    use, intrinsic :: iso_c_binding, only: c_bool, c_char, c_null_char, c_funptr, &
+                                           c_null_funptr, c_f_procpointer, &
+                                           c_associated, c_ptr, c_null_ptr, c_loc, &
+                                           c_f_pointer, c_intptr_t, c_size_t, c_sizeof
 
     implicit none
 
@@ -347,6 +348,32 @@ contains
 
     end subroutine get_reference_stability_values
 
+    integer(c_size_t) function solver_settings_size() bind(C)
+        !
+        ! this function returns the size of the C solver settings, so that the layout
+        ! tests detect a field missing from the C or Python settings
+        !
+        use c_interface, only: solver_settings_type_c
+
+        type(solver_settings_type_c) :: settings_c
+
+        solver_settings_size = c_sizeof(settings_c)
+
+    end function solver_settings_size
+
+    integer(c_size_t) function stability_settings_size() bind(C)
+        !
+        ! this function returns the size of the C stability check settings, so that
+        ! the layout tests detect a field missing from the C or Python settings
+        !
+        use c_interface, only: stability_settings_type_c
+
+        type(stability_settings_type_c) :: settings_c
+
+        stability_settings_size = c_sizeof(settings_c)
+
+    end function stability_settings_size
+
     subroutine reference_field(name_c, field_value, keyword_c) bind(C)
         !
         ! this subroutine returns the value of a field of the C solver settings
@@ -509,14 +536,14 @@ contains
         host_context_reached = .true.
 
         if (host_context_wrong) then
-            host_context_reached = .false.
             write(stderr, *) "test_"//test_name//" failed: A callback function "// &
                 "received a host context other than the one that was set."
+            host_context_reached = .false.
         end if
         if (host_context_missing) then
-            host_context_reached = .false.
             write(stderr, *) "test_"//test_name//" failed: A callback function was "// &
                 "reached without the host context that was set."
+            host_context_reached = .false.
         end if
         if (present(context)) then
             n_calls = context%n_calls
@@ -524,9 +551,9 @@ contains
             n_calls = host_context%n_calls
         end if
         if (n_calls == 0) then
-            host_context_reached = .false.
             write(stderr, *) "test_"//test_name//" failed: No callback function "// &
                 "received the host context that was set."
+            host_context_reached = .false.
         end if
 
         host_context_armed = .false.
@@ -838,9 +865,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. associated(update_orbs_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Orbital updating "// &
                 "function provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -856,29 +883,29 @@ contains
 
         ! check for error
         if (error /= 0) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
+            test_passed = .false.
         end if
 
         ! check objective function value
         if (abs(func - 3.0_rp) > tol) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name// &
                 " failed: Objective function value returned"//message//" wrong."
+            test_passed = .false.
         end if
 
         ! check gradient
         if (any(abs(grad - 2.0_rp) > tol)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Gradient returned"// &
                 message//" wrong."
+            test_passed = .false.
         end if
 
         ! check Hessian diagonal
         if (any(abs(h_diag - 3.0_rp) > tol)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name// &
                 " failed: Hessian diagonal returned"//message//" wrong."
+            test_passed = .false.
         end if
 
         ! deallocate arrays
@@ -917,9 +944,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. c_associated(update_orbs_c_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Orbital updating "// &
                 "function provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -938,29 +965,29 @@ contains
 
         ! check for error
         if (error /= 0) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
+            test_passed = .false.
         end if
 
         ! check objective function value
         if (abs(func - 3.0_c_rp) > tol_c) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name// &
                 " failed: Objective function value returned"//message//" wrong."
+            test_passed = .false.
         end if
 
         ! check gradient
         if (any(abs(grad - 2.0_c_rp) > tol_c)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Gradient returned"// &
                 message//" wrong."
+            test_passed = .false.
         end if
 
         ! check Hessian diagonal
         if (any(abs(h_diag - 3.0_c_rp) > tol_c)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name// &
                 " failed: Hessian diagonal returned"//message//" wrong."
+            test_passed = .false.
         end if
 
         ! deallocate arrays
@@ -996,10 +1023,10 @@ contains
 
         ! check if function pointer is associated
         if (.not. associated(hess_x_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name// &
                 " failed: Hessian linear transformation function provided"//message// &
                 " not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -1014,15 +1041,15 @@ contains
 
         ! check for error
         if (error /= 0) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
+            test_passed = .false.
         end if
 
         ! check Hessian linear transformation
         if (any(abs(hess_x - 4.0_rp) > tol)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name// &
                 " failed: Hessian linear transformation returned"//message//" wrong."
+            test_passed = .false.
         end if
 
         ! deallocate arrays
@@ -1052,10 +1079,10 @@ contains
 
         ! check if function pointer is associated
         if (.not. c_associated(hess_x_c_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name// &
                 " failed: Hessian linear transformation function provided"//message// &
                 " not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -1073,15 +1100,15 @@ contains
 
         ! check for error
         if (error /= 0) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
+            test_passed = .false.
         end if
 
         ! check Hessian linear transformation
         if (any(abs(hess_x - 4.0_c_rp) > tol_c)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name// &
                 " failed: Hessian linear transformation returned"//message//" wrong."
+            test_passed = .false.
         end if
 
         ! deallocate arrays
@@ -1110,16 +1137,16 @@ contains
 
         ! check if function pointer is associated
         if (.not. associated(obj_func_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Objective function "// &
                 "provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
         ! allocate arrays
         allocate(kappa(n_param))
 
-        ! initialize orbital update
+        ! initialize parameters
         kappa = 1.0_rp
 
         ! call objective function
@@ -1165,9 +1192,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. c_associated(obj_func_c_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Objective function "// &
                 "provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -1177,7 +1204,7 @@ contains
         ! allocate arrays
         allocate(kappa(n_param))
 
-        ! initialize orbital update
+        ! initialize parameters
         kappa = 1.0_c_rp
 
         ! call objective function
@@ -1221,9 +1248,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. associated(precond_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Preconditioner function "// &
                 "provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -1275,9 +1302,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. c_associated(precond_c_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Preconditioner function "// &
                 "provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -1331,9 +1358,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. associated(project_funptr)) then
-            test_passed = .false.
-            write(stderr, *) "test_"//test_name//" failed: Project function "// &
+            write(stderr, *) "test_"//test_name//" failed: Projection function "// &
                 "provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -1385,9 +1412,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. c_associated(project_c_funptr)) then
-            test_passed = .false.
-            write(stderr, *) "test_"//test_name//" failed: Project function "// &
+            write(stderr, *) "test_"//test_name//" failed: Projection function "// &
                 "provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -1441,9 +1468,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. associated(conv_check_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Convergence check "// &
                 "function provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 
@@ -1486,9 +1513,9 @@ contains
 
         ! check if function pointer is associated
         if (.not. c_associated(conv_check_c_funptr)) then
-            test_passed = .false.
             write(stderr, *) "test_"//test_name//" failed: Convergence check "// &
                 "function provided"//message//" not associated with value."
+            test_passed = .false.
             return
         end if
 

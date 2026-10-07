@@ -8,12 +8,12 @@
  *
  * The Fortran-side c_interface_unit_tests cover the bind(C) wrappers but never compile
  * against the C header itself. These tests do, and test_settings_layout checks that
- * every settings field is read back under its own name, so any drift between the
- * bind(C) settings types (Fortran) and the settings structs (C) is caught here. */
+ * the settings structs have the size of the bind(C) settings types and that every
+ * settings field is read back under its own name, so any drift between the bind(C)
+ * settings types (Fortran) and the settings structs (C) is caught here. */
 
 #include <math.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "opentrustregion.h"
@@ -28,15 +28,15 @@
 extern const c_int hartmann6d_n_param;
 extern const c_int hartmann6d_n_terms;
 extern const c_real hartmann6d_alpha[N_TERM];
-const c_real *alpha = hartmann6d_alpha;
+static const c_real *alpha = hartmann6d_alpha;
 extern const c_real hartmann6d_A[N_TERM * N_PARAM];
 #define A(i, j) (hartmann6d_A[(i) + (j) * N_TERM])
 extern const c_real hartmann6d_P[N_TERM * N_PARAM];
 #define P(i, j) (hartmann6d_P[(i) + (j) * N_TERM])
 extern const c_real hartmann6d_minimum1[N_PARAM];
-const c_real *minimum1 = hartmann6d_minimum1;
+static const c_real *minimum1 = hartmann6d_minimum1;
 extern const c_real hartmann6d_saddle_point[N_PARAM];
-const c_real *saddle_point = hartmann6d_saddle_point;
+static const c_real *saddle_point = hartmann6d_saddle_point;
 extern const c_real hartmann6d_near_minimum[N_PARAM];
 
 /* Host data handed to the callbacks through the context of the settings: the current
@@ -266,13 +266,15 @@ static void stability_logger(const char *message, void *context) {
  * Reference settings provided by test_reference.f90, so that these tests need no
  * values of their own: the reference value of a field by its name, prefixed by
  * "stability_settings." for the nested settings, C settings filled with these values
- * field by field with only the named logical set if one is named instead of NULL, and
- * comparisons with the default settings
+ * field by field with only the named logical set if one is named instead of NULL, the
+ * sizes of the bind(C) settings types, and comparisons with the default settings
  * ------------------------------------------------------------------ */
 
 void reference_field(const char *name, c_real *value, char *keyword);
 void get_reference_solver_values(solver_settings_type *settings,
                                  const char *true_logical);
+size_t solver_settings_size(void);
+size_t stability_settings_size(void);
 bool is_default_solver_settings(const solver_settings_type *settings);
 bool is_default_stability_settings(const stability_settings_type *settings);
 
@@ -316,6 +318,23 @@ static bool check_keyword(const char *keyword, const char *name) {
 
 bool test_settings_layout(void) {
   bool ok = true;
+
+  /* check that the settings structs have the size of the bind(C) settings types, so
+   * that a field missing from either is detected, which the field checks below would
+   * not read, and stop otherwise, since filling smaller settings would write past
+   * their end */
+  if (sizeof(solver_settings_type) != solver_settings_size()) {
+    fprintf(stderr, "test_settings_layout failed: Size of solver settings differs "
+                    "from the library's.\n");
+    ok = false;
+  }
+  if (sizeof(stability_settings_type) != stability_settings_size()) {
+    fprintf(stderr, "test_settings_layout failed: Size of stability check settings "
+                    "differs from the library's.\n");
+    ok = false;
+  }
+  if (!ok)
+    return false;
 
   /* check that every logical is read back under its own name, only one is set at a
    * time so that swapped logicals can be told apart */

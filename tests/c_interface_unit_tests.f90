@@ -26,6 +26,8 @@ module c_interface_unit_tests
     procedure(precond_c_type), pointer :: mock_precond_ptr => mock_precond
     procedure(project_c_type), pointer :: mock_project_ptr => mock_project
     procedure(conv_check_c_type), pointer :: mock_conv_check_ptr => mock_conv_check
+    procedure(conv_check_c_type), pointer :: mock_conv_check_not_converged_ptr => &
+        mock_conv_check_not_converged
     procedure(logger_c_type), pointer :: mock_logger_ptr => mock_logger
     procedure(precond_c_type), pointer :: mock_stability_precond_ptr => &
         mock_stability_precond
@@ -181,6 +183,26 @@ contains
 
     end function mock_conv_check
 
+    function mock_conv_check_not_converged(converged, context_c) result(error) bind(C)
+        !
+        ! this function is a test function for a convergence check function which
+        ! reports that the optimization has not converged
+        !
+        use test_reference, only: check_host_context_c
+
+        logical(c_bool), intent(out) :: converged
+        type(c_ptr), intent(in), value :: context_c
+        integer(c_ip) :: error
+
+        ! check host context
+        call check_host_context_c(context_c)
+
+        converged = .false.
+
+        error = 0
+
+    end function mock_conv_check_not_converged
+
     subroutine mock_logger(message_c, context_c) bind(C)
         !
         ! this subroutine is a test subroutine for the C logging function
@@ -257,7 +279,7 @@ contains
         use c_interface, only: solver_settings_type_c, solver, solver_c_wrapper
         use opentrustregion_mock, only: &
             mock_solver, test_passed, mock_error, mock_n_update_orbs, mock_n_hess_x, &
-            mock_stability_n_hess_x, received_solver_settings, &
+            mock_stability_n_hess_x, received_solver_settings, received_callbacks, &
             received_stability_callbacks
         use test_reference, only: host_context_type, get_reference_solver_values, &
                                   host_context, arm_host_context_c, &
@@ -340,82 +362,82 @@ contains
 
             ! check if logging subroutine was correctly called
             if (.not. host_context%logger_called) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Called logging "// &
                     "subroutine wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
 
             ! check if optional settings are correctly passed in the first case, the
             ! conversion of the nested settings the other cases vary is covered by the
             ! tests of the conversion routines
             if (i_case == 1 .and. received_solver_settings /= ref_solver_settings) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Passed optional "// &
                     "settings associated with wrong values."
+                test_solver_c_wrapper = .false.
             end if
 
             ! check the callback bundle of the nested settings
             if (.not. associated(received_stability_callbacks%precond, &
                                  expected_precond)) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Preconditioner of "// &
                     "internal stability check wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
             if (.not. associated(received_stability_callbacks%project, &
                                  expected_project)) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Projection of "// &
                     "internal stability check wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
             if (.not. associated(received_stability_callbacks%logger, &
                                  expected_logger)) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Logging function "// &
                     "of internal stability check wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
             if (.not. associated(received_stability_callbacks%hess_x, mock_hess_x)) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Hessian linear "// &
                     "transformation returned by orbital update not handed to "// &
                     "internal stability check "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
             if (.not. c_associated(received_stability_callbacks%host_context, &
                                    expected_context)) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Context of "// &
                     "internal stability check wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
 
             ! check if output variables are as expected
             if (error /= int(mock_error, kind=c_ip)) then
-                test_solver_c_wrapper = .false.
-                write(stderr, *) "test_solver_c_wrapper failed: Returned error "// &
+                write(stderr, *) "test_solver_c_wrapper failed: Produced error "// &
                     "code wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
 
             ! check if output fields are written back with the values set by the solver
             if (settings%max_precision_reached) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Returned maximum "// &
                     "precision reached flag wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
             if (settings%n_update_orbs /= int(mock_n_update_orbs, kind=c_ip)) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Returned number of "// &
                     "orbital updates wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
             if (settings%n_hess_x /= int(mock_n_hess_x, kind=c_ip)) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Returned number of "// &
                     "Hessian linear transformations wrong "// &
                     trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
             if (settings%stability_settings%n_hess_x /= &
                 int(mock_stability_n_hess_x, kind=c_ip)) then
-                test_solver_c_wrapper = .false.
                 write(stderr, *) "test_solver_c_wrapper failed: Returned number of "// &
                     "Hessian linear transformations of internal stability check "// &
                     "wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
             end if
 
             ! check that the host context reached the callback functions unchanged
@@ -423,8 +445,45 @@ contains
                 test_solver_c_wrapper = .false.
 
             ! check if test has passed
-            test_solver_c_wrapper = test_solver_c_wrapper .and. test_passed
+            if (.not. test_passed) test_solver_c_wrapper = .false.
         end do
+
+        ! call the solver with settings that were not initialized but carry callback
+        ! functions and a host context, while their nested settings are initialized
+        ! and carry their own, none of which may reach the callback bundles since the
+        ! conversion replaces these settings by the default settings
+        call get_reference_solver_values(settings)
+        settings%precond = c_funloc(mock_precond)
+        settings%project = c_funloc(mock_project)
+        settings%conv_check = c_funloc(mock_conv_check)
+        settings%logger = c_funloc(mock_logger)
+        settings%context = c_loc(host_context)
+        settings%stability_settings%precond = c_funloc(mock_stability_precond)
+        settings%stability_settings%project = c_funloc(mock_stability_project)
+        settings%stability_settings%logger = c_funloc(mock_stability_logger)
+        settings%stability_settings%context = c_loc(nested_host_context)
+        settings%initialized = .false.
+        test_passed = .false.
+        error = solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param_c, &
+                                 settings)
+        if (c_associated(received_callbacks%host_context)) then
+            write(stderr, *) "test_solver_c_wrapper failed: Host context passed "// &
+                "for settings that were not initialized."
+            test_solver_c_wrapper = .false.
+        end if
+        if (associated(received_stability_callbacks%precond) .or. &
+            associated(received_stability_callbacks%project) .or. &
+            associated(received_stability_callbacks%logger)) then
+            write(stderr, *) "test_solver_c_wrapper failed: Callback functions of "// &
+                "nested settings passed for settings that were not initialized."
+            test_solver_c_wrapper = .false.
+        end if
+        if (c_associated(received_stability_callbacks%host_context)) then
+            write(stderr, *) "test_solver_c_wrapper failed: Host context of nested "// &
+                "settings passed for settings that were not initialized."
+            test_solver_c_wrapper = .false.
+        end if
+        if (.not. test_passed) test_solver_c_wrapper = .false.
 
         ! restore the procedure pointer so later tests do not inherit the mock
         solver => standard_solver
@@ -439,9 +498,11 @@ contains
         use c_interface, only: stability_settings_type_c, stability_check, &
                                stability_check_c_wrapper
         use opentrustregion_mock, only: mock_stability_check, test_passed, mock_error, &
-                                        mock_stability_check_n_hess_x
+                                        mock_stability_check_n_hess_x, mock_stable, &
+                                        received_stability_settings, received_callbacks
         use test_reference, only: get_reference_stability_values, host_context, &
-                                  arm_host_context_c, host_context_reached
+                                  arm_host_context_c, host_context_reached, &
+                                  ref_stability_settings, operator(/=)
 
         type(c_funptr) :: hess_x_c_funptr
         real(c_rp) :: h_diag(n_param)
@@ -467,7 +528,8 @@ contains
         ! initialize Hessian diagonal
         h_diag = 3.0_c_rp
 
-        ! run once without and once with a returned direction
+        ! run once without and once with a returned direction, the mock returns a
+        ! different stability in either case
         do i_case = 1, size(case_names)
             ! associate optional settings with the reference values and callback
             ! functions
@@ -490,42 +552,53 @@ contains
             ! clear the result of the mock so that a missing call is detected
             test_passed = .false.
 
-            ! call stability check
-            stable = .false.
+            ! call stability check, the stability flag starts opposite to the one the
+            ! mock returns
+            mock_stable = i_case == 1
+            stable = .not. mock_stable
             error = stability_check_c_wrapper(h_diag, hess_x_c_funptr, n_param_c, &
                                               stable, settings, kappa_c_ptr)
 
             ! check if logging subroutine was correctly called
             if (.not. host_context%logger_called) then
-                test_stability_check_c_wrapper = .false.
                 write(stderr, *) "test_stability_check_c_wrapper failed: Called "// &
                     "logging subroutine wrong "//trim(case_names(i_case))//"."
+                test_stability_check_c_wrapper = .false.
+            end if
+
+            ! check if optional settings are correctly passed in the first case, the
+            ! cases do not differ in them
+            if (i_case == 1 .and. &
+                received_stability_settings /= ref_stability_settings) then
+                write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
+                    "optional settings associated with wrong values."
+                test_stability_check_c_wrapper = .false.
             end if
 
             ! check if output variables are as expected
-            if (.not. stable) then
-                test_stability_check_c_wrapper = .false.
+            if (stable .neqv. mock_stable) then
                 write(stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
                     "stability boolean wrong "//trim(case_names(i_case))//"."
+                test_stability_check_c_wrapper = .false.
             end if
             if (error /= int(mock_error, kind=c_ip)) then
-                test_stability_check_c_wrapper = .false.
                 write(stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
                     "error code wrong "//trim(case_names(i_case))//"."
+                test_stability_check_c_wrapper = .false.
             end if
             if (i_case == 2 .and. any(abs(kappa - 1.0_c_rp) > tol_c)) then
-                test_stability_check_c_wrapper = .false.
                 write(stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
-                    "direction wrong."
+                    "direction wrong "//trim(case_names(i_case))//"."
+                test_stability_check_c_wrapper = .false.
             end if
 
             ! check if output field is written back with the value set by the
             ! stability check
             if (settings%n_hess_x /= int(mock_stability_check_n_hess_x, kind=c_ip)) then
-                test_stability_check_c_wrapper = .false.
                 write(stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
                     "number of Hessian linear transformations wrong "// &
                     trim(case_names(i_case))//"."
+                test_stability_check_c_wrapper = .false.
             end if
 
             ! check that the host context reached the callback functions unchanged
@@ -533,9 +606,27 @@ contains
                 test_stability_check_c_wrapper = .false.
 
             ! check if test has passed
-            test_stability_check_c_wrapper = test_stability_check_c_wrapper .and. &
-                                             test_passed
+            if (.not. test_passed) test_stability_check_c_wrapper = .false.
         end do
+
+        ! call the stability check with settings that were not initialized but carry
+        ! callback functions and a host context, none of which may reach the callback
+        ! bundle since the conversion replaces these settings by the default settings
+        call get_reference_stability_values(settings)
+        settings%precond = c_funloc(mock_precond)
+        settings%project = c_funloc(mock_project)
+        settings%logger = c_funloc(mock_logger)
+        settings%context = c_loc(host_context)
+        settings%initialized = .false.
+        test_passed = .false.
+        error = stability_check_c_wrapper(h_diag, hess_x_c_funptr, n_param_c, stable, &
+                                          settings, c_null_ptr)
+        if (c_associated(received_callbacks%host_context)) then
+            write(stderr, *) "test_stability_check_c_wrapper failed: Host context "// &
+                "passed for settings that were not initialized."
+            test_stability_check_c_wrapper = .false.
+        end if
+        if (.not. test_passed) test_stability_check_c_wrapper = .false.
 
         ! restore the procedure pointer so later tests do not inherit the mock
         stability_check => standard_stability_check
@@ -559,18 +650,12 @@ contains
         call store_optional_c_callbacks( &
             callbacks, .true._c_bool, c_funloc(mock_precond), c_funloc(mock_project), &
             c_funloc(mock_conv_check), c_funloc(mock_logger), c_loc(host_context))
-        if (.not. (associated(callbacks%precond, mock_precond) .and. &
-                   associated(callbacks%project, mock_project) .and. &
-                   associated(callbacks%conv_check, mock_conv_check) .and. &
-                   associated(callbacks%logger, mock_logger))) then
+        if (.not. callbacks_stored(.true., "of initialized settings not stored")) &
             test_store_optional_c_callbacks = .false.
-            write(stderr, *) "test_store_optional_c_callbacks failed: Callback "// &
-                "functions of initialized settings not stored."
-        end if
         if (.not. c_associated(callbacks%host_context, c_loc(host_context))) then
-            test_store_optional_c_callbacks = .false.
             write(stderr, *) "test_store_optional_c_callbacks failed: Host context "// &
                 "of initialized settings not stored."
+            test_store_optional_c_callbacks = .false.
         end if
 
         ! store initialized settings that provide nothing, the callback functions and
@@ -578,18 +663,13 @@ contains
         call store_optional_c_callbacks(callbacks, .true._c_bool, c_null_funptr, &
                                         c_null_funptr, c_null_funptr, c_null_funptr, &
                                         c_null_ptr)
-        if (.not. (associated(callbacks%precond, mock_precond) .and. &
-                   associated(callbacks%project, mock_project) .and. &
-                   associated(callbacks%conv_check, mock_conv_check) .and. &
-                   associated(callbacks%logger, mock_logger))) then
+        if (.not. callbacks_stored( &
+            .true., "in the bundle replaced by one that was not provided")) &
             test_store_optional_c_callbacks = .false.
-            write(stderr, *) "test_store_optional_c_callbacks failed: Callback "// &
-                "functions in the bundle replaced by ones that were not provided."
-        end if
         if (.not. c_associated(callbacks%host_context, c_loc(host_context))) then
-            test_store_optional_c_callbacks = .false.
             write(stderr, *) "test_store_optional_c_callbacks failed: Host context "// &
                 "in the bundle replaced by one that was not provided."
+            test_store_optional_c_callbacks = .false.
         end if
 
         ! store the callback functions and host context of settings that were not
@@ -598,17 +678,48 @@ contains
         call store_optional_c_callbacks( &
             callbacks, .false._c_bool, c_funloc(mock_precond), c_funloc(mock_project), &
             c_funloc(mock_conv_check), c_funloc(mock_logger), c_loc(host_context))
-        if (associated(callbacks%precond) .or. associated(callbacks%project) .or. &
-            associated(callbacks%conv_check) .or. associated(callbacks%logger)) then
-            test_store_optional_c_callbacks = .false.
-            write(stderr, *) "test_store_optional_c_callbacks failed: Callback "// &
-                "functions of settings that were not initialized stored."
-        end if
+        if (.not. callbacks_stored(.false., "of settings that were not initialized "// &
+                                   "stored")) test_store_optional_c_callbacks = .false.
         if (c_associated(callbacks%host_context)) then
-            test_store_optional_c_callbacks = .false.
             write(stderr, *) "test_store_optional_c_callbacks failed: Host context "// &
                 "of settings that were not initialized stored."
+            test_store_optional_c_callbacks = .false.
         end if
+
+    contains
+
+        logical function callbacks_stored(stored, failure)
+            !
+            ! this function checks that every callback function of the bundle is the
+            ! mock that was provided if they are expected to be stored and unset
+            ! otherwise, and reports the failure for every callback function that is
+            ! not
+            !
+            logical, intent(in) :: stored
+            character(len=*), intent(in) :: failure
+
+            character(len=*), parameter :: names(4) = &
+                [character(len=26) :: "Preconditioner", "Projection function", &
+                 "Convergence check function", "Logging function"]
+            logical :: correct(4)
+            integer(ip) :: i_callback
+
+            correct = [merge(associated(callbacks%precond, mock_precond), &
+                             .not. associated(callbacks%precond), stored), &
+                       merge(associated(callbacks%project, mock_project), &
+                             .not. associated(callbacks%project), stored), &
+                       merge(associated(callbacks%conv_check, mock_conv_check), &
+                             .not. associated(callbacks%conv_check), stored), &
+                       merge(associated(callbacks%logger, mock_logger), &
+                             .not. associated(callbacks%logger), stored)]
+            do i_callback = 1, size(names)
+                if (.not. correct(i_callback)) &
+                    write(stderr, *) "test_store_optional_c_callbacks failed: "// &
+                    trim(names(i_callback))//" "//failure//"."
+            end do
+            callbacks_stored = all(correct)
+
+        end function callbacks_stored
 
     end function test_store_optional_c_callbacks
 
@@ -629,6 +740,9 @@ contains
         real(rp) :: kappa(n_param), func, grad(n_param), h_diag(n_param)
         integer(ip) :: error
 
+        ! assume tests pass
+        test_update_orbs_f_wrapper = .true.
+
         ! inject mock C function and hand the bundle to the wrapper as its context
         callbacks%update_orbs => mock_update_orbs
         call arm_host_context_c(callbacks%host_context)
@@ -642,8 +756,9 @@ contains
         update_orbs_funptr => update_orbs_f_wrapper
 
         ! test orbital update wrapper
-        test_update_orbs_f_wrapper = check_update_orbs_funptr( &
-            update_orbs_funptr, "update_orbs_f_wrapper", "", context)
+        if (.not. check_update_orbs_funptr(update_orbs_funptr, &
+                                           "update_orbs_f_wrapper", "", context)) &
+            test_update_orbs_f_wrapper = .false.
 
         ! check that the wrapper handed the host context to the C function
         if (.not. host_context_reached("update_orbs_f_wrapper")) &
@@ -652,9 +767,9 @@ contains
         ! check that the returned Hessian linear transformation is handed to the bundle
         ! of the internal stability check
         if (.not. associated(stability_callbacks%hess_x, mock_hess_x)) then
-            test_update_orbs_f_wrapper = .false.
             write(stderr, *) "test_update_orbs_f_wrapper failed: Hessian linear "// &
                 "transformation not handed to internal stability check."
+            test_update_orbs_f_wrapper = .false.
         end if
 
         ! an orbital update that succeeds without providing a Hessian linear
@@ -664,9 +779,9 @@ contains
         call update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x_funptr, error, &
                                    context)
         if (error /= 1) then
-            test_update_orbs_f_wrapper = .false.
             write(stderr, *) "test_update_orbs_f_wrapper failed: Did not report a "// &
                 "missing Hessian linear transformation."
+            test_update_orbs_f_wrapper = .false.
         end if
 
         ! check that an error of the C function is passed on rather than replaced by
@@ -675,21 +790,20 @@ contains
         call update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x_funptr, error, &
                                    context)
         if (error /= 2) then
-            test_update_orbs_f_wrapper = .false.
             write(stderr, *) "test_update_orbs_f_wrapper failed: Did not pass on "// &
                 "the error of the C function."
+            test_update_orbs_f_wrapper = .false.
         end if
         host_context%mock_error = 0
 
         ! a context this module did not create is reported rather than dereferenced
-        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         call update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x_funptr, error, &
                                    foreign_context)
         if (error /= 1) then
-            test_update_orbs_f_wrapper = .false.
             write(stderr, *) "test_update_orbs_f_wrapper failed: Did not report an "// &
                 "invalid context."
+            test_update_orbs_f_wrapper = .false.
         end if
 
     end function test_update_orbs_f_wrapper
@@ -710,6 +824,9 @@ contains
         real(rp) :: x(n_param), hess_x(n_param)
         integer(ip) :: error
 
+        ! assume tests pass
+        test_hess_x_f_wrapper = .true.
+
         ! inject mock C function and hand the bundle to the wrapper as its context
         callbacks%hess_x => mock_hess_x
         call arm_host_context_c(callbacks%host_context)
@@ -719,8 +836,8 @@ contains
         hess_x_funptr => hess_x_f_wrapper
 
         ! test Hessian linear transformation wrapper
-        test_hess_x_f_wrapper = &
-            check_hess_x_funptr(hess_x_funptr, "hess_x_f_wrapper", "", context)
+        if (.not. check_hess_x_funptr(hess_x_funptr, "hess_x_f_wrapper", "", context)) &
+            test_hess_x_f_wrapper = .false.
 
         ! check that the wrapper handed the host context to the C function
         if (.not. host_context_reached("hess_x_f_wrapper")) &
@@ -731,20 +848,19 @@ contains
         x = 1.0_rp
         call hess_x_f_wrapper(x, hess_x, error, context)
         if (error /= 2) then
-            test_hess_x_f_wrapper = .false.
             write(stderr, *) "test_hess_x_f_wrapper failed: Did not pass on the "// &
                 "error of the C function."
+            test_hess_x_f_wrapper = .false.
         end if
         host_context%mock_error = 0
 
         ! a context this module did not create is reported rather than dereferenced
-        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         call hess_x_f_wrapper(x, hess_x, error, foreign_context)
         if (error /= 1) then
-            test_hess_x_f_wrapper = .false.
             write(stderr, *) "test_hess_x_f_wrapper failed: Did not report an "// &
                 "invalid context."
+            test_hess_x_f_wrapper = .false.
         end if
 
     end function test_hess_x_f_wrapper
@@ -765,6 +881,9 @@ contains
         real(rp) :: kappa(n_param), func
         integer(ip) :: error
 
+        ! assume tests pass
+        test_obj_func_f_wrapper = .true.
+
         ! inject mock C function and hand the bundle to the wrapper as its context
         callbacks%obj_func => mock_obj_func
         call arm_host_context_c(callbacks%host_context)
@@ -774,8 +893,8 @@ contains
         obj_func_funptr => obj_func_f_wrapper
 
         ! test objective function wrapper
-        test_obj_func_f_wrapper = &
-            check_obj_func_funptr(obj_func_funptr, "obj_func_f_wrapper", "", context)
+        if (.not. check_obj_func_funptr(obj_func_funptr, "obj_func_f_wrapper", "", &
+                                        context)) test_obj_func_f_wrapper = .false.
 
         ! check that the wrapper handed the host context to the C function
         if (.not. host_context_reached("obj_func_f_wrapper")) &
@@ -786,20 +905,19 @@ contains
         kappa = 1.0_rp
         func = obj_func_f_wrapper(kappa, error, context)
         if (error /= 2) then
-            test_obj_func_f_wrapper = .false.
             write(stderr, *) "test_obj_func_f_wrapper failed: Did not pass on the "// &
                 "error of the C function."
+            test_obj_func_f_wrapper = .false.
         end if
         host_context%mock_error = 0
 
         ! a context this module did not create is reported rather than dereferenced
-        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         func = obj_func_f_wrapper(kappa, error, foreign_context)
         if (error /= 1) then
-            test_obj_func_f_wrapper = .false.
             write(stderr, *) "test_obj_func_f_wrapper failed: Did not report an "// &
                 "invalid context."
+            test_obj_func_f_wrapper = .false.
         end if
 
     end function test_obj_func_f_wrapper
@@ -820,6 +938,9 @@ contains
         real(rp) :: residual(n_param), precond_residual(n_param)
         integer(ip) :: error
 
+        ! assume tests pass
+        test_precond_f_wrapper = .true.
+
         ! inject mock C function and hand the bundle to the wrapper as its context
         callbacks%precond => mock_precond
         call arm_host_context_c(callbacks%host_context)
@@ -829,8 +950,8 @@ contains
         precond_funptr => precond_f_wrapper
 
         ! test preconditioner wrapper
-        test_precond_f_wrapper = &
-            check_precond_funptr(precond_funptr, "precond_f_wrapper", "", context)
+        if (.not. check_precond_funptr(precond_funptr, "precond_f_wrapper", "", &
+                                       context)) test_precond_f_wrapper = .false.
 
         ! check that the wrapper handed the host context to the C function
         if (.not. host_context_reached("precond_f_wrapper")) &
@@ -841,21 +962,20 @@ contains
         residual = 1.0_rp
         call precond_f_wrapper(residual, 1.0_rp, precond_residual, error, context)
         if (error /= 2) then
-            test_precond_f_wrapper = .false.
             write(stderr, *) "test_precond_f_wrapper failed: Did not pass on the "// &
                 "error of the C function."
+            test_precond_f_wrapper = .false.
         end if
         host_context%mock_error = 0
 
         ! a context this module did not create is reported rather than dereferenced
-        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         call precond_f_wrapper(residual, 1.0_rp, precond_residual, error, &
                                foreign_context)
         if (error /= 1) then
-            test_precond_f_wrapper = .false.
             write(stderr, *) "test_precond_f_wrapper failed: Did not report an "// &
                 "invalid context."
+            test_precond_f_wrapper = .false.
         end if
 
     end function test_precond_f_wrapper
@@ -876,6 +996,9 @@ contains
         real(rp) :: vector(n_param)
         integer(ip) :: error
 
+        ! assume tests pass
+        test_project_f_wrapper = .true.
+
         ! inject mock C function and hand the bundle to the wrapper as its context
         callbacks%project => mock_project
         call arm_host_context_c(callbacks%host_context)
@@ -885,8 +1008,8 @@ contains
         project_funptr => project_f_wrapper
 
         ! test projection wrapper
-        test_project_f_wrapper = &
-            check_project_funptr(project_funptr, "project_f_wrapper", "", context)
+        if (.not. check_project_funptr(project_funptr, "project_f_wrapper", "", &
+                                       context)) test_project_f_wrapper = .false.
 
         ! check that the wrapper handed the host context to the C function
         if (.not. host_context_reached("project_f_wrapper")) &
@@ -897,20 +1020,19 @@ contains
         vector = 1.0_rp
         call project_f_wrapper(vector, error, context)
         if (error /= 2) then
-            test_project_f_wrapper = .false.
             write(stderr, *) "test_project_f_wrapper failed: Did not pass on the "// &
                 "error of the C function."
+            test_project_f_wrapper = .false.
         end if
         host_context%mock_error = 0
 
         ! a context this module did not create is reported rather than dereferenced
-        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         call project_f_wrapper(vector, error, foreign_context)
         if (error /= 1) then
-            test_project_f_wrapper = .false.
             write(stderr, *) "test_project_f_wrapper failed: Did not report an "// &
                 "invalid context."
+            test_project_f_wrapper = .false.
         end if
 
     end function test_project_f_wrapper
@@ -931,6 +1053,9 @@ contains
         logical :: converged
         integer(ip) :: error
 
+        ! assume tests pass
+        test_conv_check_f_wrapper = .true.
+
         ! inject mock C function and hand the bundle to the wrapper as its context
         callbacks%conv_check => mock_conv_check
         call arm_host_context_c(callbacks%host_context)
@@ -940,31 +1065,47 @@ contains
         conv_check_funptr => conv_check_f_wrapper
 
         ! test convergence check wrapper
-        test_conv_check_f_wrapper = check_conv_check_funptr( &
-            conv_check_funptr, "conv_check_f_wrapper", "", context)
+        if (.not. check_conv_check_funptr(conv_check_funptr, "conv_check_f_wrapper", &
+                                          "", context)) &
+            test_conv_check_f_wrapper = .false.
 
         ! check that the wrapper handed the host context to the C function
         if (.not. host_context_reached("conv_check_f_wrapper")) &
             test_conv_check_f_wrapper = .false.
 
+        ! check that the result of a C function which reports no convergence is
+        ! passed on
+        callbacks%conv_check => mock_conv_check_not_converged
+        converged = conv_check_f_wrapper(error, context)
+        if (error /= 0) then
+            write(stderr, *) "test_conv_check_f_wrapper failed: Produced error "// &
+                "when C function reports no convergence."
+            test_conv_check_f_wrapper = .false.
+        end if
+        if (converged) then
+            write(stderr, *) "test_conv_check_f_wrapper failed: Did not pass on "// &
+                "that the C function reports no convergence."
+            test_conv_check_f_wrapper = .false.
+        end if
+        callbacks%conv_check => mock_conv_check
+
         ! check that an error of the C function is passed on
         host_context%mock_error = 2
         converged = conv_check_f_wrapper(error, context)
         if (error /= 2) then
-            test_conv_check_f_wrapper = .false.
             write(stderr, *) "test_conv_check_f_wrapper failed: Did not pass on "// &
                 "the error of the C function."
+            test_conv_check_f_wrapper = .false.
         end if
         host_context%mock_error = 0
 
         ! a context this module did not create is reported rather than dereferenced
-        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         converged = conv_check_f_wrapper(error, foreign_context)
         if (error /= 1) then
-            test_conv_check_f_wrapper = .false.
             write(stderr, *) "test_conv_check_f_wrapper failed: Did not report an "// &
                 "invalid context."
+            test_conv_check_f_wrapper = .false.
         end if
 
     end function test_conv_check_f_wrapper
@@ -988,14 +1129,15 @@ contains
         call arm_host_context_c(callbacks%host_context)
         context => callbacks
 
-        ! call subroutine
-        call logger_f_wrapper("test", context)
+        ! call subroutine with a message with trailing blanks, which the mock logging
+        ! function only records if they are dropped before the null terminator
+        call logger_f_wrapper("test  ", context)
 
         ! check if logging test boolean is as expected
         if (.not. host_context%logger_called) then
-            test_logger_f_wrapper = .false.
-            write(stderr, *) "test_logger_f_wrapper failed: Returned logging "// &
+            write(stderr, *) "test_logger_f_wrapper failed: Called logging "// &
                 "subroutine wrong."
+            test_logger_f_wrapper = .false.
         end if
 
         ! check that the wrapper handed the host context to the C function
@@ -1004,14 +1146,13 @@ contains
 
         ! a context this module did not create is dropped rather than dereferenced,
         ! the logger has no error channel so it must simply not be called
-        foreign_context_target = 0.0_rp
         foreign_context => foreign_context_target
         host_context%logger_called = .false.
         call logger_f_wrapper("test", foreign_context)
         if (host_context%logger_called) then
-            test_logger_f_wrapper = .false.
             write(stderr, *) "test_logger_f_wrapper failed: Called logging "// &
                 "subroutine with an invalid context."
+            test_logger_f_wrapper = .false.
         end if
 
     end function test_logger_f_wrapper
@@ -1237,7 +1378,7 @@ contains
         ! this function tests that the function that converts solver settings from
         ! Fortran to C correctly performs this conversion
         !
-        use opentrustregion, only: solver_settings_type
+        use opentrustregion, only: solver_settings_type, default_solver_settings
         use c_interface, only: solver_settings_type_c, assignment(=)
         use test_reference, only: ref_solver_settings, operator(/=), callbacks_unset, &
                                   get_reference_solver_values
@@ -1280,6 +1421,21 @@ contains
             test_assign_solver_c_f = .false.
         end if
 
+        ! convert the default settings into C settings which hold the reference values
+        ! and are marked as not initialized, so that a field which is not converted,
+        ! including the initialized flags, keeps a value that differs from the
+        ! expected one
+        call get_reference_solver_values(settings_c)
+        settings_c%initialized = .false.
+        settings_c%stability_settings%initialized = .false.
+        settings = default_solver_settings
+        settings_c = settings
+        if (settings_c /= default_solver_settings) then
+            write(stderr, *) "test_assign_solver_c_f failed: Default settings not "// &
+                "converted correctly."
+            test_assign_solver_c_f = .false.
+        end if
+
         ! convert again with only one of the logicals other than initialized set at a
         ! time, since the logicals cannot all differ from each other and from their
         ! default values, so that a logical that is swapped with another or not
@@ -1304,7 +1460,7 @@ contains
         ! this function tests that the function that converts stability check settings
         ! from Fortran to C correctly performs this conversion
         !
-        use opentrustregion, only: stability_settings_type
+        use opentrustregion, only: stability_settings_type, default_stability_settings
         use c_interface, only: stability_settings_type_c, assignment(=)
         use test_reference, only: ref_stability_settings, operator(/=), &
                                   callbacks_unset, get_reference_stability_values
@@ -1337,6 +1493,20 @@ contains
         if (settings_c /= ref_stability_settings) then
             write(stderr, *) "test_assign_stability_c_f failed: Settings not "// &
                 "converted correctly."
+            test_assign_stability_c_f = .false.
+        end if
+
+        ! convert the default settings into C settings which hold the reference values
+        ! and are marked as not initialized, so that a field which is not converted,
+        ! including the initialized flag, keeps a value that differs from the expected
+        ! one
+        call get_reference_stability_values(settings_c)
+        settings_c%initialized = .false.
+        settings = default_stability_settings
+        settings_c = settings
+        if (settings_c /= default_stability_settings) then
+            write(stderr, *) "test_assign_stability_c_f failed: Default settings "// &
+                "not converted correctly."
             test_assign_stability_c_f = .false.
         end if
 

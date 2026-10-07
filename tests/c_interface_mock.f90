@@ -16,8 +16,8 @@ module c_interface_mock
 
     implicit none
 
-    ! results of the mocks, which the Python tests clear before and read after every
-    ! call
+    ! results of the mocks, which the Python tests clear before and read after the
+    ! call whose arguments they check
     logical(c_bool), bind(C) :: test_solver_interface = .false., &
                                 test_stability_check_interface = .false.
 

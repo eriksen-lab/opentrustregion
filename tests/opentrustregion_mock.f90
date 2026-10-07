@@ -7,9 +7,9 @@
 module opentrustregion_mock
 
     use opentrustregion, only: rp, ip, stderr, solver, stability_check, &
-                               solver_settings_type
+                               solver_settings_type, stability_settings_type
     use c_interface, only: c_callbacks_type
-    use test_reference, only: tol, ref_stability_settings, operator(/=)
+    use test_reference, only: tol
 
     implicit none
 
@@ -21,10 +21,15 @@ module opentrustregion_mock
                               mock_n_hess_x = 5, mock_stability_n_hess_x = 2, &
                               mock_stability_check_n_hess_x = 4
 
-    ! settings and callback bundle of the nested settings the mock solver received,
-    ! so that a test can check what the C wrapper handed over
+    ! stability the mock stability check returns, which a test sets
+    logical :: mock_stable = .true.
+
+    ! settings and callback bundles the mock solver and stability check received,
+    ! the bundle of the settings and that of the nested settings, so that a test can
+    ! check what the C wrapper handed over
     type(solver_settings_type) :: received_solver_settings
-    type(c_callbacks_type) :: received_stability_callbacks
+    type(stability_settings_type) :: received_stability_settings
+    type(c_callbacks_type) :: received_callbacks, received_stability_callbacks
 
     ! create function pointers to ensure that routines comply with interface
     procedure(solver), pointer :: mock_solver_ptr => mock_solver
@@ -64,37 +69,38 @@ contains
 
         ! check number of parameters
         if (n_param /= n_param_ref) then
-            test_passed = .false.
             write(stderr, *) "test_solver_c_wrapper failed: Passed number of "// &
                 "parameters wrong."
-        end if
-
-        ! check if optional preconditioner subroutine is correctly passed
-        if (.not. check_precond_funptr(settings%precond, "solver_c_wrapper", &
-                                       " by given preconditioner subroutine", &
-                                       settings%context)) test_passed = .false.
-
-        ! check if optional projection subroutine is correctly passed
-        if (.not. check_project_funptr(settings%project, "solver_c_wrapper", &
-                                       " by given projection subroutine", &
-                                       settings%context)) test_passed = .false.
-
-        ! check if optional convergence check function is correctly passed
-        if (.not. check_conv_check_funptr(settings%conv_check, "solver_c_wrapper", &
-                                          " by given convergence check function", &
-                                          settings%context)) test_passed = .false.
-
-        ! check if optional logging function is correctly passed
-        if (.not. associated(settings%logger)) then
             test_passed = .false.
-            write(stderr, *) "test_solver_c_wrapper failed: Passed logging "// &
-                "function not associated with value."
-        else
-            call settings%logger("test", settings%context)
         end if
 
-        ! record the settings and the callback bundle of the nested settings
+        ! check the optional callback functions that were passed, which of them are
+        ! passed the test checks
+        if (associated(settings%precond)) then
+            if (.not. check_precond_funptr(settings%precond, "solver_c_wrapper", &
+                                           " by given preconditioner subroutine", &
+                                           settings%context)) test_passed = .false.
+        end if
+        if (associated(settings%project)) then
+            if (.not. check_project_funptr(settings%project, "solver_c_wrapper", &
+                                           " by given projection subroutine", &
+                                           settings%context)) test_passed = .false.
+        end if
+        if (associated(settings%conv_check)) then
+            if (.not. check_conv_check_funptr(settings%conv_check, "solver_c_wrapper", &
+                                              " by given convergence check function", &
+                                              settings%context)) test_passed = .false.
+        end if
+        if (associated(settings%logger)) call settings%logger("test", settings%context)
+
+        ! record the settings and the callback bundles of the settings and the nested
+        ! settings
         received_solver_settings = settings
+        received_callbacks = c_callbacks_type()
+        select type (callbacks => settings%context)
+        type is (c_callbacks_type)
+            received_callbacks = callbacks
+        end select
         received_stability_callbacks = c_callbacks_type()
         select type (callbacks => settings%stability_settings%context)
         type is (c_callbacks_type)
@@ -116,7 +122,7 @@ contains
         ! this subroutine is a mock routine for the stability check to test the C
         ! interface
         !
-        use opentrustregion, only: stability_settings_type, hess_x_type
+        use opentrustregion, only: hess_x_type
         use test_reference, only: check_hess_x_funptr, check_precond_funptr, &
                                   check_project_funptr, n_param
 
@@ -132,13 +138,13 @@ contains
 
         ! check Hessian diagonal
         if (size(h_diag) /= n_param) then
-            test_passed = .false.
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal has wrong size."
-        else if (any(abs(h_diag - 3.0_rp) > tol)) then
             test_passed = .false.
+        else if (any(abs(h_diag - 3.0_rp) > tol)) then
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal wrong."
+            test_passed = .false.
         end if
 
         ! test passed Hessian linear transformation subroutine
@@ -146,34 +152,30 @@ contains
             hess_x_funptr, "stability_check_c_wrapper", " by given Hessian linear "// &
             "transformation subroutine", settings%context)) test_passed = .false.
 
-        ! check if optional preconditioner subroutine is correctly passed
-        if (.not. check_precond_funptr(settings%precond, "stability_check_c_wrapper", &
-                                       " by given preconditioner subroutine", &
-                                       settings%context)) test_passed = .false.
-
-        ! check if optional projection subroutine is correctly passed
-        if (.not. check_project_funptr(settings%project, "stability_check_c_wrapper", &
-                                       " by given projection subroutine", &
-                                       settings%context)) test_passed = .false.
-
-        ! check if optional logging function is correctly passed
-        if (.not. associated(settings%logger)) then
-            test_passed = .false.
-            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
-                "logging function not associated with value."
-        else
-            call settings%logger("test", settings%context)
+        ! check the optional callback functions that were passed, which of them are
+        ! passed the test checks
+        if (associated(settings%precond)) then
+            if (.not. check_precond_funptr( &
+                settings%precond, "stability_check_c_wrapper", " by given "// &
+                "preconditioner subroutine", settings%context)) test_passed = .false.
         end if
-
-        ! check if optional settings are correctly passed
-        if (settings /= ref_stability_settings) then
-            test_passed = .false.
-            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
-                "optional settings associated with wrong values."
+        if (associated(settings%project)) then
+            if (.not. check_project_funptr( &
+                settings%project, "stability_check_c_wrapper", " by given "// &
+                "projection subroutine", settings%context)) test_passed = .false.
         end if
+        if (associated(settings%logger)) call settings%logger("test", settings%context)
+
+        ! record the settings and their callback bundle
+        received_stability_settings = settings
+        received_callbacks = c_callbacks_type()
+        select type (callbacks => settings%context)
+        type is (c_callbacks_type)
+            received_callbacks = callbacks
+        end select
 
         ! set output quantities and fields
-        stable = .true.
+        stable = mock_stable
         if (present(kappa)) kappa = 1.0_rp
         error = mock_error
         settings%n_hess_x = mock_stability_check_n_hess_x

@@ -11,8 +11,11 @@ from importlib import resources
 from ctypes import (
     CDLL,
     c_bool,
+    pointer,
     c_char_p,
     c_void_p,
+    c_size_t,
+    sizeof,
     Array,
     byref,
     CFUNCTYPE,
@@ -34,6 +37,12 @@ try:
         c_real,
         ext,
         conda_prefix,
+        UpdateOrbsInterface,
+        PrecondInterface,
+        ProjectInterface,
+        ConvCheckInterface,
+        LoggerInterface,
+        raise_on_failure,
     )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.absolute()))
@@ -46,6 +55,12 @@ except ImportError:
         c_real,
         ext,
         conda_prefix,
+        UpdateOrbsInterface,
+        PrecondInterface,
+        ProjectInterface,
+        ConvCheckInterface,
+        LoggerInterface,
+        raise_on_failure,
     )
 
 lib = None
@@ -173,6 +188,8 @@ lib.get_reference_solver_values.argtypes = [
     c_char_p,
 ]
 lib.get_reference_solver_values.restype = None
+lib.solver_settings_size.restype = c_size_t
+lib.stability_settings_size.restype = c_size_t
 
 
 def reference(name, field_type):
@@ -310,16 +327,32 @@ class PyInterfaceUnitTests(unittest.TestCase):
             """
             return True
 
-        # initialize settings object, the logging function records the messages
+        # the callback functions record that they were called and the logging
+        # functions record the messages, separately for the settings and the nested
+        # settings so that their callback functions can be told apart
+        called = set()
+
+        def recording(name, func):
+            def callback(*args):
+                called.add(name)
+                return func(*args)
+
+            return callback
+
         messages = []
+        stability_messages = []
         settings = SolverSettings()
-        settings.precond = self._mock_precond
-        settings.project = self._mock_project
+        settings.precond = recording("precond", self._mock_precond)
+        settings.project = recording("project", self._mock_project)
         settings.conv_check = mock_conv_check
         settings.logger = messages.append
-        settings.stability_settings.precond = self._mock_precond
-        settings.stability_settings.project = self._mock_project
-        settings.stability_settings.logger = messages.append
+        settings.stability_settings.precond = recording(
+            "stability_precond", self._mock_precond
+        )
+        settings.stability_settings.project = recording(
+            "stability_project", self._mock_project
+        )
+        settings.stability_settings.logger = stability_messages.append
         for field_info in settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
             if (
@@ -348,10 +381,18 @@ class PyInterfaceUnitTests(unittest.TestCase):
         solver(mock_obj_func, mock_update_orbs, n_param, settings)
         interface_passed = interface_flag.value
 
-        # check if logger was called correctly
-        test_logger = "test" in messages
+        # check if every callback function was called through its own slot
+        test_logger = "test" in messages and "test" in stability_messages
         if not test_logger:
             print(" test_solver_py_interface failed: Called logging function wrong.")
+        callbacks_called = True
+        for name in ["precond", "project", "stability_precond", "stability_project"]:
+            if name not in called:
+                print(
+                    f" test_solver_py_interface failed: Callback function {name} was "
+                    "not called."
+                )
+                callbacks_called = False
 
         # a logging function that raises must not be silent, the exception is reported
         # once the solver has returned
@@ -387,6 +428,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         self.assertTrue(
             interface_passed
             and test_logger
+            and callbacks_called
             and logger_error_reported
             and callback_error_reported,
             "test_solver_py_interface failed",
@@ -425,7 +467,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
 
         # allocate memory for descent direction
-        kappa = np.empty(n_param, dtype=np.float64)
+        kappa = np.zeros(n_param, dtype=np.float64)
 
         # call stability check python interface with optional arguments, the result of
         # the mock is cleared before and read right after the call
@@ -551,10 +593,158 @@ class PyInterfaceUnitTests(unittest.TestCase):
                     test_passed = False
         return test_passed
 
+    def test_callback_interfaces(self):
+        """
+        this function tests that the interfaces to the Python callback functions
+        report an exception raised by a callback function as an error and keep it,
+        that the convergence check interface passes on the result and that the logging
+        interface keeps the first exception the logging function raises
+        """
+        test_passed = True
+        n_param = 2
+        vector = np.zeros(n_param)
+        vector_ptr = vector.ctypes.data_as(POINTER(c_real))
+
+        def raising(*args):
+            raise ValueError("callback function failure")
+
+        for name, make_interface, args in [
+            (
+                "orbital update",
+                lambda exc: UpdateOrbsInterface(raising, n_param, exc),
+                (vector_ptr, pointer(c_real()), vector_ptr, vector_ptr, None),
+            ),
+            (
+                "preconditioner",
+                lambda exc: PrecondInterface(raising, n_param, exc),
+                (vector_ptr, pointer(c_real(1.0)), vector_ptr),
+            ),
+            (
+                "projection",
+                lambda exc: ProjectInterface(raising, n_param, exc),
+                (vector_ptr,),
+            ),
+            (
+                "convergence check",
+                lambda exc: ConvCheckInterface(raising, exc),
+                (pointer(c_bool()),),
+            ),
+        ]:
+            exception = {}
+            if make_interface(exception).call(*args) != 1:
+                print(
+                    f" test_callback_interfaces failed: Exception raised by {name} "
+                    "not reported as error."
+                )
+                test_passed = False
+            if not isinstance(exception.get("exc"), ValueError):
+                print(
+                    f" test_callback_interfaces failed: Exception raised by {name} "
+                    "not kept."
+                )
+                test_passed = False
+
+        # the convergence check interface passes on that the optimization has not
+        # converged
+        converged = c_bool(True)
+        if ConvCheckInterface(lambda: False, {}).call(pointer(converged)) != 0:
+            print(
+                " test_callback_interfaces failed: Error reported for convergence "
+                "check."
+            )
+            test_passed = False
+        if converged.value:
+            print(
+                " test_callback_interfaces failed: Result of convergence check not "
+                "passed on."
+            )
+            test_passed = False
+
+        # the logging interface keeps the first of several exceptions
+        failures = iter([ValueError("first"), ValueError("second")])
+
+        def failing_logger(message):
+            raise next(failures)
+
+        exception = {}
+        logger_interface = LoggerInterface(failing_logger, exception)
+        logger_interface.call(b"test")
+        logger_interface.call(b"test")
+        if str(exception.get("logger")) != "first":
+            print(
+                " test_callback_interfaces failed: First exception raised by "
+                "logging function not kept."
+            )
+            test_passed = False
+
+        self.assertTrue(test_passed, "test_callback_interfaces failed")
+        print(" test_callback_interfaces PASSED")
+
+    def test_raise_on_failure(self):
+        """
+        this function tests that an error returned by the library is raised with its
+        code and takes precedence over a failed logging function, which is raised
+        otherwise, and that nothing is raised without either
+        """
+        test_passed = True
+        logger_failure = ValueError("logging failure")
+
+        # an error without an exception of a callback function is raised with its code
+        try:
+            raise_on_failure(7, {}, "solver")
+            print(" test_raise_on_failure failed: Error not raised.")
+            test_passed = False
+        except RuntimeError as e:
+            if "(code 7)" not in str(e) or e.__cause__ is not None:
+                print(
+                    " test_raise_on_failure failed: Error not raised with its code "
+                    "alone."
+                )
+                test_passed = False
+
+        # an error takes precedence over a failed logging function
+        try:
+            raise_on_failure(7, {"logger": logger_failure}, "solver")
+            print(
+                " test_raise_on_failure failed: Error not raised together with failed "
+                "logging function."
+            )
+            test_passed = False
+        except RuntimeError as e:
+            if "(code 7)" not in str(e):
+                print(
+                    " test_raise_on_failure failed: Failed logging function takes "
+                    "precedence over error."
+                )
+                test_passed = False
+
+        # a failed logging function is raised without an error
+        try:
+            raise_on_failure(0, {"logger": logger_failure}, "solver")
+            print(" test_raise_on_failure failed: Failed logging function not raised.")
+            test_passed = False
+        except RuntimeError as e:
+            if e.__cause__ is not logger_failure:
+                print(
+                    " test_raise_on_failure failed: Exception of logging function "
+                    "not raised as cause."
+                )
+                test_passed = False
+
+        # nothing is raised without an error or a failed logging function
+        try:
+            raise_on_failure(0, {}, "solver")
+        except RuntimeError:
+            print(" test_raise_on_failure failed: Raised without failure.")
+            test_passed = False
+
+        self.assertTrue(test_passed, "test_raise_on_failure failed")
+        print(" test_raise_on_failure PASSED")
+
     @patch.object(SolverSettings, "init_c_struct", lib.mock_init_solver_settings)
     def test_solver_settings(self):
         """
-        this function ensure the SolverSettings object is properly initialized and
+        this function ensures the SolverSettings object is properly initialized and
         synchronized with the underlying C struct
         """
         settings = SolverSettings()
@@ -585,13 +775,34 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
             test_passed = False
 
+        # an unset optional callback function leaves its C function pointer null
+        settings.set_optional_callback("precond", None, lambda x: x, CFUNCTYPE(c_int))
+        if (
+            settings.settings_c.precond is not None
+            or settings.settings_c.precond_interface is not None
+        ):
+            print(
+                " test_solver_settings failed: Unset optional callback does not "
+                "leave a null function pointer."
+            )
+            test_passed = False
+
+        # a keyword given as bytes, as read from a C struct, is stored as well
+        settings.subsystem_solver = b"davidson"
+        if settings.subsystem_solver != "davidson":
+            print(
+                " test_solver_settings failed: Keyword given as bytes not stored "
+                "correctly."
+            )
+            test_passed = False
+
         self.assertTrue(test_passed, "test_solver_settings failed")
         print(" test_solver_settings PASSED")
 
     @patch.object(StabilitySettings, "init_c_struct", lib.mock_init_stability_settings)
     def test_stability_settings(self):
         """
-        this function ensure the StabilitySettings object is properly initialized and
+        this function ensures the StabilitySettings object is properly initialized and
         synchronized with the underlying C struct
         """
         settings = StabilitySettings()
@@ -726,6 +937,22 @@ class PyIntegrationTests(unittest.TestCase):
         settings whose fields Fortran sets one by one to the reference values
         """
         test_passed = True
+
+        # check that the settings structures have the size of the bind(C) settings
+        # types, so that a field missing from either is detected, which the field
+        # checks below would not read, and stop otherwise, since filling smaller
+        # settings would write past their end
+        for settings, size in [
+            (SolverSettings, lib.solver_settings_size()),
+            (StabilitySettings, lib.stability_settings_size()),
+        ]:
+            if sizeof(settings.c_struct) != size:
+                print(
+                    f" test_settings_layout failed: Size of {settings.__name__} "
+                    "structure differs from the library's."
+                )
+                test_passed = False
+        self.assertTrue(test_passed, "test_settings_layout failed")
 
         # names of the logicals, prefixed for the nested settings
         logicals = [
@@ -959,11 +1186,18 @@ class PyIntegrationTests(unittest.TestCase):
             )
             test_passed = False
 
-        # at a saddle, the returned direction replaces the zero direction returned at
+        # at a saddle, the stability flag has to differ from the one returned at the
+        # minimum and the returned direction replaces the zero direction returned at
         # the minimum and has to be a normalized direction of negative curvature
         H = self._hess(self.saddle_point)
         h_diag = np.diag(H).copy()
-        stability_check(h_diag, hess_x, self.n_param, settings, kappa=kappa)
+        stable = stability_check(h_diag, hess_x, self.n_param, settings, kappa=kappa)
+        if stable:
+            print(
+                " test_stability_check_py failed: Stability incorrectly classifies "
+                "stability of saddle point."
+            )
+            test_passed = False
         if abs(np.linalg.norm(kappa) - 1.0) > 1e-6:
             print(
                 " test_stability_check_py failed: Stability check does not return a "

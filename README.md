@@ -166,7 +166,7 @@ settings.context = &host_data;
 c_int error = solver(update_orbs_funptr, obj_func_funptr, n_param, &settings);
 
 // read back output fields
-printf("Number of orbital updates: %d\n", settings.n_update_orbs);
+printf("Number of orbital updates: %lld\n", (long long)settings.n_update_orbs);
 ```
 
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
@@ -251,7 +251,7 @@ A separate `stability_check` subroutine is available to verify whether the curre
   - Receives the host context as its last argument.
 - **`stable`** (boolean): Returns whether the current point is stable.
 - **`error`** (integer): An integer code indicating the success or failure of the solver. The error code structure is explained below.
-- **`kappa`** (real array): If the memory is provided and the current point is not stable (as can be checked from return code of `stable`), the descent direction is written in-place in this array.
+- **`kappa`** (real array): If the memory is provided, the descent direction along the unstable mode is written in-place in this array when the current point is not stable (as can be checked from `stable`), and zeros are written when it is stable.
 - **`settings`** (settings_type): Settings object which controls optional arguments as described below.
 
 ---
@@ -323,14 +323,14 @@ strcpy(settings.diag_solver, "jacobi-davidson");
 settings.context = &host_data;
 
 // pointers to Hessian diagonal and descent direction
-double* h_diag;
-double* kappa;
+c_real* h_diag;
+c_real* kappa;
 
 // run stability check
 c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, &settings, kappa);
 
 // read back output fields
-printf("Number of Hessian linear transformations: %d\n", settings.n_hess_x);
+printf("Number of Hessian linear transformations: %lld\n", (long long)settings.n_hess_x);
 ```
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
@@ -338,7 +338,7 @@ printf("Number of Hessian linear transformations: %d\n", settings.n_hess_x);
 - `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
 - Stability settings are initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol` and `n_iter`) can then be overridden.
 - The `stable` output receives the result of the stability check which directly returns an error code in typical C fashion.
-- The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `nullptr`.
+- The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `NULL`.
 - After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other component.
 
 ---

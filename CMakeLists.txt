@@ -124,7 +124,6 @@ endif()
 # set integer size and define library suffix
 message(STATUS "Using integer size ${BLA_SIZEOF_INTEGER}")
 if(BLA_SIZEOF_INTEGER EQUAL 8)
-    add_definitions(-DUSE_ILP64)
     set(LIB_SUFFIX "64")
 
     # check whether 64-bit BLAS and LAPACK routines are called differently
@@ -157,6 +156,12 @@ set(OPENTRUSTREGION_SOURCES src/opentrustregion.f90 src/c_interface.f90)
 # add library
 add_library(opentrustregion ${OPENTRUSTREGION_SOURCES})
 add_library(${otr}::opentrustregion ALIAS opentrustregion)
+
+# C programs compiled against the header of a 64-bit integer library need the same
+# integer width as the library
+if(BLA_SIZEOF_INTEGER EQUAL 8)
+    target_compile_definitions(opentrustregion PUBLIC USE_ILP64)
+endif()
 
 # set properties
 set_target_properties(

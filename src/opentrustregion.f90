@@ -248,12 +248,20 @@ contains
         settings%n_hess_x = 0
         settings%stability_settings%n_hess_x = 0
 
-        ! initialize settings
+        ! initialize settings, settings that were not initialized are replaced by the
+        ! default settings, which would silence the warning, so it is printed
+        ! beforehand through the caller's logging function or on stderr regardless of
+        ! the verbosity
         if (.not. settings%initialized) then
+            if (associated(settings%logger)) then
+                call settings%logger(" "//settings_uninitialized_warning_msg, &
+                                     settings%context)
+            else
+                write(stderr, '(A)') " "//settings_uninitialized_warning_msg
+            end if
             call settings%init(error)
             call add_error_origin(error, error_solver, settings)
             if (error /= 0) return
-            call settings%log(settings_uninitialized_warning_msg, verbosity_warning)
         end if
         if (.not. settings%stability_settings%initialized) then
             call settings%stability_settings%init(error)
@@ -488,12 +496,20 @@ contains
         ! call returned early on error or non-convergence
         settings%n_hess_x = 0
 
-        ! initialize settings
+        ! initialize settings, settings that were not initialized are replaced by the
+        ! default settings, which would silence the warning, so it is printed
+        ! beforehand through the caller's logging function or on stderr regardless of
+        ! the verbosity
         if (.not. settings%initialized) then
+            if (associated(settings%logger)) then
+                call settings%logger(" "//settings_uninitialized_warning_msg, &
+                                     settings%context)
+            else
+                write(stderr, '(A)') " "//settings_uninitialized_warning_msg
+            end if
             call settings%init(error)
             call add_error_origin(error, error_stability_check, settings)
             if (error /= 0) return
-            call settings%log(settings_uninitialized_warning_msg, verbosity_warning)
         end if
 
         ! initialize random number generator
@@ -1831,7 +1847,7 @@ contains
                                   "provided tolerance.", verbosity_debug)
                 exit
             ! ||Ar|| / (||A|| ||r||)
-            else if (a_norm < numerical_zero .and. root / a_norm <= r_tol) then
+            else if (a_norm > numerical_zero .and. root / a_norm <= r_tol) then
                 call settings%log("MINRES: A least-squares solution was found, "// &
                                   "given provided tolerance.", verbosity_debug)
                 exit
@@ -1858,7 +1874,7 @@ contains
                 call settings%log("MINRES: A solution to Ax = b was found, given "// &
                                   "provided tolerance.", verbosity_debug)
                 exit
-            else if (a_norm < numerical_zero .and. 1.0_rp + root / a_norm <= 1.0_rp) &
+            else if (a_norm > numerical_zero .and. 1.0_rp + root / a_norm <= 1.0_rp) &
                 then
                 call settings%log("MINRES: A least-squares solution was found, "// &
                                   "given provided tolerance.", verbosity_debug)

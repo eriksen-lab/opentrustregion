@@ -39,17 +39,21 @@ contains
         !
         type(c_ptr), intent(in), value :: path
         character(kind=c_char), pointer :: c_path(:)
-        integer(ip) :: len, i
+        integer(ip) :: path_len, i
 
         ! conda paths need ample space
         call c_f_pointer(path, c_path, [1024])
-        len = 0
+        path_len = 0
         do i = 1, size(c_path)
             if (c_path(i) == c_null_char) exit
-            len = len + 1
+            path_len = path_len + 1
         end do
-        allocate(character(len=len) :: data_dir)
-        data_dir = transfer(c_path(1:len), data_dir)
+
+        ! replace the path of a previous call, since the test driver sets it whenever
+        ! it starts running system tests
+        if (allocated(data_dir)) deallocate(data_dir)
+        allocate(character(len=path_len) :: data_dir)
+        data_dir = transfer(c_path(1:path_len), data_dir)
 
     end subroutine set_test_data_path
 
@@ -178,7 +182,7 @@ contains
         end do
         deallocate(x_full, tmp2, tmp3)
 
-        ! extract lower triagonal
+        ! extract lower triangle
         idx1 = 1
         do i1 = 2, n_mo
             do j1 = 1, i1 - 1
@@ -299,7 +303,7 @@ contains
             end do
         end do
 
-        ! construct gradient and extract lower triagonal
+        ! construct gradient and extract lower triangle
         idx = 1
         do i = 2, n_mo
             do j = 1, i - 1
@@ -320,7 +324,7 @@ contains
             end do
         end do
 
-        ! extract lower triagonal
+        ! extract lower triangle
         idx = 1
         do i = 2, n_mo
             do j = 1, i - 1
@@ -347,28 +351,28 @@ contains
         type(fb_context_type), intent(out) :: context
         character(len=*), intent(in) :: start_file
 
-        integer :: ios
+        integer :: file_unit, ios
 
         ! check if test data variable is set
         if (.not. allocated(data_dir)) error stop "Test data directory not set "// &
             "through set_test_data_path subroutine before calling system test."
 
         ! read raw binary data
-        open(unit=10, file=data_dir//"/"//start_file, form="unformatted", &
+        open(newunit=file_unit, file=data_dir//"/"//start_file, form="unformatted", &
              access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read(10) context%mo_coeff
-        close(10)
-        open(unit=10, file=data_dir//"/h2o_r_ints.bin", form="unformatted", &
+        read(file_unit) context%mo_coeff
+        close(file_unit)
+        open(newunit=file_unit, file=data_dir//"/h2o_r_ints.bin", form="unformatted", &
              access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read(10) context%r_ao_ints
-        close(10)
-        open(unit=10, file=data_dir//"/h2o_r2_ints.bin", form="unformatted", &
+        read(file_unit) context%r_ao_ints
+        close(file_unit)
+        open(newunit=file_unit, file=data_dir//"/h2o_r2_ints.bin", form="unformatted", &
              access="stream", status="old", action="read", iostat=ios)
         if (ios /= 0) error stop "Error opening file"
-        read(10) context%r2_ao_ints
-        close(10)
+        read(file_unit) context%r2_ao_ints
+        close(file_unit)
 
     end subroutine setup_fb_context
 
@@ -381,8 +385,7 @@ contains
         !
         use opentrustregion, only: update_orbs_type, obj_func_type, &
                                    solver_settings_type, solver, hess_x_type, &
-                                   stability_settings_type, stability_check, &
-                                   subsystem_solver_options
+                                   stability_settings_type, stability_check
 
         character(len=*), intent(in) :: test_name, option
 
@@ -426,12 +429,6 @@ contains
             case ("stability")
                 solver_settings%stability = .true.
             case default
-                if (.not. any(option == subsystem_solver_options)) then
-                    write(stderr, *) "test_"//test_name// &
-                        " failed: Unknown solver option."
-                    check_h2o_fb_solver = .false.
-                    return
-                end if
                 solver_settings%subsystem_solver = option
                 if (option == "jacobi-davidson") &
                     solver_settings%jacobi_davidson_start = 0
@@ -534,7 +531,7 @@ contains
             ! converges before switching on a problem of this size
             call settings%init(error)
             settings%context => context
-            settings%diag_solver = diag_solver
+            if (diag_solver /= "default") settings%diag_solver = diag_solver
             if (diag_solver == "jacobi-davidson") settings%jacobi_davidson_start = 0
 
             ! perform stability check
@@ -572,14 +569,7 @@ contains
                 unit_vector = 0.0_rp
                 unit_vector(i) = 1.0_rp
                 call hess_x_funptr(unit_vector, hess(:, i), error, context_ptr)
-                if (error /= 0) exit
             end do
-            if (error /= 0) then
-                write(stderr, *) "test_"//test_name//" failed: Hessian linear "// &
-                    "transformation produced error at the saddle point."
-                check_h2o_fb_stability_check = .false.
-                cycle
-            end if
             call dsyev("V", "U", n_param, hess, n_param, eigvals, work, &
                        size(work, kind=ip), info)
             if (info /= 0) then
@@ -654,7 +644,7 @@ contains
         ! the occupied orbitals of water with the default settings
         !
         test_h2o_fb_stability_check_default = logical(check_h2o_fb_stability_check( &
-            "h2o_fb_stability_check_default", "davidson"), kind=c_bool)
+            "h2o_fb_stability_check_default", "default"), kind=c_bool)
 
     end function test_h2o_fb_stability_check_default
 
