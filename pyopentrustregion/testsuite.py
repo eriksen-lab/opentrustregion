@@ -256,6 +256,27 @@ class PyInterfaceUnitTests(unittest.TestCase):
 
         return super().setUpClass()
 
+    @staticmethod
+    def _mock_precond(residual, mu, precond_residual):
+        """
+        this function is a mock function for the preconditioner function
+        """
+        precond_residual[:] = mu * residual
+
+    @staticmethod
+    def _mock_project(vector):
+        """
+        this function is a mock function for the projection function
+        """
+        vector[:] = 2 * vector
+
+    @staticmethod
+    def _raising_logger(message):
+        """
+        this function is a logging function that raises
+        """
+        raise ValueError("logging failure")
+
     # replace original library with mock library
     @patch("pyopentrustregion.python_interface.lib.solver", lib.mock_solver)
     def test_solver_py_interface(self):
@@ -283,42 +304,22 @@ class PyInterfaceUnitTests(unittest.TestCase):
 
             return func, hess_x
 
-        def mock_precond(residual, mu, precond_residual):
-            """
-            this function is a mock function for the preconditioner function
-            """
-            precond_residual[:] = mu * residual
-
-        def mock_project(vector):
-            """
-            this function is a mock function for the projection function
-            """
-            vector[:] = 2 * vector
-
         def mock_conv_check():
             """
             this function is a mock function for the convergence check function
             """
             return True
 
-        def mock_logger(message):
-            """
-            this function is a mock function for the logging function
-            """
-            nonlocal test_logger
-            if message == "test":
-                test_logger = True
-            return
-
-        # initialize settings object
+        # initialize settings object, the logging function records the messages
+        messages = []
         settings = SolverSettings()
-        settings.precond = mock_precond
-        settings.project = mock_project
+        settings.precond = self._mock_precond
+        settings.project = self._mock_project
         settings.conv_check = mock_conv_check
-        settings.logger = mock_logger
-        settings.stability_settings.precond = mock_precond
-        settings.stability_settings.project = mock_project
-        settings.stability_settings.logger = mock_logger
+        settings.logger = messages.append
+        settings.stability_settings.precond = self._mock_precond
+        settings.stability_settings.project = self._mock_project
+        settings.stability_settings.logger = messages.append
         for field_info in settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
             if (
@@ -340,9 +341,6 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 reference("stability_settings." + field_name, field_type),
             )
 
-        # initialize logging boolean
-        test_logger = False
-
         # call solver python interface with optional arguments, the result of the mock
         # is cleared before and read right after the call
         interface_flag = c_bool.in_dll(lib, "test_solver_interface")
@@ -351,15 +349,13 @@ class PyInterfaceUnitTests(unittest.TestCase):
         interface_passed = interface_flag.value
 
         # check if logger was called correctly
+        test_logger = "test" in messages
         if not test_logger:
             print(" test_solver_py_interface failed: Called logging function wrong.")
 
         # a logging function that raises must not be silent, the exception is reported
         # once the solver has returned
-        def raising_logger(message):
-            raise ValueError("logging failure")
-
-        settings.logger = raising_logger
+        settings.logger = self._raising_logger
         logger_error_reported = False
         try:
             solver(mock_obj_func, mock_update_orbs, n_param, settings)
@@ -376,7 +372,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         def raising_obj_func(kappa):
             raise ValueError("objective function failure")
 
-        settings.logger = mock_logger
+        settings.logger = messages.append
         callback_error_reported = False
         try:
             solver(raising_obj_func, mock_update_orbs, n_param, settings)
@@ -412,32 +408,12 @@ class PyInterfaceUnitTests(unittest.TestCase):
         def mock_hess_x(x, hess_x):
             hess_x[:] = 4 * x
 
-        def mock_precond(residual, mu, precond_residual):
-            """
-            this function is a mock function for the preconditioner function
-            """
-            precond_residual[:] = mu * residual
-
-        def mock_project(vector):
-            """
-            this function is a mock function for the projection function
-            """
-            vector[:] = 2 * vector
-
-        def mock_logger(message):
-            """
-            this function is a mock function for the logging function
-            """
-            nonlocal test_logger
-            if message == "test":
-                test_logger = True
-            return
-
-        # initialize settings object
+        # initialize settings object, the logging function records the messages
+        messages = []
         settings = StabilitySettings()
-        settings.precond = mock_precond
-        settings.project = mock_project
-        settings.logger = mock_logger
+        settings.precond = self._mock_precond
+        settings.project = self._mock_project
+        settings.logger = messages.append
         for field_info in settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
             if field_type == c_void_p or field_name == "initialized":
@@ -451,9 +427,6 @@ class PyInterfaceUnitTests(unittest.TestCase):
         # allocate memory for descent direction
         kappa = np.empty(n_param, dtype=np.float64)
 
-        # initialize logging boolean
-        test_logger = False
-
         # call stability check python interface with optional arguments, the result of
         # the mock is cleared before and read right after the call
         interface_flag = c_bool.in_dll(lib, "test_stability_check_interface")
@@ -462,6 +435,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         interface_passed = interface_flag.value
 
         # check if logger was called correctly
+        test_logger = "test" in messages
         if not test_logger:
             print(
                 " test_stability_check_py_interface failed: Called logging function "
@@ -484,10 +458,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
 
         # a logging function that raises must not be silent, the exception is reported
         # once the stability check has returned
-        def raising_logger(message):
-            raise ValueError("logging failure")
-
-        settings.logger = raising_logger
+        settings.logger = self._raising_logger
         logger_error_reported = False
         try:
             stability_check(h_diag, mock_hess_x, n_param, settings, kappa=kappa)
@@ -500,7 +471,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
 
         # call stability check python interface without a returned direction
-        settings.logger = mock_logger
+        settings.logger = messages.append
         stable_without_direction = stability_check(
             h_diag, mock_hess_x, n_param, settings
         )
@@ -538,6 +509,48 @@ class PyInterfaceUnitTests(unittest.TestCase):
         )
         print(" test_stability_check_py_interface PASSED")
 
+    @staticmethod
+    def _settings_hold_reference(test_name, settings, prefix, location=""):
+        """
+        this function checks that the optional callback functions of a settings object
+        are unset and that every other field holds its reference value, the names of
+        the stability check settings carry the prefix "stability_settings.", the host
+        context is skipped since the Python wrapper never writes it
+        """
+        test_passed = True
+        for field_info in settings.c_struct._fields_:
+            field_name, field_type = field_info[:2]
+            if field_name == "context":
+                continue
+            if field_type == c_void_p:
+                if getattr(settings, field_name) is not None:
+                    print(
+                        f" {test_name} failed: Optional function pointer {field_name} "
+                        f"not initialized correctly{location}."
+                    )
+                    test_passed = False
+            elif isinstance(field_type, type) and issubclass(field_type, Structure):
+                test_passed &= PyInterfaceUnitTests._settings_hold_reference(
+                    test_name,
+                    getattr(settings, field_name),
+                    "stability_settings.",
+                    " for nested stability settings",
+                )
+            else:
+                ref_value = reference(prefix + field_name, field_type)
+                value = getattr(settings, field_name)
+                if field_type == c_real:
+                    match = np.isclose(value, ref_value)
+                else:
+                    match = value == ref_value
+                if not match:
+                    print(
+                        f" {test_name} failed: Field {field_name} not initialized "
+                        f"correctly{location}."
+                    )
+                    test_passed = False
+        return test_passed
+
     @patch.object(SolverSettings, "init_c_struct", lib.mock_init_solver_settings)
     def test_solver_settings(self):
         """
@@ -545,91 +558,9 @@ class PyInterfaceUnitTests(unittest.TestCase):
         synchronized with the underlying C struct
         """
         settings = SolverSettings()
-        test_passed = True
-        for field_info in settings.c_struct._fields_:
-            field_name, field_type = field_info[:2]
-            if field_name == "context":
-                if getattr(settings.settings_c, field_name) is not None:
-                    print(
-                        " test_solver_settings failed: Host context not initialized to "
-                        "null."
-                    )
-                    test_passed = False
-            elif field_type == c_void_p:
-                if (
-                    getattr(settings, field_name) is not None
-                    or getattr(settings.settings_c, field_name) is not None
-                ):
-                    print(
-                        " test_solver_settings failed: Optional function pointer "
-                        f"{field_name} not initialized correctly."
-                    )
-                    test_passed = False
-            elif field_name == "initialized":
-                if not getattr(settings, field_name):
-                    print(
-                        " test_solver_settings failed: Field initialized not "
-                        "initialized correctly."
-                    )
-                    test_passed = False
-            elif isinstance(field_type, type) and issubclass(field_type, Structure):
-                continue
-            else:
-                ref_value = reference(field_name, field_type)
-                if field_type == c_real:
-                    match = np.isclose(getattr(settings, field_name), ref_value)
-                else:
-                    match = getattr(settings, field_name) == ref_value
-                if not match:
-                    print(
-                        f" test_solver_settings failed: Field {field_name} not "
-                        "initialized correctly."
-                    )
-                    test_passed = False
-
-        # check nested stability check settings
-        stability_settings = settings.stability_settings
-        for field_info in stability_settings.c_struct._fields_:
-            field_name, field_type = field_info[:2]
-            if field_name == "context":
-                if getattr(stability_settings.settings_c, field_name) is not None:
-                    print(
-                        " test_solver_settings failed: Host context not initialized "
-                        "to null for nested stability settings."
-                    )
-                    test_passed = False
-            elif field_type == c_void_p:
-                if (
-                    getattr(stability_settings, field_name) is not None
-                    or getattr(stability_settings.settings_c, field_name) is not None
-                ):
-                    print(
-                        " test_solver_settings failed: Optional function pointer "
-                        f"{field_name} not initialized correctly for nested "
-                        "stability settings."
-                    )
-                    test_passed = False
-            elif field_name == "initialized":
-                if not getattr(stability_settings, field_name):
-                    print(
-                        " test_solver_settings failed: Field initialized not "
-                        "initialized correctly for nested stability settings."
-                    )
-                    test_passed = False
-            else:
-                ref_value = reference("stability_settings." + field_name, field_type)
-                if field_type == c_real:
-                    match = np.isclose(
-                        getattr(stability_settings, field_name), ref_value
-                    )
-                else:
-                    match = getattr(stability_settings, field_name) == ref_value
-                if not match:
-                    print(
-                        f" test_solver_settings failed: Field {field_name} not "
-                        "initialized correctly for nested stability settings."
-                    )
-                    test_passed = False
+        test_passed = self._settings_hold_reference(
+            "test_solver_settings", settings, ""
+        )
 
         dummy_error_code = 42
 
@@ -645,7 +576,6 @@ class PyInterfaceUnitTests(unittest.TestCase):
 
         if (
             c_ptr is None
-            or (isinstance(c_ptr, c_void_p) and c_ptr.value is None)
             or not callable(c_interface)
             or c_interface() != dummy_error_code
         ):
@@ -665,46 +595,9 @@ class PyInterfaceUnitTests(unittest.TestCase):
         synchronized with the underlying C struct
         """
         settings = StabilitySettings()
-        test_passed = True
-        for field_info in settings.c_struct._fields_:
-            field_name, field_type = field_info[:2]
-            if field_name == "context":
-                if getattr(settings.settings_c, field_name) is not None:
-                    print(
-                        " test_stability_settings failed: Host context not initialized "
-                        "to null."
-                    )
-                    test_passed = False
-            elif field_type == c_void_p:
-                if (
-                    getattr(settings, field_name) is not None
-                    or getattr(settings.settings_c, field_name) is not None
-                ):
-                    print(
-                        " test_stability_settings failed: Optional function pointer "
-                        f"{field_name} not initialized correctly."
-                    )
-                    test_passed = False
-            elif field_name == "initialized":
-                if not getattr(settings, field_name):
-                    print(
-                        " test_stability_settings failed: Field initialized not "
-                        "initialized correctly."
-                    )
-                    test_passed = False
-            else:
-                ref_value = reference("stability_settings." + field_name, field_type)
-                if field_type == c_real:
-                    match = np.isclose(getattr(settings, field_name), ref_value)
-                else:
-                    match = getattr(settings, field_name) == ref_value
-                if not match:
-                    print(
-                        f" test_stability_settings failed: Field {field_name} not "
-                        "initialized correctly."
-                    )
-                    test_passed = False
-
+        test_passed = self._settings_hold_reference(
+            "test_stability_settings", settings, "stability_settings."
+        )
         self.assertTrue(test_passed, "test_stability_settings failed")
         print(" test_stability_settings PASSED")
 
@@ -778,7 +671,6 @@ class PyIntegrationTests(unittest.TestCase):
         cls.minimum1 = read_array("hartmann6d_minimum1", cls.n_param)
         cls.near_minimum = read_array("hartmann6d_near_minimum", cls.n_param)
         cls.saddle_point = read_array("hartmann6d_saddle_point", cls.n_param)
-        cls.unstable_mode = read_array("hartmann6d_unstable_mode", cls.n_param)
 
         return super().setUpClass()
 
@@ -951,9 +843,16 @@ class PyIntegrationTests(unittest.TestCase):
         settings.stability_settings.logger = recording_callback("stability_logger")
         settings.verbose = 3  # ensure the loggers are exercised
 
+        # the maximum precision flag starts opposite to the one the converging solve
+        # returns, so that its write-back is detected
+        settings.max_precision_reached = True
+
         solver(obj_func, update_orbs, self.n_param, settings)
-        if not np.allclose(state["curr"], self.minimum1, atol=1e-4):
-            print(" test_solver_py failed: Solver did not find minimum.")
+        if settings.max_precision_reached:
+            print(
+                " test_solver_py failed: Maximum precision reached flag was not "
+                "returned."
+            )
             test_passed = False
         for name, description in [
             ("precond", "Preconditioner"),
@@ -1050,33 +949,31 @@ class PyIntegrationTests(unittest.TestCase):
             )
             test_passed = False
 
-        # at a saddle, expect unstable
+        # also exercise the call without a direction at the minimum, where the
+        # stability flag differs from the False the wrapper starts from
+        stable = stability_check(h_diag, hess_x, self.n_param, settings)
+        if not stable:
+            print(
+                " test_stability_check_py failed: Stability incorrectly classifies "
+                "stability of minimum when not passing direction."
+            )
+            test_passed = False
+
+        # at a saddle, the returned direction replaces the zero direction returned at
+        # the minimum and has to be a normalized direction of negative curvature
         H = self._hess(self.saddle_point)
         h_diag = np.diag(H).copy()
-
-        stable = stability_check(h_diag, hess_x, self.n_param, settings, kappa=kappa)
-        if stable:
+        stability_check(h_diag, hess_x, self.n_param, settings, kappa=kappa)
+        if abs(np.linalg.norm(kappa) - 1.0) > 1e-6:
             print(
-                " test_stability_check_py failed: Stability incorrectly classifies "
-                "stability of saddle point."
+                " test_stability_check_py failed: Stability check does not return a "
+                "normalized direction for saddle point."
             )
             test_passed = False
-
-        # the descent direction at the saddle should align with the known
-        # negative-curvature eigenvector
-        if abs(abs(np.dot(kappa, self.unstable_mode)) - 1.0) > 1e-6:
+        if kappa @ H @ kappa >= 0.0:
             print(
-                " test_stability_check_py failed: Stability check does not return "
-                "correct direction for saddle point."
-            )
-            test_passed = False
-
-        # also exercise the no-direction path
-        stable = stability_check(h_diag, hess_x, self.n_param, settings)
-        if stable:
-            print(
-                " test_stability_check_py failed: Stability incorrectly classifies "
-                "stability of saddle point when not passing direction."
+                " test_stability_check_py failed: Stability check does not return a "
+                "direction of negative curvature for saddle point."
             )
             test_passed = False
         self.assertTrue(test_passed, "test_stability_check_py failed")

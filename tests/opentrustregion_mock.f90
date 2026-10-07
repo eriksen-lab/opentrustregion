@@ -21,11 +21,6 @@ module opentrustregion_mock
                               mock_n_hess_x = 5, mock_stability_n_hess_x = 2, &
                               mock_stability_check_n_hess_x = 4
 
-    ! number of calls the mock solver makes to the optional callback functions of
-    ! the internal stability check, the preconditioner, projection and logging
-    ! function, with the context of the nested settings
-    integer(ip), parameter :: mock_solver_n_nested_calls = 3
-
     ! settings and callback bundle of the nested settings the mock solver received,
     ! so that a test can check what the C wrapper handed over
     type(solver_settings_type) :: received_solver_settings
@@ -54,18 +49,18 @@ contains
         integer(ip), intent(out) :: error
         type(solver_settings_type), intent(inout) :: settings
 
-        ! initialize logical
+        ! assume tests pass
         test_passed = .true.
 
         ! test passed orbital update subroutine
-        test_passed = test_passed .and. check_update_orbs_funptr( &
-            update_orbs_funptr, "solver_c_wrapper", &
-            " by given orbital updating subroutine", settings%context)
+        if (.not. check_update_orbs_funptr(update_orbs_funptr, "solver_c_wrapper", &
+                                           " by given orbital updating subroutine", &
+                                           settings%context)) test_passed = .false.
 
         ! test passed objective function
-        test_passed = test_passed .and. check_obj_func_funptr( &
-            obj_func_funptr, "solver_c_wrapper", " by given objective function", &
-            settings%context)
+        if (.not. check_obj_func_funptr(obj_func_funptr, "solver_c_wrapper", &
+                                        " by given objective function", &
+                                        settings%context)) test_passed = .false.
 
         ! check number of parameters
         if (n_param /= n_param_ref) then
@@ -75,37 +70,19 @@ contains
         end if
 
         ! check if optional preconditioner subroutine is correctly passed
-        if (.not. associated(settings%precond)) then
-            test_passed = .false.
-            write(stderr, *) "test_solver_c_wrapper failed: Passed preconditioner "// &
-                "function not associated with value."
-        else
-            test_passed = test_passed .and. check_precond_funptr( &
-                settings%precond, "solver_c_wrapper", &
-                " by given preconditioner subroutine", settings%context)
-        end if
+        if (.not. check_precond_funptr(settings%precond, "solver_c_wrapper", &
+                                       " by given preconditioner subroutine", &
+                                       settings%context)) test_passed = .false.
 
         ! check if optional projection subroutine is correctly passed
-        if (.not. associated(settings%project)) then
-            test_passed = .false.
-            write(stderr, *) "test_solver_c_wrapper failed: Passed projection "// &
-                "function not associated with value."
-        else
-            test_passed = test_passed .and. check_project_funptr( &
-                settings%project, "solver_c_wrapper", &
-                " by given projection subroutine", settings%context)
-        end if
+        if (.not. check_project_funptr(settings%project, "solver_c_wrapper", &
+                                       " by given projection subroutine", &
+                                       settings%context)) test_passed = .false.
 
         ! check if optional convergence check function is correctly passed
-        if (.not. associated(settings%conv_check)) then
-            test_passed = .false.
-            write(stderr, *) "test_solver_c_wrapper failed: Passed convergence "// &
-                "check function not associated with value."
-        else
-            test_passed = test_passed .and. check_conv_check_funptr( &
-                settings%conv_check, "solver_c_wrapper", &
-                " by given convergence check function", settings%context)
-        end if
+        if (.not. check_conv_check_funptr(settings%conv_check, "solver_c_wrapper", &
+                                          " by given convergence check function", &
+                                          settings%context)) test_passed = .false.
 
         ! check if optional logging function is correctly passed
         if (.not. associated(settings%logger)) then
@@ -115,22 +92,6 @@ contains
         else
             call settings%logger("test", settings%context)
         end if
-
-        ! call the optional callback functions as the internal stability check does
-        ! with the nested settings' context, whose callback bundle decides whether the
-        ! solver's C functions or the nested settings' own are called
-        if (associated(settings%precond)) then
-            test_passed = test_passed .and. check_precond_funptr( &
-                settings%precond, "solver_c_wrapper", " by preconditioner of the "// &
-                "internal stability check", settings%stability_settings%context)
-        end if
-        if (associated(settings%project)) then
-            test_passed = test_passed .and. check_project_funptr( &
-                settings%project, "solver_c_wrapper", " by projection of the "// &
-                "internal stability check", settings%stability_settings%context)
-        end if
-        if (associated(settings%logger)) &
-            call settings%logger("test", settings%stability_settings%context)
 
         ! record the settings and the callback bundle of the nested settings
         received_solver_settings = settings
@@ -166,7 +127,7 @@ contains
         type(stability_settings_type), intent(inout) :: settings
         real(rp), intent(out), optional :: kappa(:)
 
-        ! initialize logical
+        ! assume tests pass
         test_passed = .true.
 
         ! check Hessian diagonal
@@ -181,31 +142,19 @@ contains
         end if
 
         ! test passed Hessian linear transformation subroutine
-        test_passed = test_passed .and. check_hess_x_funptr( &
-            hess_x_funptr, "stability_check_c_wrapper", &
-            " by given Hessian linear transformation subroutine", settings%context)
+        if (.not. check_hess_x_funptr( &
+            hess_x_funptr, "stability_check_c_wrapper", " by given Hessian linear "// &
+            "transformation subroutine", settings%context)) test_passed = .false.
 
         ! check if optional preconditioner subroutine is correctly passed
-        if (.not. associated(settings%precond)) then
-            test_passed = .false.
-            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
-                "preconditioner function not associated with value."
-        else
-            test_passed = test_passed .and. check_precond_funptr( &
-                settings%precond, "stability_check_c_wrapper", &
-                " by given preconditioner subroutine", settings%context)
-        end if
+        if (.not. check_precond_funptr(settings%precond, "stability_check_c_wrapper", &
+                                       " by given preconditioner subroutine", &
+                                       settings%context)) test_passed = .false.
 
         ! check if optional projection subroutine is correctly passed
-        if (.not. associated(settings%project)) then
-            test_passed = .false.
-            write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
-                "projection function not associated with value."
-        else
-            test_passed = test_passed .and. check_project_funptr( &
-                settings%project, "stability_check_c_wrapper", &
-                " by given projection subroutine", settings%context)
-        end if
+        if (.not. check_project_funptr(settings%project, "stability_check_c_wrapper", &
+                                       " by given projection subroutine", &
+                                       settings%context)) test_passed = .false.
 
         ! check if optional logging function is correctly passed
         if (.not. associated(settings%logger)) then

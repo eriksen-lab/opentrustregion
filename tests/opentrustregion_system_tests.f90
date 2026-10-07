@@ -76,7 +76,7 @@ contains
         lwork = -1
         allocate(eigvals(n), work(1), rwork(3 * n - 2))
         call zheev("V", "U", n, eigvecs, n, eigvals, work, lwork, rwork, info)
-        lwork = int(work(1))
+        lwork = int(work(1), kind=ip)
         deallocate(work)
         allocate(work(lwork))
 
@@ -402,7 +402,7 @@ contains
             ["h2o_atomic_mo_coeff.bin", "h2o_saddle_mo_coeff.bin"]
         real(rp), parameter :: ref_func = 6.890557872085_rp, func_tol = 1e-8_rp
 
-        ! assume test passes
+        ! assume tests pass
         check_h2o_fb_solver = .true.
 
         ! set function pointers
@@ -427,20 +427,22 @@ contains
                 solver_settings%stability = .true.
             case default
                 if (.not. any(option == subsystem_solver_options)) then
-                    write(stderr, *) test_name//" failed: Unknown solver option."
+                    write(stderr, *) "test_"//test_name// &
+                        " failed: Unknown solver option."
                     check_h2o_fb_solver = .false.
                     return
                 end if
                 solver_settings%subsystem_solver = option
-                solver_settings%jacobi_davidson_start = 0
+                if (option == "jacobi-davidson") &
+                    solver_settings%jacobi_davidson_start = 0
             end select
 
             ! run solver
             call solver(update_orbs_funptr, obj_func_funptr, n_param, error, &
                         solver_settings)
             if (error /= 0) then
-                write(stderr, *) test_name//" failed: Solver produced error from "// &
-                    "the "//trim(start_names(i_start))//"."
+                write(stderr, *) "test_"//test_name//" failed: Solver produced "// &
+                    "error from the "//trim(start_names(i_start))//"."
                 check_h2o_fb_solver = .false.
                 cycle
             end if
@@ -453,13 +455,14 @@ contains
                              context_ptr)
             if (norm2(grad) / sqrt(real(n_param, kind=rp)) > solver_settings%conv_tol) &
                 then
-                write(stderr, *) test_name//" failed: Gradient not converged from "// &
-                    "the "//trim(start_names(i_start))//"."
+                write(stderr, *) "test_"//test_name//" failed: Gradient not "// &
+                    "converged from the "//trim(start_names(i_start))//"."
                 check_h2o_fb_solver = .false.
             end if
             if (abs(func - ref_func) > func_tol) then
-                write(stderr, *) test_name//" failed: Objective function does not "// &
-                    "reach the minimum from the "//trim(start_names(i_start))//"."
+                write(stderr, *) "test_"//test_name//" failed: Objective function "// &
+                    "does not reach the minimum from the "// &
+                    trim(start_names(i_start))//"."
                 check_h2o_fb_solver = .false.
             end if
 
@@ -469,14 +472,16 @@ contains
             call stability_check(h_diag, hess_x_funptr, stable, error, &
                                  stability_settings)
             if (error /= 0) then
-                write(stderr, *) test_name//" failed: Stability check of the "// &
-                    "localized orbitals produced error from the "// &
+                write(stderr, *) "test_"//test_name//" failed: Stability check of "// &
+                    "the localized orbitals produced error from the "// &
                     trim(start_names(i_start))//"."
                 check_h2o_fb_solver = .false.
+                cycle
             end if
             if (.not. stable) then
-                write(stderr, *) test_name//" failed: Localized orbitals are not a "// &
-                    "stable minimum from the "//trim(start_names(i_start))//"."
+                write(stderr, *) "test_"//test_name// &
+                    " failed: Localized orbitals are not a stable minimum from the "// &
+                    trim(start_names(i_start))//"."
                 check_h2o_fb_solver = .false.
             end if
         end do
@@ -512,7 +517,7 @@ contains
 
         external :: dsyev
 
-        ! assume test passes
+        ! assume tests pass
         check_h2o_fb_stability_check = .true.
 
         do i_point = 1, size(point_names)
@@ -535,8 +540,8 @@ contains
             ! perform stability check
             call stability_check(h_diag, hess_x_funptr, stable, error, settings, kappa)
             if (error /= 0) then
-                write(stderr, *) test_name//" failed: Stability check produced "// &
-                    "error at the "//trim(point_names(i_point))//"."
+                write(stderr, *) "test_"//test_name//" failed: Stability check "// &
+                    "produced error at the "//trim(point_names(i_point))//"."
                 check_h2o_fb_stability_check = .false.
                 cycle
             end if
@@ -544,7 +549,7 @@ contains
             ! the minimum has to be found to be stable
             if (i_point == 1) then
                 if (.not. stable) then
-                    write(stderr, *) test_name// &
+                    write(stderr, *) "test_"//test_name// &
                         " failed: Minimum not found to be stable."
                     check_h2o_fb_stability_check = .false.
                 end if
@@ -553,7 +558,7 @@ contains
 
             ! the saddle point has to be found to be unstable
             if (stable) then
-                write(stderr, *) test_name// &
+                write(stderr, *) "test_"//test_name// &
                     " failed: Saddle point not found to be unstable."
                 check_h2o_fb_stability_check = .false.
             end if
@@ -570,7 +575,7 @@ contains
                 if (error /= 0) exit
             end do
             if (error /= 0) then
-                write(stderr, *) test_name//" failed: Hessian linear "// &
+                write(stderr, *) "test_"//test_name//" failed: Hessian linear "// &
                     "transformation produced error at the saddle point."
                 check_h2o_fb_stability_check = .false.
                 cycle
@@ -578,14 +583,14 @@ contains
             call dsyev("V", "U", n_param, hess, n_param, eigvals, work, &
                        size(work, kind=ip), info)
             if (info /= 0) then
-                write(stderr, *) test_name//" failed: Diagonalization of the "// &
-                    "Hessian at the saddle point failed."
+                write(stderr, *) "test_"//test_name//" failed: Diagonalization of "// &
+                    "the Hessian at the saddle point failed."
                 check_h2o_fb_stability_check = .false.
                 cycle
             end if
             if (abs(abs(dot_product(kappa, hess(:, 1))) - 1.0_rp) > direction_tol) then
-                write(stderr, *) test_name//" failed: Returned direction at the "// &
-                    "saddle point is not the lowest eigenvector of the Hessian."
+                write(stderr, *) "test_"//test_name//" failed: Returned direction "// &
+                    "at the saddle point is not the lowest eigenvector of the Hessian."
                 check_h2o_fb_stability_check = .false.
             end if
         end do
@@ -598,7 +603,7 @@ contains
         ! occupied orbitals of water with the default settings
         !
         test_h2o_fb_solver_default = logical( &
-            check_h2o_fb_solver("test_h2o_fb_solver_default", "default"), kind=c_bool)
+            check_h2o_fb_solver("h2o_fb_solver_default", "default"), kind=c_bool)
 
     end function test_h2o_fb_solver_default
 
@@ -608,7 +613,7 @@ contains
         ! occupied orbitals of water with the Jacobi-Davidson subsystem solver
         !
         test_h2o_fb_solver_jacobi_davidson = logical(check_h2o_fb_solver( &
-            "test_h2o_fb_solver_jacobi_davidson", "jacobi-davidson"), kind=c_bool)
+            "h2o_fb_solver_jacobi_davidson", "jacobi-davidson"), kind=c_bool)
 
     end function test_h2o_fb_solver_jacobi_davidson
 
@@ -619,7 +624,7 @@ contains
         ! solver
         !
         test_h2o_fb_solver_tcg = &
-            logical(check_h2o_fb_solver("test_h2o_fb_solver_tcg", "tcg"), kind=c_bool)
+            logical(check_h2o_fb_solver("h2o_fb_solver_tcg", "tcg"), kind=c_bool)
 
     end function test_h2o_fb_solver_tcg
 
@@ -629,7 +634,7 @@ contains
         ! occupied orbitals of water with line search
         !
         test_h2o_fb_solver_line_search = logical(check_h2o_fb_solver( &
-            "test_h2o_fb_solver_line_search", "line search"), kind=c_bool)
+            "h2o_fb_solver_line_search", "line search"), kind=c_bool)
 
     end function test_h2o_fb_solver_line_search
 
@@ -638,8 +643,8 @@ contains
         ! this function tests the solver for the Foster-Boys localization of the
         ! occupied orbitals of water with the stability check at convergence
         !
-        test_h2o_fb_solver_stability = logical(check_h2o_fb_solver( &
-            "test_h2o_fb_solver_stability", "stability"), kind=c_bool)
+        test_h2o_fb_solver_stability = logical( &
+            check_h2o_fb_solver("h2o_fb_solver_stability", "stability"), kind=c_bool)
 
     end function test_h2o_fb_solver_stability
 
@@ -649,7 +654,7 @@ contains
         ! the occupied orbitals of water with the default settings
         !
         test_h2o_fb_stability_check_default = logical(check_h2o_fb_stability_check( &
-            "test_h2o_fb_stability_check_default", "davidson"), kind=c_bool)
+            "h2o_fb_stability_check_default", "davidson"), kind=c_bool)
 
     end function test_h2o_fb_stability_check_default
 
@@ -660,9 +665,8 @@ contains
         ! solver
         !
         test_h2o_fb_stability_check_jacobi_davidson = logical( &
-            check_h2o_fb_stability_check( &
-                "test_h2o_fb_stability_check_jacobi_davidson", "jacobi-davidson"), &
-            kind=c_bool)
+            check_h2o_fb_stability_check("h2o_fb_stability_check_jacobi_davidson", &
+                                         "jacobi-davidson"), kind=c_bool)
 
     end function test_h2o_fb_stability_check_jacobi_davidson
 

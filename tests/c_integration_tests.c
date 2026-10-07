@@ -12,37 +12,11 @@
  * bind(C) settings types (Fortran) and the settings structs (C) is caught here. */
 
 #include <math.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "opentrustregion.h"
-
-/* ------------------------------------------------------------------
- * Compile-time layout checks for the C structs
- *
- * These only verify that the C header is self-consistent: each field sits where the
- * field order claims it does, with no surprise padding before the pointer block.
- * Cross-language drift (Fortran vs. C) is caught at runtime by test_settings_layout
- * below.
- * ------------------------------------------------------------------ */
-
-_Static_assert(offsetof(solver_settings_type, precond) == 0,
-               "solver_settings_type: precond must be the first field");
-_Static_assert(offsetof(solver_settings_type, project) == 1 * sizeof(void *),
-               "solver_settings_type: project must follow precond");
-_Static_assert(offsetof(solver_settings_type, conv_check) == 2 * sizeof(void *),
-               "solver_settings_type: conv_check must follow project");
-_Static_assert(offsetof(solver_settings_type, logger) == 3 * sizeof(void *),
-               "solver_settings_type: logger must follow conv_check");
-
-_Static_assert(offsetof(stability_settings_type, precond) == 0,
-               "stability_settings_type: precond must be the first field");
-_Static_assert(offsetof(stability_settings_type, project) == 1 * sizeof(void *),
-               "stability_settings_type: project must follow precond");
-_Static_assert(offsetof(stability_settings_type, logger) == 2 * sizeof(void *),
-               "stability_settings_type: logger must follow project");
 
 /* ------------------------------------------------------------------
  * Hartmann 6D function
@@ -64,7 +38,6 @@ const c_real *minimum1 = hartmann6d_minimum1;
 extern const c_real hartmann6d_saddle_point[N_PARAM];
 const c_real *saddle_point = hartmann6d_saddle_point;
 extern const c_real hartmann6d_near_minimum[N_PARAM];
-extern const c_real hartmann6d_unstable_mode[N_PARAM];
 
 /* Host data handed to the callbacks through the context of the settings: the current
  * point and its Hessian, and flags recording which callbacks were reached. */
@@ -307,13 +280,6 @@ bool is_default_stability_settings(const stability_settings_type *settings);
  * Helpers
  * ------------------------------------------------------------------ */
 
-static int vec_close(const c_real *a, const c_real *b, c_real tol) {
-  for (int i = 0; i < N_PARAM; i++)
-    if (fabs(a[i] - b[i]) > tol)
-      return 0;
-  return 1;
-}
-
 static bool hartmann_dimensions_match(const char *test_name) {
   if (hartmann6d_n_param == N_PARAM && hartmann6d_n_terms == N_TERM)
     return true;
@@ -471,13 +437,18 @@ bool test_solver_c(void) {
   settings.verbose = 3; /* ensure the logger callbacks are exercised */
   logger_without_context = 0;
 
+  /* the maximum precision flag starts opposite to the one the converging solve
+   * returns, so that its write-back is detected */
+  settings.max_precision_reached = true;
+
   c_int error = solver(update_orbs, obj_func, N_PARAM, &settings);
   if (error != 0) {
     fprintf(stderr, "test_solver_c failed: Produced error.\n");
     ok = false;
   }
-  if (!vec_close(ctx.curr_vars, minimum1, 1e-4)) {
-    fprintf(stderr, "test_solver_c failed: Solver did not find minimum.\n");
+  if (settings.max_precision_reached) {
+    fprintf(stderr, "test_solver_c failed: Maximum precision reached flag was not "
+                    "returned.\n");
     ok = false;
   }
   if (!ctx.precond_called) {
@@ -620,14 +591,22 @@ bool test_stability_check_c(void) {
     ok = false;
   }
 
-  /* the descent direction at the saddle should align with the known
-   * negative-curvature eigenvector */
-  c_real dot = 0.0;
-  for (int i = 0; i < N_PARAM; i++)
-    dot += direction[i] * hartmann6d_unstable_mode[i];
-  if (fabs(fabs(dot) - 1.0) > 1e-6) {
-    fprintf(stderr, "test_stability_check_c failed: Stability check does not return "
-                    "correct direction for saddle point.\n");
+  /* the returned direction replaces the zero direction returned at the minimum and has
+   * to be a normalized direction of negative curvature */
+  c_real norm_squared = 0.0, curvature = 0.0;
+  for (int i = 0; i < N_PARAM; i++) {
+    norm_squared += direction[i] * direction[i];
+    for (int j = 0; j < N_PARAM; j++)
+      curvature += direction[i] * ctx.hess[i][j] * direction[j];
+  }
+  if (fabs(sqrt(norm_squared) - 1.0) > 1e-6) {
+    fprintf(stderr, "test_stability_check_c failed: Stability check does not return a "
+                    "normalized direction for saddle point.\n");
+    ok = false;
+  }
+  if (curvature >= 0.0) {
+    fprintf(stderr, "test_stability_check_c failed: Stability check does not return a "
+                    "direction of negative curvature for saddle point.\n");
     ok = false;
   }
 

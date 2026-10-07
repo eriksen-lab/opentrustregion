@@ -51,7 +51,7 @@ module opentrustregion
             [character(len=15) :: "davidson", "jacobi-davidson", "tcg"], &
         diag_solver_options(2) = [character(len=15) :: "davidson", "jacobi-davidson"]
 
-    ! define warning messages, which the tests compare against
+    ! define warning messages
     character(len=*), parameter :: &
         settings_uninitialized_warning_msg = &
             "Settings were not initialized. All settings are set to default values", &
@@ -269,7 +269,7 @@ contains
         ! initialize macroiteration convergence
         macro_converged = .false.
 
-        ! initialize stabilty boolean
+        ! initialize stability boolean
         stable = .true.
 
         ! initialize random number generator
@@ -528,7 +528,7 @@ contains
             if (error /= 0) return
         end do
 
-        ! construct augmented Hessian in reduced space
+        ! construct Hessian in reduced space
         allocate(red_space_hess(n_trial, n_trial))
         call dgemm("T", "N", n_trial, n_trial, n_param, 1.0_rp, red_space_basis, &
                    n_param, h_basis, n_param, 0.0_rp, red_space_hess, n_trial)
@@ -1211,7 +1211,7 @@ contains
     subroutine symm_mat_min_eig(symm_matrix, lowest_eigval, lowest_eigvec, settings, &
                                 error)
         !
-        ! this function returns the lowest eigenvalue and corresponding eigenvector of
+        ! this subroutine returns the lowest eigenvalue and corresponding eigenvector of
         ! a symmetric matrix
         !
         real(rp), intent(in) :: symm_matrix(:, :)
@@ -1341,10 +1341,9 @@ contains
             end if
             ! if the negative curvature direction is linearly dependent on the gradient
             ! direction it cannot usefully be added as a separate trial vector, so fall
-            ! back to using only the gradient direction without logging an error
-            call gram_schmidt(neg_curv_vec, &
-                              reshape(grad / grad_norm, [size(grad), 1]), settings, &
-                              error, silent_on_error=.true.)
+            ! back to using only the gradient direction
+            call gram_schmidt(neg_curv_vec, reshape(grad / grad_norm, &
+                                                    [size(grad), 1]), settings, error)
             if (error == error_gram_schmidt_lin_dep) then
                 error = 0
             else if (error /= 0) then
@@ -1413,7 +1412,7 @@ contains
                     if (error /= 0) return
                 end if
                 call gram_schmidt(red_space_basis(:, i), red_space_basis(:, :i - 1), &
-                                  settings, error, silent_on_error=.true.)
+                                  settings, error)
             end do
             if (error /= 0) return
         end do
@@ -1421,10 +1420,10 @@ contains
     end subroutine generate_random_trial_vectors
 
     subroutine gram_schmidt(vector, space, settings, error, lin_trans_vector, &
-                            lin_trans_space, silent_on_error)
+                            lin_trans_space)
         !
-        ! this function orthonormalizes a vector with respect to a vector space
-        ! this function can additionally also return a linear transformation of the
+        ! this subroutine orthonormalizes a vector with respect to a vector space
+        ! this subroutine can additionally also return a linear transformation of the
         ! orthogonalized vector if the linear transformations of the vector and the
         ! vector space are provided
         !
@@ -1434,12 +1433,10 @@ contains
         integer(ip), intent(out) :: error
         real(rp), intent(inout), optional :: lin_trans_vector(:)
         real(rp), intent(in), optional :: lin_trans_space(:, :)
-        logical, intent(in), optional :: silent_on_error
 
         real(rp), allocatable :: orth(:)
         real(rp) :: norm
         integer(ip) :: n_param, n_vectors, iter, i
-        logical :: log_error
         real(rp), parameter :: zero_thres = 1e-16_rp, orth_thres = 1e-14_rp
         real(rp), external :: ddot, dnrm2
         external :: dgemv
@@ -1480,13 +1477,9 @@ contains
                 vector = orthogonal_projection(vector, space(:, i))
             end do
             norm = dnrm2(n_param, vector, 1_ip)
+            ! a linearly dependent vector is in all cases handled as a regular outcome
             if (norm < numerical_zero) then
                 error = error_gram_schmidt_lin_dep
-                log_error = .true.
-                if (present(silent_on_error)) log_error = .not. silent_on_error
-                if (log_error) call settings%log( &
-                    "Vector passed to Gram-Schmidt procedure is linearly dependent "// &
-                    "on previously orthonormalized vectors.", verbosity_error, .true.)
                 return
             end if
             vector = vector / norm
@@ -1563,7 +1556,7 @@ contains
     subroutine level_shifted_diag_precond(vector, mu, h_diag, precond_vector, &
                                           settings, error)
         !
-        ! this function defines the default level-shifted diagonal preconditioner
+        ! this subroutine defines the default level-shifted diagonal preconditioner
         !
         real(rp), intent(in) :: vector(:), mu, h_diag(:)
         real(rp), intent(out) :: precond_vector(:)
@@ -1598,7 +1591,7 @@ contains
 
     subroutine abs_diag_precond(vector, h_diag, precond_vector, settings, error)
         !
-        ! this function defines the default absolute diagonal preconditioner
+        ! this subroutine defines the default absolute diagonal preconditioner
         !
         real(rp), intent(in) :: vector(:), h_diag(:)
         real(rp), intent(out) :: precond_vector(:)
@@ -1677,7 +1670,7 @@ contains
     subroutine minres(rhs, hess_x_funptr, solution, eigval, r_tol, vec, hvec, &
                       settings, error, guess, max_iter)
         !
-        ! this function uses the minimum residual method to iteratively solve the
+        ! this subroutine uses the minimum residual method to iteratively solve the
         ! linear system for the Jacobi-Davidson correction equation, modified from
         ! SciPy implementation
         !
@@ -1920,9 +1913,8 @@ contains
             if (error /= 0) return
 
             ! orthonormalize to current orbital space to get new basis vector, a
-            ! linearly dependent vector is returned to the caller without logging
-            call gram_schmidt(basis_vec, red_space_basis, settings, error, &
-                              silent_on_error=.true.)
+            ! linearly dependent vector is returned to the caller
+            call gram_schmidt(basis_vec, red_space_basis, settings, error)
             if (error /= 0) return
 
             ! get linear transformation of new basis vector
@@ -1937,10 +1929,9 @@ contains
             if (error /= 0) return
 
             ! orthonormalize to current orbital space to get new basis vector, a
-            ! linearly dependent vector is returned to the caller without logging
+            ! linearly dependent vector is returned to the caller
             call gram_schmidt(basis_vec, red_space_basis, settings, error, &
-                              lin_trans_vector=h_basis_vec, lin_trans_space=h_basis, &
-                              silent_on_error=.true.)
+                              lin_trans_vector=h_basis_vec, lin_trans_space=h_basis)
             if (error /= 0) return
 
             ! check if resulting linear transformation still respects Hessian symmetry
@@ -1967,7 +1958,7 @@ contains
     subroutine print_results(self, iteration, func, grad_rms, level_shift, n_micro, &
                              imicro_jacobi_davidson, trust_radius, kappa_norm)
         !
-        ! this function prints rows of the result table
+        ! this subroutine prints rows of the result table
         !
         class(solver_settings_type), intent(in) :: self
         integer(ip), intent(in) :: iteration
@@ -2023,7 +2014,7 @@ contains
 
     subroutine print_message(self, message, level, error)
         !
-        ! this function performs logging
+        ! this subroutine performs logging
         !
         class(settings_type), intent(in) :: self
         character(len=*), intent(in) :: message
@@ -2059,7 +2050,7 @@ contains
 
     subroutine split_string_by_space(input, max_length, substrings)
         !
-        ! this function splits a string by spaces to produce substrings of a maximum
+        ! this subroutine splits a string by spaces to produce substrings of a maximum
         ! length
         !
         character(len=*), intent(in) :: input
@@ -2286,8 +2277,8 @@ contains
                                       hess_x_funptr, red_space_basis, h_basis, &
                                       settings, error)
                 if (error == error_gram_schmidt_lin_dep) then
-                    ! new vector is linearly dependent, so the reduced space has
-                    ! reached full rank and cannot be expanded further
+                    ! new vector is linearly dependent, so the reduced space cannot
+                    ! be usefully expanded further due to degeneracy
                     micro_converged = .true.
                     exit
                 else if (error /= 0) then
@@ -2745,7 +2736,7 @@ contains
 
     subroutine add_error_origin(error_code, error_origin, settings)
         !
-        ! this function modifies the error code by adding the error's origin if it is
+        ! this subroutine modifies the error code by adding the error's origin if it is
         ! not already added
         !
         class(settings_type), intent(in) :: settings
