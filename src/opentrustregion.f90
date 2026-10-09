@@ -45,19 +45,37 @@ module opentrustregion
                               verbosity_warning = 2, verbosity_info = 3, &
                               verbosity_debug = 4
 
-    ! define log messages
+    ! define the options of the subsystem solver and of the diagonalization solver
     character(len=*), parameter :: &
+        subsystem_solver_options(3) = &
+            [character(len=15) :: "davidson", "jacobi-davidson", "tcg"], &
+        diag_solver_options(2) = [character(len=15) :: "davidson", "jacobi-davidson"]
+
+    ! define warning messages
+    character(len=*), parameter :: &
+        settings_uninitialized_warning_msg = &
+            "Settings were not initialized. All settings are set to default values", &
+        stability_settings_uninitialized_warning_msg = &
+            "Stability check settings were not initialized. All stability check "// &
+            "settings are set to default values", &
+        started_at_saddle_point_warning_msg = &
+            "Started at saddle point. The algorithm will continue by moving along "// &
+            "eigenvector direction corresponding to negative eigenvalue.", &
+        reached_saddle_point_warning_msg = &
+            "Reached saddle point. This is likely due to symmetry and can be "// &
+            "avoided by increasing the number of random trial vectors. The "// &
+            "algorithm will continue by moving along eigenvector direction "// &
+            "corresponding to negative eigenvalue.", &
+        unstable_warning_msg = "Solution not stable. Lowest eigenvalue: ", &
+        function_unchanged_warning_msg = &
+            "Function value barely changed. Convergence criterion is not fulfilled "// &
+            "but calculation should be converged up to floating point precision.", &
+        trust_radius_too_small_warning_msg = &
+            "Trust radius too small. Convergence criterion is not fulfilled but "// &
+            "calculation should be converged up to floating point precision.", &
         random_trial_vector_warning_msg = "Number of random trial vectors should "// &
                                           "be smaller than half the number of "// &
                                           "parameters.", &
-        gram_schmidt_zero_vector_error_msg = &
-            "Vector passed to Gram-Schmidt procedure is numerically zero.", &
-        gram_schmidt_too_many_vectors_error_msg = "Number of vectors in "// &
-                                                  "Gram-Schmidt procedure larger "// &
-                                                  "than dimension of vector space.", &
-        gram_schmidt_lin_dep_error_msg = "Vector passed to Gram-Schmidt procedure "// &
-                                         "is linearly dependent on previously "// &
-                                         "orthonormalized vectors.", &
         project_warning_msg = &
             "Custom projection is provided. To optimize performance, OTR assumes "// &
             "that all other provided routines (update_orbs, hess_x, precond) are "// &
@@ -210,15 +228,13 @@ contains
         integer(ip), intent(out) :: error
         type(solver_settings_type), intent(inout) :: settings
 
-        real(rp) :: trust_radius, func, grad_norm, grad_rms, mu, new_func, n_kappa, &
-                    kappa_norm
+        real(rp) :: trust_radius, func, grad_norm, grad_rms, mu, n_kappa, kappa_norm
         real(rp), allocatable :: kappa(:), grad(:), h_diag(:), solution(:), &
                                  precond_kappa(:)
         logical :: max_precision_reached, macro_converged, stable, &
-                   jacobi_davidson_started, conv_check_passed, lend_context
-        integer(ip) :: imacro, imicro, imicro_jacobi_davidson, i
+                   jacobi_davidson_started, conv_check_passed
+        integer(ip) :: imacro, imicro, imicro_jacobi_davidson
         character(len=300) :: msg
-        integer(ip), parameter :: stability_n_points = 21
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp), external :: dnrm2, ddot
 
@@ -232,21 +248,31 @@ contains
         settings%n_hess_x = 0
         settings%stability_settings%n_hess_x = 0
 
-        ! initialize settings
+        ! initialize settings, settings that were not initialized are replaced by the
+        ! default settings, which would silence the warning, so it is printed
+        ! beforehand through the caller's logging function or on stderr regardless of
+        ! the verbosity
         if (.not. settings%initialized) then
+            if (associated(settings%logger)) then
+                call settings%logger(" "//settings_uninitialized_warning_msg, &
+                                     settings%context)
+            else
+                write(stderr, '(A)') " "//settings_uninitialized_warning_msg
+            end if
             call settings%init(error)
             call add_error_origin(error, error_solver, settings)
             if (error /= 0) return
-            call settings%log("Settings were not initialized. All settings are set "// &
-                              "to default values", verbosity_warning)
         end if
         if (.not. settings%stability_settings%initialized) then
+            if (associated(settings%logger)) then
+                call settings%logger( &
+                    " "//stability_settings_uninitialized_warning_msg, settings%context)
+            else
+                write(stderr, '(A)') " "//stability_settings_uninitialized_warning_msg
+            end if
             call settings%stability_settings%init(error)
             call add_error_origin(error, error_solver, settings)
             if (error /= 0) return
-            call settings%log("Stability check settings were not initialized. All "// &
-                              "stability check settings are set to default values", &
-                              verbosity_warning)
         end if
 
         ! initialize maximum precision convergence
@@ -255,7 +281,7 @@ contains
         ! initialize macroiteration convergence
         macro_converged = .false.
 
-        ! initialize stabilty boolean
+        ! initialize stability boolean
         stable = .true.
 
         ! initialize random number generator
@@ -292,14 +318,17 @@ contains
 
                 ! increment number of orbital updates
                 settings%n_update_orbs = settings%n_update_orbs + 1
-
-                if (error == 0 .and. .not. associated(hess_x_funptr)) then
-                    call settings%log("Orbital update did not provide a Hessian "// &
-                                      "linear transformation.", verbosity_error, .true.)
-                    error = 1
-                end if
                 call add_error_origin(error, error_update_orbs, settings)
                 if (error /= 0) return
+
+                ! an orbital update which succeeds without providing a Hessian linear
+                ! transformation violates the interface, which the solver reports itself
+                if (.not. associated(hess_x_funptr)) then
+                    call settings%log("Orbital update did not provide a Hessian "// &
+                                      "linear transformation.", verbosity_error, .true.)
+                    error = error_solver + 1
+                    return
+                end if
 
                 ! perform sanity check
                 if (imacro == 1) then
@@ -359,81 +388,26 @@ contains
             end if
             if (grad_rms < settings%conv_tol .or. max_precision_reached .or. &
                 conv_check_passed) then
-                ! always perform stability check if starting at stationary point
+                ! always perform stability check if starting at stationary point and
+                ! continue along the unstable mode if the stationary point is unstable
                 if (settings%stability .or. imacro == 1) then
-                    ! inherit preconditioning, projection and logging functions from
-                    ! solver if not provided for stability check
-                    if (.not. associated(settings%stability_settings%precond)) &
-                        settings%stability_settings%precond => settings%precond
-                    if (.not. associated(settings%stability_settings%project)) &
-                        settings%stability_settings%project => settings%project
-                    if (.not. associated(settings%stability_settings%logger)) &
-                        settings%stability_settings%logger => settings%logger
-
-                    ! inherit solver's verbosity setting and context
-                    settings%stability_settings%verbose = &
-                        max(settings%stability_settings%verbose, settings%verbose)
-                    lend_context = .not. associated(settings%stability_settings%context)
-                    if (lend_context) &
-                        settings%stability_settings%context => settings%context
-                    call stability_check(h_diag, hess_x_funptr, stable, error, &
-                                         settings%stability_settings, kappa=kappa)
-                    if (lend_context) settings%stability_settings%context => null()
-                    call add_error_origin(error, error_stability_check, settings)
-                    settings%n_hess_x = settings%n_hess_x + &
-                                        settings%stability_settings%n_hess_x
+                    call check_stationary_point(func, h_diag, hess_x_funptr, obj_func, &
+                                                imacro, settings, stable, kappa, error)
                     if (error /= 0) return
-
                     if (.not. stable) then
-                        ! logarithmic line search
-                        do i = 1, stability_n_points
-                            n_kappa = 10.0_rp**(-(i - 1) / real( &
-                                stability_n_points - 1, kind=rp) * 10.0_rp)
-                            new_func = &
-                                obj_func(n_kappa * kappa, error, settings%context)
-                            call add_error_origin(error, error_obj_func, settings)
-                            if (error /= 0) return
-                            if (new_func < func) then
-                                kappa = n_kappa * kappa
-                                exit
-                            end if
-                        end do
-                        if (new_func >= func) then
-                            call settings%log("Line search was unable to find "// &
-                                              "lower objective function along "// &
-                                              "unstable mode.", verbosity_error, .true.)
-                            error = error_solver + 1
-                            return
-                        else if (imacro == 1) then
-                            call settings%log("Started at saddle point. The "// &
-                                              "algorithm will continue by moving "// &
-                                              "along eigenvector direction "// &
-                                              "corresponding to negative eigenvalue.", &
-                                              verbosity_error, .true.)
-                        else
-                            call settings%log( &
-                                "Reached saddle point. This is likely due to "// &
-                                "symmetry and can be avoided by increasing the "// &
-                                "number of random trial vectors. The algorithm "// &
-                                "will continue by moving along eigenvector "// &
-                                "direction corresponding to negative eigenvalue.", &
-                                verbosity_error, .true.)
-                        end if
                         max_precision_reached = .false.
                         cycle
-                    else
-                        settings%max_precision_reached = max_precision_reached .and. &
-                                                         .not. conv_check_passed
-                        macro_converged = .true.
-                        exit
                     end if
-                else
-                    settings%max_precision_reached = max_precision_reached .and. &
-                                                     .not. conv_check_passed
-                    macro_converged = .true.
-                    exit
                 end if
+                settings%max_precision_reached = max_precision_reached .and. &
+                                                 .not. conv_check_passed
+                macro_converged = .true.
+                exit
             end if
+
+            ! stop before solving the trust region subproblem in the last macro
+            ! iteration since its step would never be evaluated
+            if (imacro == settings%n_macro) exit
 
             if (settings%subsystem_solver == "davidson" .or. &
                 settings%subsystem_solver == "jacobi-davidson") then
@@ -511,15 +485,15 @@ contains
         type(stability_settings_type), intent(inout) :: settings
         real(rp), intent(out), optional :: kappa(:)
 
-        integer(ip) :: n_param, n_trial, i, iter
+        integer(ip) :: n_param, n_trial, i, iter, jacobi_davidson_iter
         real(rp), allocatable :: solution(:), h_solution(:), residual(:), &
-                                 basis_vec(:), h_basis_vec(:), red_space_basis(:, :), &
-                                 h_basis(:, :), red_space_hess(:, :), &
-                                 red_space_solution(:), red_space_hess_vec(:)
-        real(rp) :: eigval, minres_tol, stability_rms
+                                 red_space_basis(:, :), h_basis(:, :), &
+                                 red_space_hess(:, :), red_space_solution(:), &
+                                 red_space_hess_vec(:)
+        real(rp) :: eigval, stability_rms
         character(len=300) :: msg
         real(rp), parameter :: stability_thresh = -1e-2_rp
-        real(rp), external :: dnrm2, ddot
+        real(rp), external :: dnrm2
         external :: dgemm, dgemv
         logical :: stability_converged
 
@@ -533,13 +507,20 @@ contains
         ! call returned early on error or non-convergence
         settings%n_hess_x = 0
 
-        ! initialize settings
+        ! initialize settings, settings that were not initialized are replaced by the
+        ! default settings, which would silence the warning, so it is printed
+        ! beforehand through the caller's logging function or on stderr regardless of
+        ! the verbosity
         if (.not. settings%initialized) then
+            if (associated(settings%logger)) then
+                call settings%logger(" "//settings_uninitialized_warning_msg, &
+                                     settings%context)
+            else
+                write(stderr, '(A)') " "//settings_uninitialized_warning_msg
+            end if
             call settings%init(error)
             call add_error_origin(error, error_stability_check, settings)
             if (error /= 0) return
-            call settings%log("Settings were not initialized. All settings are set "// &
-                              "to default values", verbosity_warning)
         end if
 
         ! initialize random number generator
@@ -574,14 +555,14 @@ contains
             if (error /= 0) return
         end do
 
-        ! construct augmented Hessian in reduced space
+        ! construct Hessian in reduced space
         allocate(red_space_hess(n_trial, n_trial))
         call dgemm("T", "N", n_trial, n_trial, n_param, 1.0_rp, red_space_basis, &
                    n_param, h_basis, n_param, 0.0_rp, red_space_hess, n_trial)
 
         ! allocate arrays used throughout Davidson procedure
         allocate(red_space_solution(n_trial), solution(n_param), h_solution(n_param), &
-                 residual(n_param), basis_vec(n_param), h_basis_vec(n_param))
+                 residual(n_param))
 
         ! assume not converged
         stability_converged = .false.
@@ -619,74 +600,29 @@ contains
                 exit
             end if
 
-            if (settings%diag_solver == "davidson" .or. &
-                iter <= settings%jacobi_davidson_start) then
-                ! precondition residual
-                call level_shifted_diag_precond(residual, 0.0_rp, h_diag, basis_vec, &
-                                                settings, error)
-                if (error /= 0) return
-
-                ! orthonormalize to current orbital space to get new basis vector
-                call gram_schmidt(basis_vec, red_space_basis, settings, error)
-                ! check if new vector is linearly dependent and the reduced space
-                ! cannot be usefully expanded further due to degeneracy and stop here
-                if (error == error_gram_schmidt_lin_dep) then
-                    error = 0
-                    stability_converged = .true.
-                    exit
-                end if
-                call add_error_origin(error, error_stability_check, settings)
-                if (error /= 0) return
-
-                ! add linear transformation of new basis vector
-                call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
-                settings%n_hess_x = settings%n_hess_x + 1
-                call add_error_origin(error, error_hess_x, settings)
-                if (error /= 0) return
-
+            ! add new trial vector from preconditioned residual (Davidson) or from
+            ! Jacobi-Davidson correction equations
+            if (settings%diag_solver /= "davidson" .and. &
+                iter > settings%jacobi_davidson_start) then
+                jacobi_davidson_iter = iter - settings%jacobi_davidson_start
             else
-                ! solve Jacobi-Davidson correction equations
-                minres_tol = 3.0_rp**(-(iter - settings%jacobi_davidson_start - 1))
-                call minres(-residual, hess_x_funptr, solution, eigval, minres_tol, &
-                            basis_vec, h_basis_vec, settings, error)
-                call add_error_origin(error, error_stability_check, settings)
-                if (error /= 0) return
-
-                ! orthonormalize to current orbital space to get new basis vector
-                call gram_schmidt(basis_vec, red_space_basis, settings, error, &
-                                  lin_trans_vector=h_basis_vec, lin_trans_space=h_basis)
-                ! check if new vector is linearly dependent and the reduced space
-                ! cannot be usefully expanded further due to degeneracy and stop here
-                if (error == error_gram_schmidt_lin_dep) then
-                    error = 0
-                    stability_converged = .true.
-                    exit
-                end if
-                call add_error_origin(error, error_stability_check, settings)
-                if (error /= 0) return
-
-                ! check if resulting linear transformation still respects Hessian
-                ! symmetry which can happen due to numerical noise accumulation
-                if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, h_basis_vec, &
-                             1_ip) - &
-                        ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), 1_ip)) > &
-                    hess_symm_thres) then
-                    call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
-                    settings%n_hess_x = settings%n_hess_x + 1
-                    call add_error_origin(error, error_hess_x, settings)
-                    if (error /= 0) return
-                end if
-
+                jacobi_davidson_iter = 0
             end if
+            call add_trial_vector(residual, 0.0_rp, h_diag, jacobi_davidson_iter, &
+                                  solution, eigval, hess_x_funptr, red_space_basis, &
+                                  h_basis, settings, error)
+            ! check if new vector is linearly dependent and the reduced space cannot be
+            ! usefully expanded further due to degeneracy and stop here
+            if (error == error_gram_schmidt_lin_dep) then
+                error = 0
+                stability_converged = .true.
+                exit
+            end if
+            call add_error_origin(error, error_stability_check, settings)
+            if (error /= 0) return
 
             ! increment trial vector count
             n_trial = n_trial + 1
-
-            ! add new trial vector to orbital space
-            call add_column(red_space_basis, basis_vec)
-
-            ! add linear transformation of new basis vector
-            call add_column(h_basis, h_basis_vec)
 
             ! construct new reduced space Hessian
             allocate(red_space_hess_vec(n_trial))
@@ -716,19 +652,95 @@ contains
             if (present(kappa)) kappa = 0.0_rp
         else
             if (present(kappa)) kappa = solution
-            write(msg, '(A, F0.4)') "Solution not stable. Lowest eigenvalue: ", eigval
-            call settings%log(msg, verbosity_error, .true.)
+            write(msg, '(A, F0.4)') unstable_warning_msg, eigval
+            call settings%log(msg, verbosity_warning)
         end if
 
         ! deallocate quantities from Davidson iterations
-        deallocate(solution, h_solution, residual, basis_vec, h_basis_vec, &
-                   red_space_solution, red_space_hess, h_basis, red_space_basis)
+        deallocate(solution, h_solution, residual, red_space_solution, red_space_hess, &
+                   h_basis, red_space_basis)
 
         ! flush output
         flush(stdout)
         flush(stderr)
 
     end subroutine stability_check
+
+    subroutine check_stationary_point(func, h_diag, hess_x_funptr, obj_func, imacro, &
+                                      settings, stable, kappa, error)
+        !
+        ! this subroutine performs the stability check at a stationary point with the
+        ! nested stability check settings, which inherit the solver's preconditioning,
+        ! projection and logging functions, its verbosity if higher and, for the
+        ! duration of the check, its host context unless they provide their own, and,
+        ! if the stationary point is unstable, performs a logarithmic line search along
+        ! the unstable mode and returns the step along it
+        !
+        real(rp), intent(in) :: func, h_diag(:)
+        procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
+        procedure(obj_func_type), intent(in), pointer :: obj_func
+        integer(ip), intent(in) :: imacro
+        type(solver_settings_type), intent(inout) :: settings
+        logical, intent(out) :: stable
+        real(rp), intent(out) :: kappa(:)
+        integer(ip), intent(out) :: error
+
+        real(rp) :: n_kappa, new_func
+        logical :: lend_context
+        integer(ip) :: i
+        integer(ip), parameter :: stability_n_points = 21
+
+        ! initialize error flag
+        error = 0
+
+        ! inherit preconditioning, projection and logging functions from solver if not
+        ! provided for stability check
+        if (.not. associated(settings%stability_settings%precond)) &
+            settings%stability_settings%precond => settings%precond
+        if (.not. associated(settings%stability_settings%project)) &
+            settings%stability_settings%project => settings%project
+        if (.not. associated(settings%stability_settings%logger)) &
+            settings%stability_settings%logger => settings%logger
+
+        ! inherit solver's verbosity setting and context
+        settings%stability_settings%verbose = &
+            max(settings%stability_settings%verbose, settings%verbose)
+        lend_context = .not. associated(settings%stability_settings%context)
+        if (lend_context) settings%stability_settings%context => settings%context
+
+        ! perform stability check and add its Hessian linear transformations to the
+        ! solver's
+        call stability_check(h_diag, hess_x_funptr, stable, error, &
+                             settings%stability_settings, kappa=kappa)
+        if (lend_context) settings%stability_settings%context => null()
+        call add_error_origin(error, error_stability_check, settings)
+        settings%n_hess_x = settings%n_hess_x + settings%stability_settings%n_hess_x
+        if (error /= 0) return
+        if (stable) return
+
+        ! logarithmic line search along unstable mode
+        do i = 1, stability_n_points
+            n_kappa = 10.0_rp** &
+                      (-(i - 1) / real(stability_n_points - 1, kind=rp) * 10.0_rp)
+            new_func = obj_func(n_kappa * kappa, error, settings%context)
+            call add_error_origin(error, error_obj_func, settings)
+            if (error /= 0) return
+            if (new_func < func) then
+                kappa = n_kappa * kappa
+                exit
+            end if
+        end do
+        if (new_func >= func) then
+            call settings%log("Line search was unable to find lower objective "// &
+                              "function along unstable mode.", verbosity_error, .true.)
+            error = error_solver + 1
+        else if (imacro == 1) then
+            call settings%log(started_at_saddle_point_warning_msg, verbosity_warning)
+        else
+            call settings%log(reached_saddle_point_warning_msg, verbosity_warning)
+        end if
+
+    end subroutine check_stationary_point
 
     subroutine newton_step(aug_hess, grad_norm, red_space_basis, solution, &
                            red_space_solution, settings, error)
@@ -1225,7 +1237,7 @@ contains
     subroutine symm_mat_min_eig(symm_matrix, lowest_eigval, lowest_eigvec, settings, &
                                 error)
         !
-        ! this function returns the lowest eigenvalue and corresponding eigenvector of
+        ! this subroutine returns the lowest eigenvalue and corresponding eigenvector of
         ! a symmetric matrix
         !
         real(rp), intent(in) :: symm_matrix(:, :)
@@ -1353,11 +1365,11 @@ contains
                 call add_error_origin(error, error_project, settings)
                 if (error /= 0) return
             end if
-            call gram_schmidt(neg_curv_vec, reshape(grad / grad_norm, &
-                                                    [size(grad), 1]), settings, error)
             ! if the negative curvature direction is linearly dependent on the gradient
             ! direction it cannot usefully be added as a separate trial vector, so fall
             ! back to using only the gradient direction
+            call gram_schmidt(neg_curv_vec, reshape(grad / grad_norm, &
+                                                    [size(grad), 1]), settings, error)
             if (error == error_gram_schmidt_lin_dep) then
                 error = 0
             else if (error /= 0) then
@@ -1426,7 +1438,7 @@ contains
                     if (error /= 0) return
                 end if
                 call gram_schmidt(red_space_basis(:, i), red_space_basis(:, :i - 1), &
-                                  settings, error, silent_on_error=.true.)
+                                  settings, error)
             end do
             if (error /= 0) return
         end do
@@ -1434,10 +1446,10 @@ contains
     end subroutine generate_random_trial_vectors
 
     subroutine gram_schmidt(vector, space, settings, error, lin_trans_vector, &
-                            lin_trans_space, silent_on_error)
+                            lin_trans_space)
         !
-        ! this function orthonormalizes a vector with respect to a vector space
-        ! this function can additionally also return a linear transformation of the
+        ! this subroutine orthonormalizes a vector with respect to a vector space
+        ! this subroutine can additionally also return a linear transformation of the
         ! orthogonalized vector if the linear transformations of the vector and the
         ! vector space are provided
         !
@@ -1447,7 +1459,6 @@ contains
         integer(ip), intent(out) :: error
         real(rp), intent(inout), optional :: lin_trans_vector(:)
         real(rp), intent(in), optional :: lin_trans_space(:, :)
-        logical, intent(in), optional :: silent_on_error
 
         real(rp), allocatable :: orth(:)
         real(rp) :: norm
@@ -1466,13 +1477,14 @@ contains
         n_vectors = size(space, 2)
 
         if (dnrm2(n_param, vector, 1_ip) < zero_thres) then
-            call settings%log(gram_schmidt_zero_vector_error_msg, verbosity_error, &
-                              .true.)
+            call settings%log("Vector passed to Gram-Schmidt procedure is "// &
+                              "numerically zero.", verbosity_error, .true.)
             error = 1
             return
         else if (n_vectors > n_param - 1) then
-            call settings%log(gram_schmidt_too_many_vectors_error_msg, &
-                              verbosity_error, .true.)
+            call settings%log("Number of vectors in Gram-Schmidt procedure larger "// &
+                              "than dimension of vector space.", verbosity_error, &
+                              .true.)
             error = 1
             return
         end if
@@ -1491,15 +1503,9 @@ contains
                 vector = orthogonal_projection(vector, space(:, i))
             end do
             norm = dnrm2(n_param, vector, 1_ip)
+            ! a linearly dependent vector is in all cases handled as a regular outcome
             if (norm < numerical_zero) then
                 error = error_gram_schmidt_lin_dep
-                if (present(silent_on_error)) then
-                    if (.not. silent_on_error) call settings%log( &
-                        gram_schmidt_lin_dep_error_msg, verbosity_error, .true.)
-                else
-                    call settings%log(gram_schmidt_lin_dep_error_msg, verbosity_error, &
-                                      .true.)
-                end if
                 return
             end if
             vector = vector / norm
@@ -1576,7 +1582,7 @@ contains
     subroutine level_shifted_diag_precond(vector, mu, h_diag, precond_vector, &
                                           settings, error)
         !
-        ! this function defines the default level-shifted diagonal preconditioner
+        ! this subroutine defines the default level-shifted diagonal preconditioner
         !
         real(rp), intent(in) :: vector(:), mu, h_diag(:)
         real(rp), intent(out) :: precond_vector(:)
@@ -1611,7 +1617,7 @@ contains
 
     subroutine abs_diag_precond(vector, h_diag, precond_vector, settings, error)
         !
-        ! this function defines the default absolute diagonal preconditioner
+        ! this subroutine defines the default absolute diagonal preconditioner
         !
         real(rp), intent(in) :: vector(:), h_diag(:)
         real(rp), intent(out) :: precond_vector(:)
@@ -1690,7 +1696,7 @@ contains
     subroutine minres(rhs, hess_x_funptr, solution, eigval, r_tol, vec, hvec, &
                       settings, error, guess, max_iter)
         !
-        ! this function uses the minimum residual method to iteratively solve the
+        ! this subroutine uses the minimum residual method to iteratively solve the
         ! linear system for the Jacobi-Davidson correction equation, modified from
         ! SciPy implementation
         !
@@ -1706,7 +1712,8 @@ contains
         real(rp), parameter :: eps = epsilon(1.0_rp)
         real(rp) :: beta_start, beta, phi_bar, rhs1, old_beta, alfa, t_norm2, eps_ln, &
                     old_eps, cs, d_bar, sn, delta, g_bar, root, gamma, phi, g_max, &
-                    g_min, tmp, rhs2, a_norm, vec_norm, qr_norm
+                    g_min, tmp, rhs2, a_norm, vec_norm, qr_norm, rel_residual, &
+                    rel_ls_residual
         real(rp), allocatable :: matvec(:), r1(:), r2(:), y(:), w(:), hw(:), w1(:), &
                                  hw1(:), w2(:), hw2(:), v(:), hv(:)
         logical :: stop_iteration
@@ -1839,19 +1846,32 @@ contains
             vec_norm = dnrm2(n, vec, 1_ip)
             qr_norm = phi_bar
 
+            ! relative residuals of the linear system and of the least-squares problem,
+            ! which are computed separately since Fortran does not guarantee that a
+            ! condition guarding a division by a vanishing norm is evaluated first
+            if (vec_norm > 0.0_rp .and. a_norm > 0.0_rp) then
+                rel_residual = qr_norm / (a_norm * vec_norm)
+            else
+                rel_residual = huge(1.0_rp)
+            end if
+            if (a_norm > numerical_zero) then
+                rel_ls_residual = root / a_norm
+            else
+                rel_ls_residual = huge(1.0_rp)
+            end if
+
             ! check if rhs and initial vector are eigenvectors
             if (stop_iteration) then
                 call settings%log("MINRES: beta2 = 0. If M = I, b and x are "// &
                                   "eigenvectors.", verbosity_debug)
                 exit
             ! ||r||  / (||A|| ||x||)
-            else if (vec_norm > 0.0_rp .and. a_norm > 0.0_rp .and. &
-                     qr_norm / (a_norm * vec_norm) <= r_tol) then
+            else if (rel_residual <= r_tol) then
                 call settings%log("MINRES: A solution to Ax = b was found, given "// &
                                   "provided tolerance.", verbosity_debug)
                 exit
             ! ||Ar|| / (||A|| ||r||)
-            else if (a_norm < numerical_zero .and. root / a_norm <= r_tol) then
+            else if (rel_ls_residual <= r_tol) then
                 call settings%log("MINRES: A least-squares solution was found, "// &
                                   "given provided tolerance.", verbosity_debug)
                 exit
@@ -1873,13 +1893,11 @@ contains
                 return
             ! these tests ensure convergence is still achieved when r_tol approaches
             ! machine precision
-            else if (vec_norm > 0.0_rp .and. a_norm > 0.0_rp .and. &
-                     1.0_rp + qr_norm / (a_norm * vec_norm) <= 1.0_rp) then
+            else if (1.0_rp + rel_residual <= 1.0_rp) then
                 call settings%log("MINRES: A solution to Ax = b was found, given "// &
                                   "provided tolerance.", verbosity_debug)
                 exit
-            else if (a_norm < numerical_zero .and. 1.0_rp + root / a_norm <= 1.0_rp) &
-                then
+            else if (1.0_rp + rel_ls_residual <= 1.0_rp) then
                 call settings%log("MINRES: A least-squares solution was found, "// &
                                   "given provided tolerance.", verbosity_debug)
                 exit
@@ -1894,10 +1912,94 @@ contains
 
     end subroutine minres
 
+    subroutine add_trial_vector(residual, level_shift, h_diag, jacobi_davidson_iter, &
+                                solution, eigval, hess_x_funptr, red_space_basis, &
+                                h_basis, settings, error)
+        !
+        ! this subroutine generates a new trial vector from a residual and adds it and
+        ! its Hessian linear transformation to the reduced space basis, either by
+        ! preconditioning the residual with the level-shifted Hessian diagonal
+        ! (Davidson, jacobi_davidson_iter = 0) or by solving the Jacobi-Davidson
+        ! correction equations for the solution and its eigenvalue in Jacobi-Davidson
+        ! iteration jacobi_davidson_iter, starting from 1, to a tolerance that is
+        ! tightened with every iteration, it returns an error without changing the
+        ! reduced space basis if the new vector is linearly dependent on it
+        !
+        real(rp), intent(in) :: residual(:), level_shift, h_diag(:), solution(:), eigval
+        integer(ip), intent(in) :: jacobi_davidson_iter
+        procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
+        real(rp), allocatable, intent(inout) :: red_space_basis(:, :), h_basis(:, :)
+        class(settings_type), intent(inout) :: settings
+        integer(ip), intent(out) :: error
+
+        real(rp), allocatable :: basis_vec(:), h_basis_vec(:)
+        integer(ip) :: n_param, n_trial
+        real(rp), external :: ddot
+
+        ! initialize error flag
+        error = 0
+
+        ! number of parameters and trial vectors
+        n_param = size(red_space_basis, 1)
+        n_trial = size(red_space_basis, 2)
+
+        ! allocate new basis vector and its Hessian linear transformation
+        allocate(basis_vec(n_param), h_basis_vec(n_param))
+
+        if (jacobi_davidson_iter == 0) then
+            ! precondition residual
+            call level_shifted_diag_precond(residual, level_shift, h_diag, basis_vec, &
+                                            settings, error)
+            if (error /= 0) return
+
+            ! orthonormalize to current orbital space to get new basis vector, a
+            ! linearly dependent vector is returned to the caller
+            call gram_schmidt(basis_vec, red_space_basis, settings, error)
+            if (error /= 0) return
+
+            ! get linear transformation of new basis vector
+            call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
+            settings%n_hess_x = settings%n_hess_x + 1
+            call add_error_origin(error, error_hess_x, settings)
+            if (error /= 0) return
+        else
+            ! solve Jacobi-Davidson correction equations
+            call minres(-residual, hess_x_funptr, solution, eigval, &
+                        3.0_rp**(-(jacobi_davidson_iter - 1)), basis_vec, h_basis_vec, &
+                        settings, error)
+            if (error /= 0) return
+
+            ! orthonormalize to current orbital space to get new basis vector, a
+            ! linearly dependent vector is returned to the caller
+            call gram_schmidt(basis_vec, red_space_basis, settings, error, &
+                              lin_trans_vector=h_basis_vec, lin_trans_space=h_basis)
+            if (error /= 0) return
+
+            ! check if resulting linear transformation still respects Hessian symmetry
+            ! which can happen due to numerical noise accumulation
+            if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, h_basis_vec, &
+                         1_ip) - ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), &
+                                      1_ip)) > hess_symm_thres) then
+                call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
+                settings%n_hess_x = settings%n_hess_x + 1
+                call add_error_origin(error, error_hess_x, settings)
+                if (error /= 0) return
+            end if
+        end if
+
+        ! add new trial vector and its linear transformation to reduced space basis
+        call add_column(red_space_basis, basis_vec)
+        call add_column(h_basis, h_basis_vec)
+
+        ! deallocate new basis vector and its Hessian linear transformation
+        deallocate(basis_vec, h_basis_vec)
+
+    end subroutine add_trial_vector
+
     subroutine print_results(self, iteration, func, grad_rms, level_shift, n_micro, &
                              imicro_jacobi_davidson, trust_radius, kappa_norm)
         !
-        ! this function prints rows of the result table
+        ! this subroutine prints rows of the result table
         !
         class(solver_settings_type), intent(in) :: self
         integer(ip), intent(in) :: iteration
@@ -1953,7 +2055,7 @@ contains
 
     subroutine print_message(self, message, level, error)
         !
-        ! this function performs logging
+        ! this subroutine performs logging
         !
         class(settings_type), intent(in) :: self
         character(len=*), intent(in) :: message
@@ -1989,7 +2091,7 @@ contains
 
     subroutine split_string_by_space(input, max_length, substrings)
         !
-        ! this function splits a string by spaces to produce substrings of a maximum
+        ! this subroutine splits a string by spaces to produce substrings of a maximum
         ! length
         !
         character(len=*), intent(in) :: input
@@ -2058,14 +2160,13 @@ contains
         logical, intent(out) :: jacobi_davidson_started, max_precision_reached
 
         real(rp), allocatable :: red_space_basis(:, :), h_basis(:, :), aug_hess(:, :), &
-                                 red_space_solution(:), red_hess_vec(:), basis_vec(:), &
-                                 h_basis_vec(:), h_solution(:), residual(:), &
-                                 solution_normalized(:), last_solution_normalized(:), &
+                                 red_space_solution(:), red_hess_vec(:), &
+                                 h_solution(:), residual(:), solution_normalized(:), &
+                                 last_solution_normalized(:), &
                                  red_space_hess_eigvals(:), red_space_hess_eigvecs(:, :)
-        integer(ip) :: n_trial, i, initial_imicro, min_idx
+        integer(ip) :: n_trial, i, initial_imicro, min_idx, jacobi_davidson_iter
         logical :: accept_step, micro_converged, newton
-        real(rp) :: residual_norm, red_factor, initial_residual_norm, new_func, ratio, &
-                    minres_tol
+        real(rp) :: residual_norm, red_factor, initial_residual_norm, new_func, ratio
         real(rp), parameter :: &
             newton_eigval_thresh = -1e-5_rp, level_shift_local_thres = 1e-12_rp, &
             solution_overlap_thresh = 0.5_rp, residual_norm_floor = 1e-12_rp, &
@@ -2100,11 +2201,9 @@ contains
         call dgemm("T", "N", n_trial, n_trial, n_param, 1.0_rp, red_space_basis, &
                    n_param, h_basis, n_param, 0.0_rp, aug_hess(2, 2), n_trial + 1)
 
-        ! allocate space for reduced space solution and basis vector, Hessian linear
-        ! transformation of solution and basis vector, residual and the (last)
-        ! normalized solution
-        allocate(red_space_solution(n_trial), h_solution(n_param), basis_vec(n_param), &
-                 h_basis_vec(n_param), residual(n_param), &
+        ! allocate space for reduced space solution, Hessian linear transformation of
+        ! solution, residual and the (last) normalized solution
+        allocate(red_space_solution(n_trial), h_solution(n_param), residual(n_param), &
                  solution_normalized(n_param), last_solution_normalized(n_param))
 
         ! decrease trust radius until micro iterations converge and step is accepted
@@ -2206,72 +2305,27 @@ contains
                     exit
                 end if
 
-                if (.not. jacobi_davidson_started) then
-                    ! precondition residual
-                    call level_shifted_diag_precond(residual, mu, h_diag, basis_vec, &
-                                                    settings, error)
-                    if (error /= 0) return
-
-                    ! orthonormalize to current orbital space to get new basis vector
-                    call gram_schmidt(basis_vec, red_space_basis, settings, error)
-                    if (error == error_gram_schmidt_lin_dep) then
-                        ! new vector is linearly dependent, so the reduced space has
-                        ! reached full rank and cannot be expanded further
-                        micro_converged = .true.
-                        exit
-                    else if (error /= 0) then
-                        return
-                    end if
-
-                    ! add linear transformation of new basis vector
-                    call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
-                    settings%n_hess_x = settings%n_hess_x + 1
-                    call add_error_origin(error, error_hess_x, settings)
-                    if (error /= 0) return
-
+                ! add new trial vector from preconditioned residual (Davidson) or from
+                ! Jacobi-Davidson correction equations
+                if (jacobi_davidson_started) then
+                    jacobi_davidson_iter = imicro - imicro_jacobi_davidson + 1
                 else
-                    ! solve Jacobi-Davidson correction equations
-                    minres_tol = 3.0_rp**(-(imicro - imicro_jacobi_davidson))
-                    call minres(-residual, hess_x_funptr, solution_normalized, mu, &
-                                minres_tol, basis_vec, h_basis_vec, settings, error)
-                    if (error /= 0) return
-
-                    ! orthonormalize to current orbital space to get new basis vector
-                    call gram_schmidt(basis_vec, red_space_basis, settings, error, &
-                                      lin_trans_vector=h_basis_vec, &
-                                      lin_trans_space=h_basis)
-                    if (error == error_gram_schmidt_lin_dep) then
-                        ! new vector is linearly dependent, so the reduced space has
-                        ! reached full rank and cannot be expanded further
-                        micro_converged = .true.
-                        exit
-                    else if (error /= 0) then
-                        return
-                    end if
-
-                    ! check if resulting linear transformation still respects Hessian
-                    ! symmetry which can happen due to numerical noise accumulation
-                    if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, &
-                                 h_basis_vec, 1_ip) - &
-                            ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), &
-                                 1_ip)) > hess_symm_thres) then
-                        call hess_x_funptr(basis_vec, h_basis_vec, error, &
-                                           settings%context)
-                        settings%n_hess_x = settings%n_hess_x + 1
-                        call add_error_origin(error, error_hess_x, settings)
-                        if (error /= 0) return
-                    end if
-
+                    jacobi_davidson_iter = 0
+                end if
+                call add_trial_vector(residual, mu, h_diag, jacobi_davidson_iter, &
+                                      solution_normalized, mu, hess_x_funptr, &
+                                      red_space_basis, h_basis, settings, error)
+                if (error == error_gram_schmidt_lin_dep) then
+                    ! new vector is linearly dependent, so the reduced space cannot
+                    ! be usefully expanded further due to degeneracy
+                    micro_converged = .true.
+                    exit
+                else if (error /= 0) then
+                    return
                 end if
 
                 ! increment trial vector count
                 n_trial = n_trial + 1
-
-                ! add new trial vector to orbital space
-                call add_column(red_space_basis, basis_vec)
-
-                ! add linear transformation of new basis vector
-                call add_column(h_basis, h_basis_vec)
 
                 ! construct new augmented Hessian
                 allocate(red_hess_vec(n_trial + 1))
@@ -2304,8 +2358,7 @@ contains
 
         ! deallocate quantities from microiterations
         deallocate(red_space_solution, aug_hess, red_space_basis, h_basis, h_solution, &
-                   residual, basis_vec, h_basis_vec, solution_normalized, &
-                   last_solution_normalized)
+                   residual, solution_normalized, last_solution_normalized)
 
     end subroutine level_shifted_davidson
 
@@ -2563,10 +2616,7 @@ contains
                 end if
             end do
         else
-            call settings%log("Function value barely changed. Convergence "// &
-                              "criterion is not fulfilled but calculation should "// &
-                              "be converged up to floating point precision.", &
-                              verbosity_error, .true.)
+            call settings%log(function_unchanged_warning_msg, verbosity_warning)
             max_precision_reached = .true.
         end if
 
@@ -2598,10 +2648,7 @@ contains
             trust_radius = trust_radius_shrink_factor * trust_radius
             accept_trust_region_step = .false.
             if (trust_radius < numerical_zero) then
-                call settings%log("Trust radius too small. Convergence criterion "// &
-                                  "is not fulfilled but calculation should be "// &
-                                  "converged up to floating point precision.", &
-                                  verbosity_error, .true.)
+                call settings%log(trust_radius_too_small_warning_msg, verbosity_warning)
                 max_precision_reached = .true.
                 return
             end if
@@ -2674,12 +2721,10 @@ contains
         end if
 
         ! check for character options
-        if (.not. (settings%subsystem_solver == "davidson" .or. &
-                   settings%subsystem_solver == "jacobi-davidson" .or. &
-                   settings%subsystem_solver == "tcg")) then
-            call settings%log("Subsystem solver option unknown. Possible values "// &
-                              "are ""davidson"", ""jacobi-davidson"", and ""tcg"" "// &
-                              "(truncated conjugate gradient)", verbosity_error, .true.)
+        if (.not. any(settings%subsystem_solver == subsystem_solver_options)) then
+            call settings%log( &
+                "Subsystem solver option unknown. Possible values are "// &
+                option_list(subsystem_solver_options)//".", verbosity_error, .true.)
             error = 1
             return
         end if
@@ -2714,11 +2759,10 @@ contains
         end if
 
         ! check for character options
-        if (.not. (settings%diag_solver == "davidson" .or. &
-                   settings%diag_solver == "jacobi-davidson")) then
-            call settings%log("Diagonalization solver option unknown. Possible "// &
-                              "values are ""davidson"" and ""jacobi-davidson""", &
-                              verbosity_error, .true.)
+        if (.not. any(settings%diag_solver == diag_solver_options)) then
+            call settings%log( &
+                "Diagonalization solver option unknown. Possible values are "// &
+                option_list(diag_solver_options)//".", verbosity_error, .true.)
             error = 1
             return
         end if
@@ -2731,7 +2775,7 @@ contains
 
     subroutine add_error_origin(error_code, error_origin, settings)
         !
-        ! this function modifies the error code by adding the error's origin if it is
+        ! this subroutine modifies the error code by adding the error's origin if it is
         ! not already added
         !
         class(settings_type), intent(in) :: settings
@@ -2767,5 +2811,23 @@ contains
         end do
 
     end function string_to_lowercase
+
+    function option_list(options) result(list)
+        !
+        ! this function lists options as quoted words separated by commas
+        !
+        character(len=*), intent(in) :: options(:)
+        character(len=:), allocatable :: list
+
+        integer(ip) :: i
+
+        ! append every option in quotes
+        list = ""
+        do i = 1, size(options)
+            if (i > 1) list = list//", "
+            list = list//""""//trim(options(i))//""""
+        end do
+
+    end function option_list
 
 end module opentrustregion

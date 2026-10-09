@@ -173,7 +173,9 @@ contains
         !
         ! this function exposes a Fortran-implemented solver subroutine to C
         !
-        use opentrustregion, only: solver_settings_type
+        use opentrustregion, only: solver_settings_type, stderr, &
+                                   settings_uninitialized_warning_msg, &
+                                   stability_settings_uninitialized_warning_msg
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
@@ -218,6 +220,22 @@ contains
         settings%context => callbacks
         settings%stability_settings%context => stability_callbacks
 
+        ! the conversion replaces settings that were not initialized by the default
+        ! settings, so the solver cannot detect these anymore and the warning is
+        ! printed here regardless of the verbosity, through the logging function of
+        ! the solver settings or on stderr since settings that were not initialized
+        ! provide none
+        if (.not. settings_c%initialized) then
+            write(stderr, '(A)') " "//settings_uninitialized_warning_msg
+        else if (.not. settings_c%stability_settings%initialized) then
+            if (associated(settings%logger)) then
+                call settings%logger( &
+                    " "//stability_settings_uninitialized_warning_msg, settings%context)
+            else
+                write(stderr, '(A)') " "//stability_settings_uninitialized_warning_msg
+            end if
+        end if
+
         ! call solver
         call solver(update_orbs, obj_func, n_param, error, settings)
 
@@ -240,7 +258,8 @@ contains
         !
         ! this function exposes a Fortran-implemented stability check subroutine to C
         !
-        use opentrustregion, only: stability_settings_type
+        use opentrustregion, only: stability_settings_type, stderr, &
+                                   settings_uninitialized_warning_msg
 
         real(c_rp), intent(in), target :: h_diag_c(*)
         integer(c_ip), intent(in), value :: n_param_c
@@ -287,6 +306,13 @@ contains
         ! context
         settings = settings_c
         settings%context => callbacks
+
+        ! the conversion replaces settings that were not initialized by the default
+        ! settings, so the stability check cannot detect these anymore and the warning
+        ! is printed here on stderr regardless of the verbosity since settings that
+        ! were not initialized provide no logging function
+        if (.not. settings_c%initialized) &
+            write(stderr, '(A)') " "//settings_uninitialized_warning_msg
 
         ! call stability check
         if (c_associated(kappa_c_ptr)) then
@@ -380,9 +406,7 @@ contains
         type is (c_callbacks_type)
             error_c = callbacks%update_orbs(kappa_c, func_c, grad_c, h_diag_c, &
                                             hess_x_c_funptr, callbacks%host_context)
-            if (error_c == 0 .and. .not. c_associated(hess_x_c_funptr)) then
-                error_c = 1
-            else if (c_associated(hess_x_c_funptr)) then
+            if (c_associated(hess_x_c_funptr)) then
                 call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
                 if (associated(callbacks%stability)) &
                     callbacks%stability%hess_x => callbacks%hess_x
@@ -402,8 +426,14 @@ contains
             deallocate(h_diag_c)
         end if
 
-        ! associate procedure pointer to wrapper function
-        hess_x => hess_x_f_wrapper
+        ! associate procedure pointer to wrapper function if the C function provided a
+        ! Hessian linear transformation, otherwise leave it disassociated so that the
+        ! solver reports the missing one
+        if (c_associated(hess_x_c_funptr)) then
+            hess_x => hess_x_f_wrapper
+        else
+            hess_x => null()
+        end if
 
     end subroutine update_orbs_f_wrapper
 
@@ -888,21 +918,21 @@ contains
 
     function character_to_c(char_f) result(char_c)
         !
-        ! this function converts a Fortran character string to a C null-terminated
-        ! character array
+        ! this function converts a Fortran keyword to a C null-terminated character
+        ! array of the size of the keyword fields of the C settings, whose remainder
+        ! is filled with null characters
         !
         character(len=*), intent(in) :: char_f
-        character(kind=c_char), allocatable :: char_c(:)
+        character(kind=c_char) :: char_c(kw_len + 1)
 
         integer(ip) :: n
 
-        ! allocate C null-terminated character array
-        n = len_trim(char_f)
-        allocate(char_c(n + 1))
+        ! fill with null characters, which terminate the copied characters
+        char_c = c_null_char
 
         ! copy and convert each character
+        n = len_trim(char_f)
         char_c(1:n) = transfer(char_f(1:n), char_c(1:n))
-        char_c(n + 1) = c_null_char
 
     end function character_to_c
 

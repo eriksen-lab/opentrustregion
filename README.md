@@ -51,11 +51,22 @@ The build process can be customized using the following CMake options:
 | **OpenTrustRegion_BUILD_TESTING** | `BOOL` | `ON` | Build the project’s testsuite. |
 | **OpenTrustRegion_INSTALL_CMAKEDIR** | `STRING` | (auto) | Project install directory. |
 | **CMAKE_BUILD_TYPE** | `STRING` | `Release` | Choose the build type (`Debug`, `Release`, etc.). |
-| **INTEGER_SIZE** | `STRING` | *(auto)* | Set the integer precision to `4` (32-bit) or `8` (64-bit). Required when providing custom BLAS/LAPACK libraries. Otherwise defaults to 32-bit integers and tries to locate compatible BLAS and LAPACK libraries. Falls back to 64-bit integers if 32-bit libraries cannot be found. The resulting library name reflects the chosen integer precision (`libopentrustregion_32.*` or `libopentrustregion_64.*`) |
+| **INTEGER_SIZE** | `STRING` | *(auto)* | Set the integer precision to `4` (32-bit) or `8` (64-bit). Required when providing custom BLAS/LAPACK libraries. Otherwise defaults to 32-bit integers and tries to locate compatible BLAS and LAPACK libraries. Falls back to 64-bit integers if 32-bit libraries cannot be found. The resulting library name reflects the chosen integer precision (`libopentrustregion_32.*` or `libopentrustregion_64.*`). C programs compiled against the header of a library with 64-bit integers need `OTR_ILP64` defined, which linking the CMake target `OpenTrustRegion::opentrustregion` does automatically. |
 | **BLAS_LIBRARIES** | `PATH` | *(auto)* | Path(s) to BLAS libraries. If not provided, CMake attempts to locate a suitable BLAS automatically. |
 | **LAPACK_LIBRARIES** | `PATH` | *(auto)* | Path(s) to LAPACK libraries. If not provided, CMake attempts to locate a suitable LAPACK automatically. |
 | **OpenTrustRegion_HOST_PROVIDES_BLAS** | `BOOL` | `OFF` | When enabled, OpenTrustRegion will not attempt to detect or link BLAS/LAPACK and the testsuite is automatically disabled. The calling program must provide BLAS/LAPACK routines that expose the unsuffixed symbol names (for example `ddot`, `dsyev`) with an integer width matching `INTEGER_SIZE`; otherwise linking will fail loudly. |
 | **OpenTrustRegion_ENABLE_XHOST** | `BOOL` | `ON` | Optimize the Release build for the current machine's instruction set (`-march=native` for GNU, `-xHost` for Intel). Automatically disabled when cross-compiling, regardless of this setting. Turn off when building for a different machine than the one compiling (e.g. packaging/conda builds). |
+
+### Nested and Concurrent Calls
+
+The library keeps no state of its own between calls, so a solver or stability check call can be nested inside a callback function of another call, or run concurrently with another call in a different thread, as long as each call is given its own settings object. A nested call re-enters procedures of the library that are still running, which Fortran only permits for procedures compiled for recursion, and a concurrent call needs their local variables on its own thread's stack. The library then has to be built with `-frecursive` for gfortran (implied by `-fopenmp`) or `-recursive` for Intel:
+
+```sh
+cmake .. -DCMAKE_Fortran_FLAGS=-frecursive                  # Fortran or C
+CMAKE_FLAGS="-DCMAKE_Fortran_FLAGS=-frecursive" pip install .  # Python
+```
+
+Every call also reseeds the random number generator of the Fortran runtime, which the whole program shares, so a nested or concurrent call changes the random trial vectors, and with them the iterations, of the other call, though not its correctness.
 
 ## Program Interfaces
 
@@ -84,6 +95,7 @@ The optimization process is initiated by calling a `solver` subroutine. This rou
     - Accepts a trial vector and writes the result of the Hessian transformation into an output array (real array, written in-place)
     - Returns an integer error code (0 for success, positive integers < 100 for errors)
     - Receives the host context as its last argument.
+    - Has to be provided whenever the orbital update succeeds, otherwise the solver fails. In Fortran, the procedure pointer argument is therefore `intent(inout)` rather than `intent(out)`, since the solver disassociates it before every call to detect a missing one.
   - Returns an integer error code (0 for success, positive integers < 100 for errors)
   - Receives the host context as its last argument.
 - **`obj_func`** (function):  
@@ -166,7 +178,7 @@ settings.context = &host_data;
 c_int error = solver(update_orbs_funptr, obj_func_funptr, n_param, &settings);
 
 // read back output fields
-printf("Number of orbital updates: %d\n", settings.n_update_orbs);
+printf("Number of orbital updates: %lld\n", (long long)settings.n_update_orbs);
 ```
 
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
@@ -225,10 +237,10 @@ The optimization process can be fine-tuned using the following settings:
 - **`jacobi_davidson_start`** (integer): Number of micro iterations after which the subsystem solver switches to the Jacobi-Davidson method.
 - **`global_red_factor`** (real): Reduction factor for the residual during micro iterations in the global region.
 - **`local_red_factor`** (real): Reduction factor for the residual during micro iterations in the local region.
-- **`verbose`** (integer): Controls the verbosity of output during optimization.
+- **`verbose`** (integer): Controls the verbosity of output during optimization. Level 0 prints nothing, 1 prints errors, 2 also warnings, 3 also progress information and 4 also debugging information.
 - **`seed`** (integer): Seed value for generating random trial vectors.
-- **`logger`** (subroutine): Accepts a log message. Logging is otherwise routed to stdout. Receives the host context as its last argument.
-- **`context`** (unlimited polymorphic pointer in Fortran, `void *` in C, absent in Python): Opaque host data, handed back unchanged as the last argument of every callback function so that the host does not have to reach its own state through module-level variables. The library never inspects it and never keeps it past the call, so it only has to stay valid for the duration of the call. Two solves can therefore run at the same time, or be nested inside one another, as long as each is given its own settings object.
+- **`logger`** (subroutine): Accepts a log message. Logging is otherwise routed to stdout, and error messages to stderr. Receives the host context as its last argument.
+- **`context`** (unlimited polymorphic pointer in Fortran, `void *` in C, absent in Python): Opaque host data, handed back unchanged as the last argument of every callback function so that the host does not have to reach its own state through module-level variables. The library never inspects it and never keeps it past the call, so it only has to stay valid for the duration of the call. Two solves can therefore run at the same time, or be nested inside one another, as long as each is given its own settings object. This requires a suitable build, see [Nested and Concurrent Calls](#nested-and-concurrent-calls).
 - **`stability_settings`** (stability_settings_type): Settings object controlling the internal stability check that is automatically performed upon convergence when `stability` is `True` or when starting at a stationary point (see the Stability Check section below). If `stability_settings%precond`, `stability_settings%project`, `stability_settings%logger`, or `stability_settings%context` are left unset, they default to the corresponding `precond`, `project`, `logger`, and `context` supplied to `solver`. The internal stability check hands its own context to every callback function it calls, so when `stability_settings%context` is set, the Hessian linear transformation returned by `update_orbs` and any inherited `precond`, `project` or `logger` receive it instead of the solver's `context` and must accept it. Leaving it unset keeps the solver's `context` everywhere. `stability_settings%verbose` is raised to at least the solver's own `verbose` level.
 
 ### Output
@@ -251,7 +263,7 @@ A separate `stability_check` subroutine is available to verify whether the curre
   - Receives the host context as its last argument.
 - **`stable`** (boolean): Returns whether the current point is stable.
 - **`error`** (integer): An integer code indicating the success or failure of the solver. The error code structure is explained below.
-- **`kappa`** (real array): If the memory is provided and the current point is not stable (as can be checked from return code of `stable`), the descent direction is written in-place in this array.
+- **`kappa`** (real array): If the memory is provided, the descent direction along the unstable mode is written in-place in this array when the current point is not stable (as can be checked from `stable`), and zeros are written when it is stable.
 - **`settings`** (settings_type): Settings object which controls optional arguments as described below.
 
 ---
@@ -282,7 +294,7 @@ settings%diag_solver = "jacobi-davidson"
 settings%context => host_data
 
 ! run stability check
-call stability_check(h_diag, hess_x_funptr, n_param, stable, error, settings, kappa=kappa)
+call stability_check(h_diag, hess_x_funptr, stable, error, settings, kappa=kappa)
 
 ! read back output fields
 print *, "Number of Hessian linear transformations:", settings%n_hess_x
@@ -323,14 +335,14 @@ strcpy(settings.diag_solver, "jacobi-davidson");
 settings.context = &host_data;
 
 // pointers to Hessian diagonal and descent direction
-double* h_diag;
-double* kappa;
+c_real* h_diag;
+c_real* kappa;
 
 // run stability check
 c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, &settings, kappa);
 
 // read back output fields
-printf("Number of Hessian linear transformations: %d\n", settings.n_hess_x);
+printf("Number of Hessian linear transformations: %lld\n", (long long)settings.n_hess_x);
 ```
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
@@ -338,7 +350,7 @@ printf("Number of Hessian linear transformations: %d\n", settings.n_hess_x);
 - `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
 - Stability settings are initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol` and `n_iter`) can then be overridden.
 - The `stable` output receives the result of the stability check which directly returns an error code in typical C fashion.
-- The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `nullptr`.
+- The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `NULL`.
 - After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other component.
 
 ---
@@ -382,15 +394,15 @@ The stability check can be fine-tuned using the following settings:
 - **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for stability check using non-redundant parameters. When this is used, all other passed routines (`hess_x` and `precond`) must be self-projecting. Receives the host context as its last argument.
 - **`diag_solver`** (string): Specifies which diagonalization solver to use. Options include:
   - `"davidson"`: standard Davidson method,
-  - `"jacobi-davidson"`: Davidson method with fallback to Jacobi-Davidson if convergence is difficult, or automatically after `jacobi_davidson_start` micro iterations.
+  - `"jacobi-davidson"`: Davidson method that switches to Jacobi-Davidson after `jacobi_davidson_start` iterations.
 - **`conv_tol`** (real): Convergence criterion for the residual norm.
 - **`n_random_trial_vectors`** (integer): Number of random trial vectors used to start the Davidson iterations.
 - **`n_iter`** (integer): Maximum number of Davidson iterations.
-- **`jacobi_davidson_start`** (integer): Number of micro iterations after which the subsystem solver switches to the Jacobi-Davidson method.
-- **`verbose`** (integer): Controls the verbosity of output during the stability check.
+- **`jacobi_davidson_start`** (integer): Number of iterations after which the diagonalization solver switches to the Jacobi-Davidson method.
+- **`verbose`** (integer): Controls the verbosity of output during the stability check. Level 0 prints nothing, 1 prints errors, 2 also warnings, 3 also progress information and 4 also debugging information.
 - **`seed`** (integer): Seed value for generating random trial vectors.
-- **`logger`** (function): Accepts a log message. Logging is otherwise routed to stdout. Receives the host context as its last argument.
-- **`context`** (unlimited polymorphic pointer in Fortran, `void *` in C, absent in Python): Opaque host data, handed back unchanged as the last argument of every callback function so that the host does not have to reach its own state through module-level variables. The library never inspects it and never keeps it past the call, so it only has to stay valid for the duration of the call. Two stability checks can therefore run at the same time, or be nested inside one another, as long as each is given its own settings object.
+- **`logger`** (function): Accepts a log message. Logging is otherwise routed to stdout, and error messages to stderr. Receives the host context as its last argument.
+- **`context`** (unlimited polymorphic pointer in Fortran, `void *` in C, absent in Python): Opaque host data, handed back unchanged as the last argument of every callback function so that the host does not have to reach its own state through module-level variables. The library never inspects it and never keeps it past the call, so it only has to stay valid for the duration of the call. Two stability checks can therefore run at the same time, or be nested inside one another, as long as each is given its own settings object. This requires a suitable build, see [Nested and Concurrent Calls](#nested-and-concurrent-calls).
 
 ### Output
 After `stability_check` returns, the following field on the settings object has been populated and can be read by the caller:

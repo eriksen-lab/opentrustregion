@@ -17,7 +17,9 @@ extern "C" {
 /* ------------------------------------------------------------------
  * Type aliases matching Fortran kinds
  * ------------------------------------------------------------------ */
-#ifdef USE_ILP64
+/* defined by the CMake target of a library with 64-bit integers, define it when
+ * compiling against such a library without CMake */
+#ifdef OTR_ILP64
 typedef int64_t c_int; /* corresponds to integer(c_ip) */
 #else
 typedef int32_t c_int; /* corresponds to integer(c_ip) */
@@ -155,12 +157,13 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  * @param n_param           Number of parameters
  * @param stable            Pointer to bool that receives stability result
  * @param settings          Pointer to struct of stability solver settings
- * @param kappa_ptr         Pointer to orbital rotation vector
+ * @param kappa_ptr         Pointer to array that receives the orbital rotation along
+ *                          the unstable mode, zero if stable, or NULL
  * @return                  Integer error code from Fortran
  */
-c_int stability_check(const void *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_param,
+c_int stability_check(const c_real *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_param,
                       c_bool *stable, stability_settings_type *settings,
-                      const void *kappa_ptr);
+                      c_real *kappa_ptr);
 
 #ifdef __cplusplus
 }
