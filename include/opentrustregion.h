@@ -35,33 +35,33 @@ typedef bool c_bool;   /* corresponds to logical(c_bool) */
  * ------------------------------------------------------------------ */
 
 /* Hessian-vector product callback */
-typedef c_int hess_x_fn(const c_real *x_c, c_real *hess_x);
+typedef c_int hess_x_fn(const c_real *x_c, c_real *hess_x, void *context);
 typedef hess_x_fn *hess_x_fp;
 
 /* Orbital update callback */
 typedef c_int update_orbs_fn(const c_real *kappa, c_real *func, c_real *grad,
-                             c_real *h_diag, hess_x_fp *hess_x_ptr);
+                             c_real *h_diag, hess_x_fp *hess_x_ptr, void *context);
 typedef update_orbs_fn *update_orbs_fp;
 
 /* Objective function callback */
-typedef c_int obj_func_fn(const c_real *kappa, c_real *func);
+typedef c_int obj_func_fn(const c_real *kappa, c_real *func, void *context);
 typedef obj_func_fn *obj_func_fp;
 
 /* Preconditioner callback */
 typedef c_int precond_fn(const c_real *residual, const c_real *mu,
-                         c_real *precond_residual);
+                         c_real *precond_residual, void *context);
 typedef precond_fn *precond_fp;
 
 /* Projection callback */
-typedef c_int project_fn(c_real *vector);
+typedef c_int project_fn(c_real *vector, void *context);
 typedef project_fn *project_fp;
 
 /* Convergence check callback */
-typedef c_int conv_check_fn(c_bool *converged);
+typedef c_int conv_check_fn(c_bool *converged, void *context);
 typedef conv_check_fn *conv_check_fp;
 
 /* Logger callback */
-typedef void logger_fn(const char *message);
+typedef void logger_fn(const char *message, void *context);
 typedef logger_fn *logger_fp;
 
 /* ------------------------------------------------------------------
@@ -83,8 +83,12 @@ typedef struct {
   c_int jacobi_davidson_start;
   c_int seed;
   c_int verbose;
+  c_int n_hess_x;
 
   char diag_solver[OTR_KW_LEN + 1];
+
+  /* opaque host data handed back to every callback, must outlive the call */
+  void *context;
 } stability_settings_type;
 
 // Fortran-callable init subroutine for stability check settings
@@ -100,6 +104,7 @@ typedef struct {
   c_bool stability;
   c_bool line_search;
   c_bool initialized;
+  c_bool max_precision_reached;
 
   c_real conv_tol;
   c_real start_trust_radius;
@@ -112,10 +117,15 @@ typedef struct {
   c_int jacobi_davidson_start;
   c_int seed;
   c_int verbose;
+  c_int n_update_orbs;
+  c_int n_hess_x;
 
   char subsystem_solver[OTR_KW_LEN + 1];
 
   stability_settings_type stability_settings;
+
+  /* opaque host data handed back to every callback, must outlive the call */
+  void *context;
 } solver_settings_type;
 
 // Fortran-callable init subroutine for solver settings
@@ -131,11 +141,11 @@ void init_solver_settings(solver_settings_type *settings);
  * @param update_orbs_ptr   Pointer to update_orbs callback
  * @param obj_func_ptr      Pointer to objective function callback
  * @param n_param           Number of parameters
- * @param settings          Struct of solver settings
+ * @param settings          Pointer to struct of solver settings
  * @return                  Integer error code from Fortran
  */
 c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_param,
-             solver_settings_type settings);
+             solver_settings_type *settings);
 
 /**
  * Fortran-callable stability check interface
@@ -144,12 +154,12 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  * @param hess_x_ptr        Pointer to Hessian–vector product callback
  * @param n_param           Number of parameters
  * @param stable            Pointer to bool that receives stability result
- * @param settings          Struct of stability solver settings
+ * @param settings          Pointer to struct of stability solver settings
  * @param kappa_ptr         Pointer to orbital rotation vector
  * @return                  Integer error code from Fortran
  */
 c_int stability_check(const void *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_param,
-                      c_bool *stable, stability_settings_type settings,
+                      c_bool *stable, stability_settings_type *settings,
                       const void *kappa_ptr);
 
 #ifdef __cplusplus
