@@ -40,7 +40,7 @@
 # ::
 #
 #   find_package(OpenTrustRegion)
-#   find_package(OpenTrustRegion 2.0.0 EXACT CONFIG REQUIRED COMPONENTS shared int32)
+#   find_package(OpenTrustRegion 3.0.0 EXACT CONFIG REQUIRED COMPONENTS shared int32)
 #
 #
 # The following variables can be set to guide the search for this package:

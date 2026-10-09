@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(OpenTrustRegion VERSION 2.0.0 LANGUAGES Fortran C)
+project(OpenTrustRegion VERSION 3.0.0 LANGUAGES Fortran C)
 
 # get commands
 include(GNUInstallDirs)
