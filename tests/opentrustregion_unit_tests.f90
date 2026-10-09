@@ -1581,7 +1581,7 @@ contains
             update_orbs_type, obj_func_type, solver_settings_type, solver, &
             default_settings => default_solver_settings, error_solver_max_iter, &
             error_update_orbs, error_conv_check, error_obj_func, error_hess_x, &
-            error_solver, error_precond, error_project, verbosity_warning, &
+            error_solver, error_precond, error_project, verbosity_silent, &
             subsystem_solver_options, settings_uninitialized_warning_msg, &
             stability_settings_uninitialized_warning_msg
 
@@ -1650,11 +1650,11 @@ contains
         ! start at saddle point again with nested stability check settings that were
         ! not initialized, the solver initializes them before handing down its context,
         ! so the internal stability check still calls the Hessian linear transformation
-        ! with the solver's context, and prints a warning
+        ! with the solver's context, and prints a warning even when the solver is silent
         context%vars = saddle_point
         settings%stability_settings%initialized = .false.
         settings%logger => logger
-        settings%verbose = verbosity_warning
+        settings%verbose = verbosity_silent
         context%log_message = ""
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
@@ -1767,12 +1767,15 @@ contains
             n_update_orbs=settings%n_update_orbs)) test_solver = .false.
 
         ! run solver again on the same settings object but stop it before convergence
-        ! and check that the maximum precision flag is reset and that the reported
-        ! number of orbital updates does not include those of the previous call
+        ! and check that the maximum precision flag is reset, that the reported number
+        ! of orbital updates does not include those of the previous call and that no
+        ! trust region subproblem is solved in the only macro iteration, whose step
+        ! would never be evaluated
         context%vars = distant_point
         settings%conv_tol = default_settings%conv_tol
         settings%n_macro = 1
         context%n_update_orbs_calls = 0
+        context%n_hess_x_calls = 0
         call setup_error_logging(settings, context)
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= error_solver_max_iter) then
@@ -1785,9 +1788,14 @@ contains
                 "reached was not reset by the next call."
             test_solver = .false.
         end if
-        if (.not. check_call_counts(context, "solver", "on reused settings", &
-                                    n_update_orbs=settings%n_update_orbs)) &
+        if (.not. check_call_counts( &
+            context, "solver", "on reused settings", n_hess_x=settings%n_hess_x, &
+            n_update_orbs=settings%n_update_orbs)) test_solver = .false.
+        if (settings%n_hess_x /= 0) then
+            write(stderr, *) "test_solver failed: Trust region subproblem solved "// &
+                "in the last macro iteration."
             test_solver = .false.
+        end if
 
         ! force the maximum precision heuristic to trigger again but let the
         ! convergence check pass in that same macro iteration, convergence then takes
@@ -1829,13 +1837,14 @@ contains
         end if
 
         ! run solver, an orbital update which succeeds without providing a Hessian
-        ! linear transformation is reported as an orbital update error
+        ! linear transformation violates the interface, which the solver reports as its
+        ! own error
         context%vars = near_minimum
         update_orbs_funptr => update_orbs_no_hess_x
         call settings%init(error)
         call setup_error_logging(settings, context)
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
-        if (error /= error_update_orbs + 1) then
+        if (error /= error_solver + 1) then
             write(stderr, *) "test_solver failed: Did not report a missing Hessian "// &
                 "linear transformation."
             test_solver = .false.

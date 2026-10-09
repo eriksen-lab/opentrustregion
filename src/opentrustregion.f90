@@ -264,11 +264,15 @@ contains
             if (error /= 0) return
         end if
         if (.not. settings%stability_settings%initialized) then
+            if (associated(settings%logger)) then
+                call settings%logger( &
+                    " "//stability_settings_uninitialized_warning_msg, settings%context)
+            else
+                write(stderr, '(A)') " "//stability_settings_uninitialized_warning_msg
+            end if
             call settings%stability_settings%init(error)
             call add_error_origin(error, error_solver, settings)
             if (error /= 0) return
-            call settings%log(stability_settings_uninitialized_warning_msg, &
-                              verbosity_warning)
         end if
 
         ! initialize maximum precision convergence
@@ -314,14 +318,17 @@ contains
 
                 ! increment number of orbital updates
                 settings%n_update_orbs = settings%n_update_orbs + 1
-
-                if (error == 0 .and. .not. associated(hess_x_funptr)) then
-                    call settings%log("Orbital update did not provide a Hessian "// &
-                                      "linear transformation.", verbosity_error, .true.)
-                    error = 1
-                end if
                 call add_error_origin(error, error_update_orbs, settings)
                 if (error /= 0) return
+
+                ! an orbital update which succeeds without providing a Hessian linear
+                ! transformation violates the interface, which the solver reports itself
+                if (.not. associated(hess_x_funptr)) then
+                    call settings%log("Orbital update did not provide a Hessian "// &
+                                      "linear transformation.", verbosity_error, .true.)
+                    error = error_solver + 1
+                    return
+                end if
 
                 ! perform sanity check
                 if (imacro == 1) then
@@ -397,6 +404,10 @@ contains
                 macro_converged = .true.
                 exit
             end if
+
+            ! stop before solving the trust region subproblem in the last macro
+            ! iteration since its step would never be evaluated
+            if (imacro == settings%n_macro) exit
 
             if (settings%subsystem_solver == "davidson" .or. &
                 settings%subsystem_solver == "jacobi-davidson") then

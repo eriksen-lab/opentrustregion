@@ -207,7 +207,9 @@ contains
         !
         ! this subroutine is a test subroutine for the C logging function
         !
-        use test_reference, only: host_context_type, check_host_context_c
+        use opentrustregion, only: stability_settings_uninitialized_warning_msg
+        use test_reference, only: host_context_type, check_host_context_c, &
+                                  ref_character_from_c
 
         character(kind=c_char), intent(in) :: message_c(*)
         type(c_ptr), intent(in), value :: context_c
@@ -224,6 +226,16 @@ contains
             c_associated(context_c)) then
             call c_f_pointer(context_c, context)
             context%logger_called = .true.
+        end if
+
+        ! record the warning about nested stability check settings that were not
+        ! initialized in host context
+        if (c_associated(context_c)) then
+            if (ref_character_from_c(message_c) == &
+                " "//stability_settings_uninitialized_warning_msg) then
+                call c_f_pointer(context_c, context)
+                context%stability_warning_logged = .true.
+            end if
         end if
 
     end subroutine mock_logger
@@ -364,6 +376,15 @@ contains
             if (.not. host_context%logger_called) then
                 write(stderr, *) "test_solver_c_wrapper failed: Called logging "// &
                     "subroutine wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
+            end if
+
+            ! check that a warning was printed through the logging function of the
+            ! solver settings exactly when the nested settings were not initialized
+            if (host_context%stability_warning_logged .neqv. i_case == 4) then
+                write(stderr, *) "test_solver_c_wrapper failed: Warning for nested "// &
+                    "settings that were not initialized printed wrong "// &
+                    trim(case_names(i_case))//"."
                 test_solver_c_wrapper = .false.
             end if
 
@@ -728,7 +749,7 @@ contains
         ! this function tests the Fortran wrapper for the orbital update
         !
         use opentrustregion, only: update_orbs_type, hess_x_type
-        use c_interface, only: c_callbacks_type, update_orbs_f_wrapper
+        use c_interface, only: c_callbacks_type, update_orbs_f_wrapper, hess_x_f_wrapper
         use test_reference, only: check_update_orbs_funptr, host_context, &
                                   arm_host_context_c, host_context_reached
 
@@ -773,19 +794,26 @@ contains
         end if
 
         ! an orbital update that succeeds without providing a Hessian linear
-        ! transformation is an error
+        ! transformation leaves the Hessian linear transformation disassociated, even if
+        ! it was associated before, so that the solver reports the missing one
         callbacks%update_orbs => mock_update_orbs_no_hess_x
         kappa = 1.0_rp
+        hess_x_funptr => hess_x_f_wrapper
         call update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x_funptr, error, &
                                    context)
-        if (error /= 1) then
-            write(stderr, *) "test_update_orbs_f_wrapper failed: Did not report a "// &
-                "missing Hessian linear transformation."
+        if (error /= 0) then
+            write(stderr, *) "test_update_orbs_f_wrapper failed: Produced error "// &
+                "for missing Hessian linear transformation."
+            test_update_orbs_f_wrapper = .false.
+        end if
+        if (associated(hess_x_funptr)) then
+            write(stderr, *) "test_update_orbs_f_wrapper failed: Did not leave "// &
+                "missing Hessian linear transformation disassociated."
             test_update_orbs_f_wrapper = .false.
         end if
 
-        ! check that an error of the C function is passed on rather than replaced by
-        ! the one of the missing Hessian linear transformation
+        ! check that an error of the C function is passed on when it does not provide a
+        ! Hessian linear transformation
         host_context%mock_error = 2
         call update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x_funptr, error, &
                                    context)

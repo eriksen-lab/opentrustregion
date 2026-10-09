@@ -54,7 +54,7 @@ module test_reference
     ! callback functions report
     type :: host_context_type
         integer(ip) :: n_calls = 0
-        logical :: logger_called = .false.
+        logical :: logger_called = .false., stability_warning_logged = .false.
         integer(c_ip) :: mock_error = 0
     end type
     type(host_context_type), target :: host_context
@@ -210,6 +210,7 @@ contains
         !
         host_context%n_calls = 0
         host_context%logger_called = .false.
+        host_context%stability_warning_logged = .false.
         host_context%mock_error = 0
         host_context_armed = .true.
         host_context_wrong = .false.

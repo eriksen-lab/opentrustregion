@@ -7,6 +7,7 @@
 import os
 import sys
 import unittest
+import warnings
 from importlib import resources
 from ctypes import (
     CDLL,
@@ -43,6 +44,7 @@ try:
         ConvCheckInterface,
         LoggerInterface,
         raise_on_failure,
+        hess_x_interface_type,
     )
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent.absolute()))
@@ -61,6 +63,7 @@ except ImportError:
         ConvCheckInterface,
         LoggerInterface,
         raise_on_failure,
+        hess_x_interface_type,
     )
 
 lib = None
@@ -395,17 +398,24 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 callbacks_called = False
 
         # a logging function that raises must not be silent, the exception is reported
-        # once the solver has returned
+        # as the cause of a warning once the solver has returned without an error
         settings.logger = self._raising_logger
         logger_error_reported = False
-        try:
-            solver(mock_obj_func, mock_update_orbs, n_param, settings)
-        except RuntimeError as e:
-            logger_error_reported = isinstance(e.__cause__, ValueError)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                solver(mock_obj_func, mock_update_orbs, n_param, settings)
+                logger_error_reported = any(
+                    issubclass(w.category, RuntimeWarning)
+                    and isinstance(w.message.__cause__, ValueError)
+                    for w in caught
+                )
+            except RuntimeError:
+                pass
         if not logger_error_reported:
             print(
                 " test_solver_py_interface failed: Exception raised by logging "
-                "function was not reported."
+                "function was not reported as a warning."
             )
 
         # a callback function that raises makes the solver fail with the exception as
@@ -499,17 +509,33 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
 
         # a logging function that raises must not be silent, the exception is reported
-        # once the stability check has returned
+        # as the cause of a warning once the stability check has returned without an
+        # error, which still returns its result
         settings.logger = self._raising_logger
         logger_error_reported = False
-        try:
-            stability_check(h_diag, mock_hess_x, n_param, settings, kappa=kappa)
-        except RuntimeError as e:
-            logger_error_reported = isinstance(e.__cause__, ValueError)
+        stable_with_failed_logger = False
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                stable_with_failed_logger = stability_check(
+                    h_diag, mock_hess_x, n_param, settings, kappa=kappa
+                )
+                logger_error_reported = any(
+                    issubclass(w.category, RuntimeWarning)
+                    and isinstance(w.message.__cause__, ValueError)
+                    for w in caught
+                )
+            except RuntimeError:
+                pass
         if not logger_error_reported:
             print(
                 " test_stability_check_py_interface failed: Exception raised by "
-                "logging function was not reported."
+                "logging function was not reported as a warning."
+            )
+        if not stable_with_failed_logger:
+            print(
+                " test_stability_check_py_interface failed: Returned stability boolean "
+                "wrong with failed logging function."
             )
 
         # call stability check python interface without a returned direction
@@ -545,6 +571,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             and stable
             and not wrong_direction
             and logger_error_reported
+            and stable_with_failed_logger
             and stable_without_direction
             and callback_error_reported,
             "test_stability_check_py_interface failed",
@@ -644,6 +671,28 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 )
                 test_passed = False
 
+        # the orbital update interface leaves the Hessian linear transformation unset
+        # without an error when the orbital update does not provide one, so that the
+        # solver reports the missing one
+        hess_x_funptr = pointer(hess_x_interface_type())
+        if (
+            UpdateOrbsInterface(
+                lambda kappa, grad, h_diag: (0.0, None), n_param, {}
+            ).call(vector_ptr, pointer(c_real()), vector_ptr, vector_ptr, hess_x_funptr)
+            != 0
+        ):
+            print(
+                " test_callback_interfaces failed: Error reported for orbital update "
+                "without Hessian linear transformation."
+            )
+            test_passed = False
+        if hess_x_funptr[0]:
+            print(
+                " test_callback_interfaces failed: Hessian linear transformation set "
+                "although orbital update did not provide one."
+            )
+            test_passed = False
+
         # the convergence check interface passes on that the optimization has not
         # converged
         converged = c_bool(True)
@@ -683,60 +732,70 @@ class PyInterfaceUnitTests(unittest.TestCase):
     def test_raise_on_failure(self):
         """
         this function tests that an error returned by the library is raised with its
-        code and takes precedence over a failed logging function, which is raised
-        otherwise, and that nothing is raised without either
+        code and the exception of a failed callback function as its cause, that a
+        failed logging function is reported as a warning with its exception as the
+        cause both with and without an error and that nothing is reported without
+        either
         """
         test_passed = True
+        callback_failure = ValueError("callback function failure")
         logger_failure = ValueError("logging failure")
 
-        # an error without an exception of a callback function is raised with its code
-        try:
-            raise_on_failure(7, {}, "solver")
-            print(" test_raise_on_failure failed: Error not raised.")
-            test_passed = False
-        except RuntimeError as e:
-            if "(code 7)" not in str(e) or e.__cause__ is not None:
+        for error, exception, case in [
+            (7, {}, "for an error alone"),
+            (
+                7,
+                {"exc": callback_failure},
+                "for an error of a failed callback function",
+            ),
+            (7, {"logger": logger_failure}, "for an error and a failed logger"),
+            (0, {"logger": logger_failure}, "for a failed logger alone"),
+            (0, {}, "without failure"),
+        ]:
+            raised = None
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                try:
+                    raise_on_failure(error, exception, "solver")
+                except RuntimeError as e:
+                    raised = e
+
+            # an error is raised with its code and the exception of a failed callback
+            # function as its cause, never the one of a failed logging function
+            if error and (raised is None or "(code 7)" not in str(raised)):
                 print(
-                    " test_raise_on_failure failed: Error not raised with its code "
-                    "alone."
+                    f" test_raise_on_failure failed: Error not raised with its code "
+                    f"{case}."
                 )
                 test_passed = False
-
-        # an error takes precedence over a failed logging function
-        try:
-            raise_on_failure(7, {"logger": logger_failure}, "solver")
-            print(
-                " test_raise_on_failure failed: Error not raised together with failed "
-                "logging function."
-            )
-            test_passed = False
-        except RuntimeError as e:
-            if "(code 7)" not in str(e):
+            if raised is not None and raised.__cause__ is not exception.get("exc"):
                 print(
-                    " test_raise_on_failure failed: Failed logging function takes "
-                    "precedence over error."
+                    f" test_raise_on_failure failed: Error raised with wrong cause "
+                    f"{case}."
                 )
                 test_passed = False
-
-        # a failed logging function is raised without an error
-        try:
-            raise_on_failure(0, {"logger": logger_failure}, "solver")
-            print(" test_raise_on_failure failed: Failed logging function not raised.")
-            test_passed = False
-        except RuntimeError as e:
-            if e.__cause__ is not logger_failure:
-                print(
-                    " test_raise_on_failure failed: Exception of logging function "
-                    "not raised as cause."
-                )
+            if not error and raised is not None:
+                print(f" test_raise_on_failure failed: Raised without error {case}.")
                 test_passed = False
 
-        # nothing is raised without an error or a failed logging function
-        try:
-            raise_on_failure(0, {}, "solver")
-        except RuntimeError:
-            print(" test_raise_on_failure failed: Raised without failure.")
-            test_passed = False
+            # a failed logging function is reported as a warning with its exception as
+            # the cause and nothing else is warned about
+            warned_causes = [
+                w.message.__cause__
+                for w in caught
+                if issubclass(w.category, RuntimeWarning)
+            ]
+            if "logger" in exception and warned_causes != [logger_failure]:
+                print(
+                    f" test_raise_on_failure failed: Failed logging function not "
+                    f"reported as a warning {case}."
+                )
+                test_passed = False
+            if "logger" not in exception and caught:
+                print(
+                    f" test_raise_on_failure failed: Warned without failed logger {case}."
+                )
+                test_passed = False
 
         self.assertTrue(test_passed, "test_raise_on_failure failed")
         print(" test_raise_on_failure PASSED")

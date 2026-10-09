@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import warnings
 from pathlib import Path
 import numpy as np
 from importlib import resources
@@ -225,6 +226,11 @@ class UpdateOrbsInterface(CallbackInterface):
         except Exception as e:
             self.exception["exc"] = e
             return 1
+
+        # an orbital update which does not provide a Hessian linear transformation
+        # leaves the pointer unset so that the solver reports the missing one
+        if not callable(hess_x):
+            return 0
 
         # attach the response interface to the object so that it persists in Python
         # to ensure that it is not garbage collected when the factory completes
@@ -585,19 +591,23 @@ auto_bind_fields(StabilitySettings)
 
 def raise_on_failure(error: int, exception: Dict[str, Exception], name: str):
     """
-    this function raises if a call into the library failed or a callback function
-    raised, an error returned by the library takes precedence over a failed logger
-    since only the former affects the result
+    this function raises if a call into the library failed, with the exception raised
+    by a failing callback function as its cause, a failed logger cannot affect the
+    result and is therefore only reported as a warning, both before an error and
+    instead of one
     """
+    if "logger" in exception:
+        warning = RuntimeWarning(
+            f"OpenTrustRegion {name} called a logging function that raised "
+            f"{exception['logger']!r}, so log messages from that point on may be "
+            "missing."
+        )
+        warning.__cause__ = exception["logger"]
+        warnings.warn(warning, stacklevel=3)
     if error:
         raise RuntimeError(
             f"OpenTrustRegion {name} produced error (code {error})."
         ) from exception.get("exc")
-    if "logger" in exception:
-        raise RuntimeError(
-            f"OpenTrustRegion {name} completed, but the logging function raised, so "
-            "log messages from that point on may be missing."
-        ) from exception["logger"]
 
 
 def solver(
