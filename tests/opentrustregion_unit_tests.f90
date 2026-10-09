@@ -440,11 +440,12 @@ contains
 
     end subroutine update_orbs
 
-    subroutine update_orbs_no_hess_x(delta_vars, func, grad, h_diag, hess_x_funptr, &
-                                     error, context)
+    subroutine update_orbs_hess_x_once(delta_vars, func, grad, h_diag, hess_x_funptr, &
+                                       error, context)
         !
-        ! this subroutine describes an orbital update which reports success but does
-        ! not provide a Hessian linear transformation
+        ! this subroutine describes an orbital update which reports success but only
+        ! provides a Hessian linear transformation on its first call and leaves the
+        ! argument as it received it on later calls
         !
         use opentrustregion, only: hess_x_type
 
@@ -455,10 +456,22 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        call update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, context)
-        hess_x_funptr => null()
+        procedure(hess_x_type), pointer :: received_hess_x_funptr
+        class(hartmann6d_context_type), pointer :: state
 
-    end subroutine update_orbs_no_hess_x
+        ! keep the received argument
+        received_hess_x_funptr => hess_x_funptr
+
+        ! perform orbital update, which counts the call
+        call update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, context)
+        if (error /= 0) return
+
+        ! restore the received argument on every call but the first
+        state => resolve_hartmann6d_context(context, error)
+        if (error /= 0) return
+        if (state%n_update_orbs_calls > 1) hess_x_funptr => received_hess_x_funptr
+
+    end subroutine update_orbs_hess_x_once
 
     logical function inject_fault(context, callback)
         !
