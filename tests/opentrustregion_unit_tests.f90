@@ -1836,11 +1836,14 @@ contains
             test_solver = .false.
         end if
 
-        ! run solver, an orbital update which succeeds without providing a Hessian
-        ! linear transformation violates the interface, which the solver reports as its
-        ! own error
-        context%vars = near_minimum
-        update_orbs_funptr => update_orbs_no_hess_x
+        ! run solver with an orbital update which succeeds but only provides a Hessian
+        ! linear transformation in the first macro iteration and leaves the argument as
+        ! it received it afterwards, which violates the interface, and check that the
+        ! solver, which disassociates the argument before every orbital update, reports
+        ! this as its own error in the second macro iteration
+        context%vars = distant_point
+        context%n_update_orbs_calls = 0
+        update_orbs_funptr => update_orbs_hess_x_once
         call settings%init(error)
         call setup_error_logging(settings, context)
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
@@ -1852,6 +1855,11 @@ contains
         if (len_trim(context%log_message) == 0) then
             write(stderr, *) "test_solver failed: No error message printed for "// &
                 "missing Hessian linear transformation."
+            test_solver = .false.
+        end if
+        if (context%n_update_orbs_calls /= 2) then
+            write(stderr, *) "test_solver failed: Missing Hessian linear "// &
+                "transformation not reported in the second macro iteration."
             test_solver = .false.
         end if
 
@@ -4336,9 +4344,13 @@ contains
         real(rp), dimension(n_param) :: rhs, solution, vector, hess_vector, &
                                         corr_vector, guess
         real(rp) :: mu
-        real(rp), parameter :: minres_tol = 1e-14_rp
+        real(rp), parameter :: minres_tol = 1e-14_rp, large_r_tol = 1e-8_rp
+        integer(ip), parameter :: n_large = 50
+        real(rp), dimension(n_large) :: large_rhs, large_solution, large_vector, &
+                                        large_hess_vector, large_residual
         integer(ip) :: error, i
         type(hartmann6d_context_type), target :: context
+        type(quadratic_context_type), target :: quadratic_context
 
         ! assume tests pass
         test_minres = .true.
@@ -4521,6 +4533,50 @@ contains
             test_minres = .false.
         end if
 
+        ! solve the correction equation for the first unit vector and a diagonal
+        ! Hessian with vanishing first element, which is therefore its Rayleigh
+        ! quotient, and vanishing second element, so that the projected shifted Hessian
+        ! is singular along the second coordinate, and with its other elements spread
+        ! between 1 and 2, so that the iterations converge in all other coordinates
+        ! long before the Krylov space is exhausted, for a right hand side with a large
+        ! component along the second coordinate, which no step can remove, and check
+        ! that the iterations stop at the least-squares solution, which reduces the
+        ! residual in all other coordinates, before the step along the second
+        ! coordinate grows by orders of magnitude, as it does when the iterations
+        ! continue
+        allocate(quadratic_context%hess(n_large, n_large))
+        quadratic_context%hess = 0.0_rp
+        do i = 3, n_large
+            quadratic_context%hess(i, i) = &
+                1.0_rp + real(i - 3, kind=rp) / real(n_large - 3, kind=rp)
+        end do
+        large_solution = 0.0_rp
+        large_solution(1) = 1.0_rp
+        large_rhs = 1.0_rp
+        large_rhs(1) = 0.0_rp
+        large_rhs(2) = 1e4_rp
+        call setup_settings(settings, quadratic_context)
+        hess_x_funptr => quadratic_hess_x
+        call minres(-large_rhs, hess_x_funptr, large_solution, 0.0_rp, large_r_tol, &
+                    large_vector, large_hess_vector, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_minres failed: Produced error for singular "// &
+                "correction equation."
+            test_minres = .false.
+        end if
+        large_residual = matmul(quadratic_context%hess, large_vector) + large_rhs
+        if (norm2(large_residual(3:)) > 1e-1_rp * norm2(large_rhs(3:))) then
+            write(stderr, *) "test_minres failed: Returned solution does not "// &
+                "reduce the residual outside the singular direction for singular "// &
+                "correction equation."
+            test_minres = .false.
+        end if
+        if (abs(large_vector(2)) > 1e2_rp * large_rhs(2)) then
+            write(stderr, *) "test_minres failed: Iterations did not stop at the "// &
+                "least-squares solution of singular correction equation."
+            test_minres = .false.
+        end if
+
     end function test_minres
 
     logical(c_bool) function test_add_trial_vector() bind(C)
@@ -4539,8 +4595,11 @@ contains
                                         eigvals
         real(rp) :: initial_basis(n_param, 2), eigvecs(n_param, n_param), &
                     proj_shifted_hess(n_param, n_param), level_shift, eigval
-        real(rp), parameter :: minres_tol = 1e-14_rp
         integer(ip) :: error, i, n_calls
+
+        ! late Jacobi-Davidson iteration, whose tolerance 3**-30 for the correction
+        ! equations lies far below the test tolerance, so that they are solved exactly
+        integer(ip), parameter :: jacobi_davidson_iter = 31
         type(hartmann6d_context_type), target :: context
         type(hartmann6d_fault_context_type), target :: fault_context
 
@@ -4570,9 +4629,8 @@ contains
         h_basis = matmul(context%hess, initial_basis)
         context%n_hess_x_calls = 0
         settings%n_hess_x = 0
-        call add_trial_vector(residual, level_shift, h_diag, .false., solution, &
-                              0.0_rp, minres_tol, hess_x_funptr, red_space_basis, &
-                              h_basis, settings, error)
+        call add_trial_vector(residual, level_shift, h_diag, 0_ip, solution, 0.0_rp, &
+                              hess_x_funptr, red_space_basis, h_basis, settings, error)
         if (error /= 0) then
             write(stderr, *) "test_add_trial_vector failed: Produced error for "// &
                 "Davidson."
@@ -4632,9 +4690,9 @@ contains
         h_basis = matmul(context%hess, initial_basis)
         context%n_hess_x_calls = 0
         settings%n_hess_x = 0
-        call add_trial_vector(residual, level_shift, h_diag, .true., solution, eigval, &
-                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
-                              settings, error)
+        call add_trial_vector(residual, level_shift, h_diag, jacobi_davidson_iter, &
+                              solution, eigval, hess_x_funptr, red_space_basis, &
+                              h_basis, settings, error)
         if (error /= 0) then
             write(stderr, *) "test_add_trial_vector failed: Produced error for "// &
                 "Jacobi-Davidson."
@@ -4667,6 +4725,36 @@ contains
                 n_hess_x=settings%n_hess_x)) test_add_trial_vector = .false.
         end if
 
+        ! repeat in the first Jacobi-Davidson iteration, whose tolerance of 1 for the
+        ! correction equations the minimum residual method always meets after its first
+        ! iteration, whose solution lies along the right hand side, and determine
+        ! whether the reduced space basis is extended by the orthonormalized residual
+        red_space_basis = initial_basis
+        h_basis = matmul(context%hess, initial_basis)
+        call add_trial_vector(residual, level_shift, h_diag, 1_ip, solution, eigval, &
+                              hess_x_funptr, red_space_basis, h_basis, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_add_trial_vector failed: Produced error for "// &
+                "first Jacobi-Davidson iteration."
+            test_add_trial_vector = .false.
+        end if
+        if (size(red_space_basis, 2) /= 3) then
+            write(stderr, *) "test_add_trial_vector failed: Reduced space basis "// &
+                "not extended by one vector for first Jacobi-Davidson iteration."
+            test_add_trial_vector = .false.
+        else
+            expected_vec = residual - &
+                           matmul(initial_basis, matmul(residual, initial_basis))
+            expected_vec = expected_vec / norm2(expected_vec)
+            if (abs(abs(dot_product(red_space_basis(:, 3), expected_vec)) - 1.0_rp) > &
+                tol) then
+                write(stderr, *) "test_add_trial_vector failed: New trial vector "// &
+                    "is not the orthonormalized residual for first Jacobi-Davidson "// &
+                    "iteration."
+                test_add_trial_vector = .false.
+            end if
+        end if
+
         ! repeat with a slightly asymmetric Hessian linear transformation, whose new
         ! linear transformation then no longer respects Hessian symmetry with respect
         ! to the existing basis, and determine whether it is recalculated and counted
@@ -4675,9 +4763,9 @@ contains
         hess_x_funptr => hess_x_fun_asymmetric
         context%n_hess_x_calls = 0
         settings%n_hess_x = 0
-        call add_trial_vector(residual, level_shift, h_diag, .true., solution, eigval, &
-                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
-                              settings, error)
+        call add_trial_vector(residual, level_shift, h_diag, jacobi_davidson_iter, &
+                              solution, eigval, hess_x_funptr, red_space_basis, &
+                              h_basis, settings, error)
         if (error /= 0) then
             write(stderr, *) "test_add_trial_vector failed: Produced error for "// &
                 "asymmetric Hessian linear transformation."
@@ -4716,9 +4804,9 @@ contains
         red_space_basis = initial_basis
         h_basis = matmul(context%hess, initial_basis)
         fault_context%n_callback_calls = 0
-        call add_trial_vector(residual, level_shift, h_diag, .true., solution, eigval, &
-                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
-                              settings, error)
+        call add_trial_vector(residual, level_shift, h_diag, jacobi_davidson_iter, &
+                              solution, eigval, hess_x_funptr, red_space_basis, &
+                              h_basis, settings, error)
         n_calls = fault_context%n_callback_calls(fault_hess_x)
         red_space_basis = initial_basis
         h_basis = matmul(context%hess, initial_basis)
@@ -4727,9 +4815,9 @@ contains
         fault_context%n_callback_calls = 0
         fault_context%n_hess_x_calls = 0
         settings%n_hess_x = 0
-        call add_trial_vector(residual, level_shift, h_diag, .true., solution, eigval, &
-                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
-                              settings, error)
+        call add_trial_vector(residual, level_shift, h_diag, jacobi_davidson_iter, &
+                              solution, eigval, hess_x_funptr, red_space_basis, &
+                              h_basis, settings, error)
         if (error /= error_hess_x + 1) then
             write(stderr, *) "test_add_trial_vector failed: Did not report the "// &
                 "error of a failing recalculated Hessian linear transformation "// &
@@ -4750,9 +4838,8 @@ contains
         h_basis = matmul(context%hess, initial_basis)
         residual = initial_basis(:, 1)
         h_diag = 1.0_rp
-        call add_trial_vector(residual, 0.0_rp, h_diag, .false., solution, 0.0_rp, &
-                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
-                              settings, error)
+        call add_trial_vector(residual, 0.0_rp, h_diag, 0_ip, solution, 0.0_rp, &
+                              hess_x_funptr, red_space_basis, h_basis, settings, error)
         if (error /= error_gram_schmidt_lin_dep) then
             write(stderr, *) "test_add_trial_vector failed: Linear dependence not "// &
                 "returned for Davidson."
@@ -4783,9 +4870,9 @@ contains
         solution = red_space_basis(:, 1)
         eigval = context%hess(1, 1)
         residual = matmul(context%hess, solution) - eigval * solution
-        call add_trial_vector(residual, 0.0_rp, h_diag, .true., solution, eigval, &
-                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
-                              settings, error)
+        call add_trial_vector(residual, 0.0_rp, h_diag, jacobi_davidson_iter, &
+                              solution, eigval, hess_x_funptr, red_space_basis, &
+                              h_basis, settings, error)
         if (error /= error_gram_schmidt_lin_dep) then
             write(stderr, *) "test_add_trial_vector failed: Linear dependence not "// &
                 "returned for Jacobi-Davidson."
@@ -4805,9 +4892,8 @@ contains
         hess_x_funptr => hess_x_fun_failing
         context%n_hess_x_calls = 0
         settings%n_hess_x = 0
-        call add_trial_vector(residual, 0.0_rp, h_diag, .false., solution, 0.0_rp, &
-                              minres_tol, hess_x_funptr, red_space_basis, h_basis, &
-                              settings, error)
+        call add_trial_vector(residual, 0.0_rp, h_diag, 0_ip, solution, 0.0_rp, &
+                              hess_x_funptr, red_space_basis, h_basis, settings, error)
         if (error /= error_hess_x + 1) then
             write(stderr, *) "test_add_trial_vector failed: Did not report the "// &
                 "error of a failing Hessian linear transformation with its origin."

@@ -485,17 +485,17 @@ contains
         type(stability_settings_type), intent(inout) :: settings
         real(rp), intent(out), optional :: kappa(:)
 
-        integer(ip) :: n_param, n_trial, i, iter
+        integer(ip) :: n_param, n_trial, i, iter, jacobi_davidson_iter
         real(rp), allocatable :: solution(:), h_solution(:), residual(:), &
                                  red_space_basis(:, :), h_basis(:, :), &
                                  red_space_hess(:, :), red_space_solution(:), &
                                  red_space_hess_vec(:)
-        real(rp) :: eigval, minres_tol, stability_rms
+        real(rp) :: eigval, stability_rms
         character(len=300) :: msg
         real(rp), parameter :: stability_thresh = -1e-2_rp
         real(rp), external :: dnrm2
         external :: dgemm, dgemv
-        logical :: stability_converged, use_jacobi_davidson
+        logical :: stability_converged
 
         ! initialize error flag
         error = 0
@@ -602,16 +602,15 @@ contains
 
             ! add new trial vector from preconditioned residual (Davidson) or from
             ! Jacobi-Davidson correction equations
-            use_jacobi_davidson = settings%diag_solver /= "davidson" .and. &
-                                  iter > settings%jacobi_davidson_start
-            if (use_jacobi_davidson) then
-                minres_tol = 3.0_rp**(-(iter - settings%jacobi_davidson_start - 1))
+            if (settings%diag_solver /= "davidson" .and. &
+                iter > settings%jacobi_davidson_start) then
+                jacobi_davidson_iter = iter - settings%jacobi_davidson_start
             else
-                minres_tol = 0.0_rp
+                jacobi_davidson_iter = 0
             end if
-            call add_trial_vector(residual, 0.0_rp, h_diag, use_jacobi_davidson, &
-                                  solution, eigval, minres_tol, hess_x_funptr, &
-                                  red_space_basis, h_basis, settings, error)
+            call add_trial_vector(residual, 0.0_rp, h_diag, jacobi_davidson_iter, &
+                                  solution, eigval, hess_x_funptr, red_space_basis, &
+                                  h_basis, settings, error)
             ! check if new vector is linearly dependent and the reduced space cannot be
             ! usefully expanded further due to degeneracy and stop here
             if (error == error_gram_schmidt_lin_dep) then
@@ -1713,7 +1712,8 @@ contains
         real(rp), parameter :: eps = epsilon(1.0_rp)
         real(rp) :: beta_start, beta, phi_bar, rhs1, old_beta, alfa, t_norm2, eps_ln, &
                     old_eps, cs, d_bar, sn, delta, g_bar, root, gamma, phi, g_max, &
-                    g_min, tmp, rhs2, a_norm, vec_norm, qr_norm
+                    g_min, tmp, rhs2, a_norm, vec_norm, qr_norm, rel_residual, &
+                    rel_ls_residual
         real(rp), allocatable :: matvec(:), r1(:), r2(:), y(:), w(:), hw(:), w1(:), &
                                  hw1(:), w2(:), hw2(:), v(:), hv(:)
         logical :: stop_iteration
@@ -1846,19 +1846,32 @@ contains
             vec_norm = dnrm2(n, vec, 1_ip)
             qr_norm = phi_bar
 
+            ! relative residuals of the linear system and of the least-squares problem,
+            ! which are computed separately since Fortran does not guarantee that a
+            ! condition guarding a division by a vanishing norm is evaluated first
+            if (vec_norm > 0.0_rp .and. a_norm > 0.0_rp) then
+                rel_residual = qr_norm / (a_norm * vec_norm)
+            else
+                rel_residual = huge(1.0_rp)
+            end if
+            if (a_norm > numerical_zero) then
+                rel_ls_residual = root / a_norm
+            else
+                rel_ls_residual = huge(1.0_rp)
+            end if
+
             ! check if rhs and initial vector are eigenvectors
             if (stop_iteration) then
                 call settings%log("MINRES: beta2 = 0. If M = I, b and x are "// &
                                   "eigenvectors.", verbosity_debug)
                 exit
             ! ||r||  / (||A|| ||x||)
-            else if (vec_norm > 0.0_rp .and. a_norm > 0.0_rp .and. &
-                     qr_norm / (a_norm * vec_norm) <= r_tol) then
+            else if (rel_residual <= r_tol) then
                 call settings%log("MINRES: A solution to Ax = b was found, given "// &
                                   "provided tolerance.", verbosity_debug)
                 exit
             ! ||Ar|| / (||A|| ||r||)
-            else if (a_norm > numerical_zero .and. root / a_norm <= r_tol) then
+            else if (rel_ls_residual <= r_tol) then
                 call settings%log("MINRES: A least-squares solution was found, "// &
                                   "given provided tolerance.", verbosity_debug)
                 exit
@@ -1880,13 +1893,11 @@ contains
                 return
             ! these tests ensure convergence is still achieved when r_tol approaches
             ! machine precision
-            else if (vec_norm > 0.0_rp .and. a_norm > 0.0_rp .and. &
-                     1.0_rp + qr_norm / (a_norm * vec_norm) <= 1.0_rp) then
+            else if (1.0_rp + rel_residual <= 1.0_rp) then
                 call settings%log("MINRES: A solution to Ax = b was found, given "// &
                                   "provided tolerance.", verbosity_debug)
                 exit
-            else if (a_norm > numerical_zero .and. 1.0_rp + root / a_norm <= 1.0_rp) &
-                then
+            else if (1.0_rp + rel_ls_residual <= 1.0_rp) then
                 call settings%log("MINRES: A least-squares solution was found, "// &
                                   "given provided tolerance.", verbosity_debug)
                 exit
@@ -1901,19 +1912,21 @@ contains
 
     end subroutine minres
 
-    subroutine add_trial_vector(residual, level_shift, h_diag, jacobi_davidson, &
-                                solution, eigval, minres_tol, hess_x_funptr, &
-                                red_space_basis, h_basis, settings, error)
+    subroutine add_trial_vector(residual, level_shift, h_diag, jacobi_davidson_iter, &
+                                solution, eigval, hess_x_funptr, red_space_basis, &
+                                h_basis, settings, error)
         !
         ! this subroutine generates a new trial vector from a residual and adds it and
         ! its Hessian linear transformation to the reduced space basis, either by
-        ! preconditioning the residual (Davidson) or by solving the Jacobi-Davidson
-        ! correction equations, it returns an error without changing the reduced space
-        ! basis if the new vector is linearly dependent on it
+        ! preconditioning the residual with the level-shifted Hessian diagonal
+        ! (Davidson, jacobi_davidson_iter = 0) or by solving the Jacobi-Davidson
+        ! correction equations for the solution and its eigenvalue in Jacobi-Davidson
+        ! iteration jacobi_davidson_iter, starting from 1, to a tolerance that is
+        ! tightened with every iteration, it returns an error without changing the
+        ! reduced space basis if the new vector is linearly dependent on it
         !
-        real(rp), intent(in) :: residual(:), level_shift, h_diag(:), solution(:), &
-                                eigval, minres_tol
-        logical, intent(in) :: jacobi_davidson
+        real(rp), intent(in) :: residual(:), level_shift, h_diag(:), solution(:), eigval
+        integer(ip), intent(in) :: jacobi_davidson_iter
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         real(rp), allocatable, intent(inout) :: red_space_basis(:, :), h_basis(:, :)
         class(settings_type), intent(inout) :: settings
@@ -1933,7 +1946,7 @@ contains
         ! allocate new basis vector and its Hessian linear transformation
         allocate(basis_vec(n_param), h_basis_vec(n_param))
 
-        if (.not. jacobi_davidson) then
+        if (jacobi_davidson_iter == 0) then
             ! precondition residual
             call level_shifted_diag_precond(residual, level_shift, h_diag, basis_vec, &
                                             settings, error)
@@ -1951,8 +1964,9 @@ contains
             if (error /= 0) return
         else
             ! solve Jacobi-Davidson correction equations
-            call minres(-residual, hess_x_funptr, solution, eigval, minres_tol, &
-                        basis_vec, h_basis_vec, settings, error)
+            call minres(-residual, hess_x_funptr, solution, eigval, &
+                        3.0_rp**(-(jacobi_davidson_iter - 1)), basis_vec, h_basis_vec, &
+                        settings, error)
             if (error /= 0) return
 
             ! orthonormalize to current orbital space to get new basis vector, a
@@ -2150,10 +2164,9 @@ contains
                                  h_solution(:), residual(:), solution_normalized(:), &
                                  last_solution_normalized(:), &
                                  red_space_hess_eigvals(:), red_space_hess_eigvecs(:, :)
-        integer(ip) :: n_trial, i, initial_imicro, min_idx
+        integer(ip) :: n_trial, i, initial_imicro, min_idx, jacobi_davidson_iter
         logical :: accept_step, micro_converged, newton
-        real(rp) :: residual_norm, red_factor, initial_residual_norm, new_func, ratio, &
-                    minres_tol
+        real(rp) :: residual_norm, red_factor, initial_residual_norm, new_func, ratio
         real(rp), parameter :: &
             newton_eigval_thresh = -1e-5_rp, level_shift_local_thres = 1e-12_rp, &
             solution_overlap_thresh = 0.5_rp, residual_norm_floor = 1e-12_rp, &
@@ -2295,14 +2308,13 @@ contains
                 ! add new trial vector from preconditioned residual (Davidson) or from
                 ! Jacobi-Davidson correction equations
                 if (jacobi_davidson_started) then
-                    minres_tol = 3.0_rp**(-(imicro - imicro_jacobi_davidson))
+                    jacobi_davidson_iter = imicro - imicro_jacobi_davidson + 1
                 else
-                    minres_tol = 0.0_rp
+                    jacobi_davidson_iter = 0
                 end if
-                call add_trial_vector(residual, mu, h_diag, jacobi_davidson_started, &
-                                      solution_normalized, mu, minres_tol, &
-                                      hess_x_funptr, red_space_basis, h_basis, &
-                                      settings, error)
+                call add_trial_vector(residual, mu, h_diag, jacobi_davidson_iter, &
+                                      solution_normalized, mu, hess_x_funptr, &
+                                      red_space_basis, h_basis, settings, error)
                 if (error == error_gram_schmidt_lin_dep) then
                     ! new vector is linearly dependent, so the reduced space cannot
                     ! be usefully expanded further due to degeneracy

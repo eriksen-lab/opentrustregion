@@ -157,10 +157,12 @@ set(OPENTRUSTREGION_SOURCES src/opentrustregion.f90 src/c_interface.f90)
 add_library(opentrustregion ${OPENTRUSTREGION_SOURCES})
 add_library(${otr}::opentrustregion ALIAS opentrustregion)
 
-# C programs compiled against the header of a 64-bit integer library need the same
-# integer width as the library
+# the library's Fortran sources select their integer kinds with USE_ILP64, while C
+# programs compiled against the header of a 64-bit integer library need the same
+# integer width through the namespaced OTR_ILP64, which is the only definition
+# exported with the library target
 if(BLA_SIZEOF_INTEGER EQUAL 8)
-    target_compile_definitions(opentrustregion PUBLIC USE_ILP64)
+    target_compile_definitions(opentrustregion PRIVATE USE_ILP64 INTERFACE OTR_ILP64)
 endif()
 
 # set properties

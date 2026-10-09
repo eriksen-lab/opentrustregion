@@ -673,25 +673,39 @@ class PyInterfaceUnitTests(unittest.TestCase):
 
         # the orbital update interface leaves the Hessian linear transformation unset
         # without an error when the orbital update does not provide one, so that the
-        # solver reports the missing one
-        hess_x_funptr = pointer(hess_x_interface_type())
-        if (
-            UpdateOrbsInterface(
-                lambda kappa, grad, h_diag: (0.0, None), n_param, {}
+        # solver reports the missing one, and reports one that is not callable as an
+        # error of the orbital update
+        for returned, expected_error, case in [
+            (None, 0, "without Hessian linear transformation"),
+            (
+                np.zeros(n_param),
+                1,
+                "with Hessian linear transformation that is not callable",
+            ),
+        ]:
+            exception = {}
+            hess_x_funptr = pointer(hess_x_interface_type())
+            error = UpdateOrbsInterface(
+                lambda kappa, grad, h_diag: (0.0, returned), n_param, exception
             ).call(vector_ptr, pointer(c_real()), vector_ptr, vector_ptr, hess_x_funptr)
-            != 0
-        ):
-            print(
-                " test_callback_interfaces failed: Error reported for orbital update "
-                "without Hessian linear transformation."
-            )
-            test_passed = False
-        if hess_x_funptr[0]:
-            print(
-                " test_callback_interfaces failed: Hessian linear transformation set "
-                "although orbital update did not provide one."
-            )
-            test_passed = False
+            if error != expected_error:
+                print(
+                    f" test_callback_interfaces failed: Error reported wrong for "
+                    f"orbital update {case}."
+                )
+                test_passed = False
+            if expected_error and not isinstance(exception.get("exc"), TypeError):
+                print(
+                    f" test_callback_interfaces failed: Exception not kept for "
+                    f"orbital update {case}."
+                )
+                test_passed = False
+            if hess_x_funptr[0]:
+                print(
+                    f" test_callback_interfaces failed: Hessian linear transformation "
+                    f"set for orbital update {case}."
+                )
+                test_passed = False
 
         # the convergence check interface passes on that the optimization has not
         # converged

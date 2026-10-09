@@ -557,7 +557,11 @@ bool test_stability_check_c(void) {
   c_real h_diag[N_PARAM];
   for (int i = 0; i < N_PARAM; i++)
     h_diag[i] = ctx.hess[i][i];
-  c_real direction[N_PARAM] = {0};
+  /* the direction starts nonzero so that the zeros written at a stable point are
+   * detected */
+  c_real direction[N_PARAM];
+  for (int i = 0; i < N_PARAM; i++)
+    direction[i] = 1.0;
   c_bool stable = false;
   c_int error =
       stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, direction);
@@ -591,6 +595,14 @@ bool test_stability_check_c(void) {
     fprintf(stderr, "test_stability_check_c failed: Hessian linear transformation "
                     "counter was not populated.\n");
     ok = false;
+  }
+  for (int i = 0; i < N_PARAM; i++) {
+    if (direction[i] != 0.0) {
+      fprintf(stderr, "test_stability_check_c failed: Stability check does not return "
+                      "a zero direction for minimum.\n");
+      ok = false;
+      break;
+    }
   }
 
   /* at a saddle, expect unstable */

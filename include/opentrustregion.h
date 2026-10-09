@@ -17,7 +17,9 @@ extern "C" {
 /* ------------------------------------------------------------------
  * Type aliases matching Fortran kinds
  * ------------------------------------------------------------------ */
-#ifdef USE_ILP64
+/* defined by the CMake target of a library with 64-bit integers, define it when
+ * compiling against such a library without CMake */
+#ifdef OTR_ILP64
 typedef int64_t c_int; /* corresponds to integer(c_ip) */
 #else
 typedef int32_t c_int; /* corresponds to integer(c_ip) */

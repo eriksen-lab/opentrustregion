@@ -228,9 +228,16 @@ class UpdateOrbsInterface(CallbackInterface):
             return 1
 
         # an orbital update which does not provide a Hessian linear transformation
-        # leaves the pointer unset so that the solver reports the missing one
-        if not callable(hess_x):
+        # leaves the pointer unset so that the solver reports the missing one, while
+        # one that is not callable is reported as an error of the orbital update
+        if hess_x is None:
             return 0
+        if not callable(hess_x):
+            self.exception["exc"] = TypeError(
+                "Orbital update returned a Hessian linear transformation of type "
+                f"{type(hess_x).__name__}, which is not callable."
+            )
+            return 1
 
         # attach the response interface to the object so that it persists in Python
         # to ensure that it is not garbage collected when the factory completes
