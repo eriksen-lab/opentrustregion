@@ -21,7 +21,7 @@ module opentrustregion_mock
     ! check the C wrappers hand them back
     integer(ip), parameter :: mock_error = 7
     type(stability_state_type), parameter :: mock_nested_state = stability_state_type( &
-        iteration=3, min_eigval=-0.5_rp, residual_rms=0.25_rp, n_hess_x=2)
+        iteration=7, min_eigval=-0.5_rp, residual_rms=0.25_rp, n_hess_x=2)
     type(solver_state_type), parameter :: mock_solver_state = solver_state_type( &
         macro_iteration=4, func=-1.5_rp, grad_rms=0.75_rp, trust_radius=0.5_rp, &
         micro_iteration=6, jacobi_davidson_iteration=1, relative_residual=0.375_rp, &

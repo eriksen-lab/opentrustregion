@@ -127,6 +127,19 @@ module opentrustregion_unit_tests
         integer(ip) :: n_obj_func_calls = 0
     end type
 
+    ! define type for the host context of the double well function whose orbital update
+    ! reads the solver state through a pointer during the optimization and records it
+    ! with the size of the step it receives, in the Euclidean norm and in the norm of
+    ! the absolute Hessian diagonal of the previous point, the metric of the trust
+    ! region of truncated conjugate gradient, for which it keeps the last Hessian
+    ! diagonal
+    type, extends(double_well_context_type) :: double_well_state_context_type
+        type(solver_state_type), pointer :: state => null()
+        type(solver_state_type), allocatable :: seen_states(:)
+        real(rp), allocatable :: step_norms(:), precond_step_norms(:)
+        real(rp) :: h_diag(2) = 1.0_rp
+    end type
+
     ! define type for the host context of the quadratic model 1/2 |x|^2 whose
     ! objective function is evaluated at half the displacement, which holds its
     ! current variables and records the first nonvanishing displacement passed to the
@@ -143,14 +156,9 @@ module opentrustregion_unit_tests
         integer(ip) :: func_case = 0, fail_call = 0
     end type
 
-    ! define type for the host context of the double well function whose orbital
-    ! update reads the solver state through a pointer during the optimization and
-    ! records it with the size of the step it receives
-    type, extends(double_well_context_type) :: double_well_state_context_type
-        type(solver_state_type), pointer :: state => null()
-        type(solver_state_type), allocatable :: seen_states(:)
-        real(rp), allocatable :: step_norms(:)
-    end type
+    ! Hartmann 6D context of the mock callback functions of a solver called without
+    ! settings, which hands them no host context, so that they reach it here instead
+    type(hartmann6d_context_type), target :: settingless_context
 
     ! error code returned by mock callback functions reached without their context,
     ! chosen so that it cannot be mistaken for an expected error code
@@ -485,6 +493,71 @@ contains
         if (state%n_update_orbs_calls > 1) hess_x_funptr => received_hess_x_funptr
 
     end subroutine update_orbs_hess_x_once
+
+    subroutine settingless_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
+                                       error, context)
+        !
+        ! this subroutine describes the orbital update for the Hartmann 6D function of
+        ! a solver called without settings, which reaches the variables through the
+        ! module context since it receives no host context, and returns a Hessian
+        ! linear transformation that does the same
+        !
+        use opentrustregion, only: hess_x_type
+
+        real(rp), intent(in), target :: delta_vars(:)
+        real(rp), intent(out) :: func
+        real(rp), intent(out), target :: grad(:), h_diag(:)
+        procedure(hess_x_type), intent(inout), pointer :: hess_x_funptr
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        class(*), pointer :: module_context
+
+        ! update the orbitals with the module context
+        module_context => settingless_context
+        call update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, &
+                         module_context)
+        hess_x_funptr => settingless_hess_x
+
+    end subroutine settingless_update_orbs
+
+    subroutine settingless_hess_x(x, hess_x, error, context)
+        !
+        ! this subroutine describes the Hessian linear transformation for the Hartmann
+        ! 6D function of a solver called without settings, which reaches the variables
+        ! through the module context since it receives no host context
+        !
+        real(rp), intent(in), target :: x(:)
+        real(rp), intent(out), target :: hess_x(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        class(*), pointer :: module_context
+
+        ! apply the Hessian with the module context
+        module_context => settingless_context
+        call hess_x_fun(x, hess_x, error, module_context)
+
+    end subroutine settingless_hess_x
+
+    function settingless_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes the objective function evaluation for the Hartmann
+        ! 6D function of a solver called without settings, which reaches the variables
+        ! through the module context since it receives no host context
+        !
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        class(*), pointer :: module_context
+
+        ! evaluate the function with the module context
+        module_context => settingless_context
+        func = obj_func(delta_vars, error, module_context)
+
+    end function settingless_obj_func
 
     logical function inject_fault(context, callback)
         !
@@ -1042,9 +1115,10 @@ contains
         !
         ! this subroutine describes the orbital update of the double well function,
         ! which also records the solver state it reads through the pointer in its
-        ! context and the size of the step it receives
+        ! context and the size of the step it receives in the Euclidean norm and in
+        ! the norm of the absolute Hessian diagonal of the previous point
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion, only: hess_x_type, precond_floor
 
         real(rp), intent(in), target :: delta_vars(:)
         real(rp), intent(out) :: func
@@ -1058,13 +1132,19 @@ contains
                                      error, context)
         if (error /= 0) return
 
-        ! record the state and the size of the step
+        ! record the state and the size of the step in both norms and keep the
+        ! Hessian diagonal for the norm of the next step
         select type (context)
         class is (double_well_state_context_type)
             if (.not. allocated(context%seen_states)) &
-                allocate(context%seen_states(0), context%step_norms(0))
+                allocate(context%seen_states(0), context%step_norms(0), &
+                         context%precond_step_norms(0))
             context%seen_states = [context%seen_states, context%state]
             context%step_norms = [context%step_norms, norm2(delta_vars)]
+            context%precond_step_norms = [ &
+                context%precond_step_norms, &
+                sqrt(sum(delta_vars**2 / max(abs(context%h_diag), precond_floor)))]
+            context%h_diag = h_diag
         end select
 
     end subroutine state_reading_update_orbs
@@ -1622,7 +1702,7 @@ contains
              error_project, error_conv_check]
         character(len=20) :: call_number
         type(hartmann6d_fault_context_type), target :: fault_context
-        real(rp) :: final_grad(n_param), start_vars(2)
+        real(rp) :: final_grad(n_param), start_vars(2), final_vars(n_param)
         procedure(update_orbs_type), pointer :: update_orbs_funptr
         procedure(obj_func_type), pointer :: obj_func_funptr
         type(solver_settings_type) :: settings, uninitialized_settings
@@ -1632,7 +1712,9 @@ contains
         type(double_well_state_context_type), target :: state_context
         type(solver_state_type), target :: state
         type(solver_state_type) :: explicit_state
-        integer(ip) :: n_updates, i_update
+        integer(ip) :: n_updates, i_update, i_line_search
+        real(rp), allocatable :: step_norms(:)
+        character(len=60) :: case_name
 
         ! assume tests pass
         test_solver = .true.
@@ -1926,35 +2008,42 @@ contains
             write(stderr, *) "test_solver failed: Settings of the caller changed."
             test_solver = .false.
         end if
+        if (index(context%log_message, " "//settings_uninitialized_warning_msg) == 0) &
+            then
+            write(stderr, *) "test_solver failed: Warning not printed for settings "// &
+                "that were not initialized."
+            test_solver = .false.
+        end if
 
-        ! run solver without settings, so that it uses the default settings, and with
-        ! the default settings and check that both take exactly the same steps, the
-        ! stationary point needs no test context, which the solver cannot hand to the
-        ! callback functions without settings
-        settings = default_settings
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
-                    explicit_state)
+        ! run solver from the saddle point of the Hartmann 6D function, whose path
+        ! depends on the settings, with the default settings and without settings and
+        ! check that both take exactly the same steps to the same point, the callback
+        ! functions reach the variables through the module context since the solver
+        ! hands them no host context without settings
+        update_orbs_funptr => settingless_update_orbs
+        obj_func_funptr => settingless_obj_func
+        settingless_context%vars = saddle_point
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, &
+                    default_settings, explicit_state)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error with default settings."
+            test_solver = .false.
+        end if
+        final_vars = settingless_context%vars
+        settingless_context%vars = saddle_point
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, state=state)
         if (error /= 0) then
             write(stderr, *) "test_solver failed: Produced error without settings."
             test_solver = .false.
         end if
-        if (state%n_update_orbs /= explicit_state%n_update_orbs .or. &
+        if (any(abs(settingless_context%vars - final_vars) > 0.0_rp) .or. &
+            state%n_update_orbs /= explicit_state%n_update_orbs .or. &
+            state%n_obj_func /= explicit_state%n_obj_func .or. &
             state%n_hess_x /= explicit_state%n_hess_x .or. &
-            state%stability_state%n_hess_x /= &
-            explicit_state%stability_state%n_hess_x .or. &
-            abs(state%func - explicit_state%func) > 0.0_rp .or. &
-            abs(state%grad_rms - explicit_state%grad_rms) > 0.0_rp .or. &
-            abs(state%stability_state%min_eigval - &
-                explicit_state%stability_state%min_eigval) > 0.0_rp) then
+            state%stability_state%n_hess_x /= explicit_state%stability_state%n_hess_x) &
+            then
             write(stderr, *) "test_solver failed: Did not use the default settings "// &
                 "without settings."
-            test_solver = .false.
-        end if
-        if (index(context%log_message, " "//settings_uninitialized_warning_msg) == 0) &
-            then
-            write(stderr, *) "test_solver failed: Warning not printed for settings "// &
-                "that were not initialized."
             test_solver = .false.
         end if
         update_orbs_funptr => update_orbs
@@ -2065,140 +2154,163 @@ contains
             test_solver = .false.
         end if
 
-        ! minimize the double well function x^2 - y^2 + y^4 from (0.5, 0) with a state
-        ! record, which the orbital update reads during the optimization through the
-        ! pointer in its context, and without random trial vectors, so that the solver
+        ! minimize the double well function x^2 - y^2 + y^4 from (0.5, 0) with every
+        ! subsystem solver, without and with the line search, and with a state record,
+        ! which the orbital update reads during the optimization through the pointer
+        ! in its context, and without random trial vectors, so that (Jacobi-)Davidson
         ! first converges to the saddle point at the origin, which the requested
-        ! stability check finds unstable, and then continues to a minimum
+        ! stability check finds unstable, and then continues to a minimum, while
+        ! truncated conjugate gradient, whose initial residual is randomly perturbed,
+        ! leaves the line through the saddle point and reaches a minimum directly
         update_orbs_funptr => state_reading_update_orbs
         obj_func_funptr => double_well_obj_func
-        call settings%init(error)
-        settings%stability = .true.
-        settings%n_random_trial_vectors = 0
-        settings%start_trust_radius = 0.3_rp
-        settings%context => state_context
-        state_context%vars = [0.5_rp, 0.0_rp]
         state_context%state => state
-        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings, state)
-        if (error /= 0) then
-            write(stderr, *) "test_solver failed: Produced error with state record."
-            test_solver = .false.
-        end if
-        if (abs(abs(state_context%vars(2)) - 1.0_rp / sqrt(2.0_rp)) > var_thres) then
-            write(stderr, *) "test_solver failed: Did not continue from the saddle "// &
-                "point of the double well function to a minimum."
-            test_solver = .false.
-        end if
+        do i_solver = 1, size(subsystem_solver_options)
+            do i_line_search = 0, 1
+                call settings%init(error)
+                settings%subsystem_solver = subsystem_solver_options(i_solver)
+                settings%line_search = i_line_search == 1
+                settings%stability = .true.
+                settings%n_random_trial_vectors = 0
+                settings%start_trust_radius = 0.3_rp
+                settings%context => state_context
+                case_name = trim(subsystem_solver_options(i_solver))// &
+                            " subsystem solver"
+                if (settings%line_search) &
+                    case_name = trim(case_name)//" and line search"
+                state_context%vars = [0.5_rp, 0.0_rp]
+                state_context%n_obj_func_calls = 0
+                if (allocated(state_context%seen_states)) &
+                    deallocate(state_context%seen_states, state_context%step_norms, &
+                               state_context%precond_step_norms)
+                call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, &
+                            settings, state)
+                if (error /= 0) then
+                    write(stderr, *) "test_solver failed: Produced error with "// &
+                        "state record for "//trim(case_name)//"."
+                    test_solver = .false.
+                end if
+                if (abs(abs(state_context%vars(2)) - 1.0_rp / sqrt(2.0_rp)) > &
+                    var_thres) then
+                    write(stderr, *) "test_solver failed: Did not continue from "// &
+                        "the saddle point of the double well function to a minimum "// &
+                        "for "//trim(case_name)//"."
+                    test_solver = .false.
+                end if
 
-        ! check the state the solver returns, at the converged point, against the
-        ! orbital updates the orbital update recorded
-        n_updates = 0
-        if (allocated(state_context%seen_states)) &
-            n_updates = size(state_context%seen_states)
-        if (state%macro_iteration /= n_updates - 1 .or. &
-            abs(state%func - double_well_func(state_context%vars)) > tol .or. &
-            abs(state%grad_rms - norm2([ &
-                2.0_rp * state_context%vars(1), -2.0_rp * state_context%vars(2) + &
-                4.0_rp * state_context%vars(2)**3]) / sqrt(2.0_rp)) > tol .or. &
-            state%trust_radius <= 0.0_rp .or. state%n_update_orbs /= n_updates .or. &
-            state%n_obj_func /= state_context%n_obj_func_calls .or. &
-            state%max_precision_reached) then
-            write(stderr, *) "test_solver failed: Returned state wrong."
-            test_solver = .false.
-        end if
+                ! check the state the solver returns, at the converged point, against
+                ! the orbital updates the orbital update recorded
+                n_updates = 0
+                if (allocated(state_context%seen_states)) &
+                    n_updates = size(state_context%seen_states)
+                if (state%macro_iteration /= n_updates - 1 .or. &
+                    abs(state%func - double_well_func(state_context%vars)) > tol .or. &
+                    abs(state%grad_rms - norm2([2.0_rp * state_context%vars(1), &
+                                                -2.0_rp * state_context%vars(2) + &
+                                                4.0_rp * state_context%vars(2)**3]) / &
+                        sqrt(2.0_rp)) > tol .or. state%trust_radius <= 0.0_rp) then
+                    write(stderr, *) "test_solver failed: Returned state not that "// &
+                        "of the converged point for "//trim(case_name)//"."
+                    test_solver = .false.
+                end if
+                if (state%n_update_orbs /= n_updates .or. &
+                    state%n_obj_func /= state_context%n_obj_func_calls) then
+                    write(stderr, *) "test_solver failed: Counters in the returned "// &
+                        "state wrong for "//trim(case_name)//"."
+                    test_solver = .false.
+                end if
+                if (state%max_precision_reached) then
+                    write(stderr, *) "test_solver failed: Maximum precision "// &
+                        "flagged in the returned state for "//trim(case_name)//"."
+                    test_solver = .false.
+                end if
 
-        ! check the state the orbital update read during the optimization: the first
-        ! update sees the starting trust radius before anything was evaluated, every
-        ! later one the previous macro iteration and the step it is given, the second
-        ! one the level shift of the first step, which the trust radius truncates, the
-        ! level shift never being negative or a negative zero, and
-        ! one update the step along the unstable mode, without micro iterations, level
-        ! shift and residual, after steps of the subsystem solver
-        if (n_updates < 3) then
-            write(stderr, *) "test_solver failed: Too few orbital updates to check "// &
-                "the state during the optimization."
-            test_solver = .false.
-        else
-            associate (seen => state_context%seen_states)
-                if (seen(1)%macro_iteration /= 0 .or. seen(1)%n_update_orbs /= 0 .or. &
-                    abs(seen(1)%trust_radius - 0.3_rp) > tol .or. &
-                    seen(1)%micro_iteration /= 0 .or. abs(seen(1)%step_size) > tol) then
-                    write(stderr, *) "test_solver failed: State wrong before the "// &
-                        "starting point is evaluated."
+                ! check the state the orbital update read during the optimization: the
+                ! first update sees the starting trust radius before anything was
+                ! evaluated, every later one the previous macro iteration and the step
+                ! it is given, whose size is measured in the metric of the trust
+                ! region, the Euclidean norm for (Jacobi-)Davidson and the norm of the
+                ! absolute Hessian diagonal of the previous point for truncated
+                ! conjugate gradient, and scaled by the line search, the second one the
+                ! level shift of the first step, which the trust radius truncates for
+                ! (Jacobi-)Davidson and which vanishes for truncated conjugate
+                ! gradient, the level shift never being negative or a negative zero,
+                ! and, for (Jacobi-)Davidson, one update the step along the unstable
+                ! mode, without micro iterations, level shift and residual, after steps
+                ! of the subsystem solver
+                if (n_updates < 3) then
+                    write(stderr, *) "test_solver failed: Too few orbital updates "// &
+                        "to check the state during the optimization for "// &
+                        trim(case_name)//"."
                     test_solver = .false.
+                    cycle
                 end if
-                if (any([(seen(i_update)%macro_iteration /= i_update - 2 .or. &
-                          seen(i_update)%n_update_orbs /= i_update - 1, i_update=2, &
-                          n_updates)])) then
-                    write(stderr, *) "test_solver failed: Macro iteration or "// &
-                        "number of orbital updates in the state wrong during the "// &
-                        "optimization."
-                    test_solver = .false.
+                if (settings%subsystem_solver == "tcg") then
+                    step_norms = state_context%precond_step_norms
+                else
+                    step_norms = state_context%step_norms
                 end if
-                if (any([(abs(seen(i_update)%step_size - &
-                              state_context%step_norms(i_update)) > tol, i_update=2, &
-                          n_updates)])) then
-                    write(stderr, *) "test_solver failed: Step size in the state "// &
-                        "wrong during the optimization."
-                    test_solver = .false.
-                end if
-                if (seen(2)%level_shift <= 0.0_rp) then
-                    write(stderr, *) "test_solver failed: Level shift of the step "// &
-                        "the trust radius truncates not in the state."
-                    test_solver = .false.
-                end if
-                if (any([(sign(1.0_rp, seen(i_update)%level_shift) < 0.0_rp, &
-                          i_update=2, n_updates)])) then
-                    write(stderr, *) "test_solver failed: Negative level shift or "// &
-                        "negative zero in the state."
-                    test_solver = .false.
-                end if
-                if (.not. any([(seen(i_update)%micro_iteration == 0 .and. &
-                                seen(i_update)%jacobi_davidson_iteration == 0 .and. &
-                                abs(seen(i_update)%level_shift) < tol .and. &
-                                abs(seen(i_update)%relative_residual) < tol .and. &
-                                seen(i_update)%step_size > 0.0_rp .and. &
-                                seen(i_update - 1)%micro_iteration > 0, i_update=3, &
-                                n_updates)])) then
-                    write(stderr, *) "test_solver failed: Step along the unstable "// &
-                        "mode after steps of the subsystem solver not in the state."
-                    test_solver = .false.
-                end if
-            end associate
-        end if
-
-        ! minimize the double well function again with the line search and check that
-        ! its objective function evaluations are counted as well and that the step
-        ! sizes in the state are those of the steps the line search scales
-        settings%line_search = .true.
-        state_context%vars = [0.5_rp, 0.0_rp]
-        state_context%n_obj_func_calls = 0
-        if (allocated(state_context%seen_states)) &
-            deallocate(state_context%seen_states, state_context%step_norms)
-        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings, state)
-        if (error /= 0) then
-            write(stderr, *) "test_solver failed: Produced error with line search."
-            test_solver = .false.
-        end if
-        if (state%n_obj_func /= state_context%n_obj_func_calls) then
-            write(stderr, *) "test_solver failed: Reported number of objective "// &
-                "function evaluations wrong with line search."
-            test_solver = .false.
-        end if
-        n_updates = 0
-        if (allocated(state_context%seen_states)) &
-            n_updates = size(state_context%seen_states)
-        if (n_updates < 2) then
-            write(stderr, *) "test_solver failed: Too few orbital updates to check "// &
-                "the step sizes with line search."
-            test_solver = .false.
-        else if (any([(abs(state_context%seen_states(i_update)%step_size - &
-                           state_context%step_norms(i_update)) > tol, i_update=2, &
-                       n_updates)])) then
-            write(stderr, *) "test_solver failed: Step size in the state wrong "// &
-                "with line search."
-            test_solver = .false.
-        end if
+                associate (seen => state_context%seen_states)
+                    if (seen(1)%macro_iteration /= 0 .or. &
+                        seen(1)%n_update_orbs /= 0 .or. &
+                        abs(seen(1)%trust_radius - settings%start_trust_radius) > &
+                        tol .or. seen(1)%micro_iteration /= 0 .or. &
+                        abs(seen(1)%step_size) > tol) then
+                        write(stderr, *) "test_solver failed: State wrong before "// &
+                            "the starting point is evaluated for "//trim(case_name)//"."
+                        test_solver = .false.
+                    end if
+                    if (any([(seen(i_update)%macro_iteration /= i_update - 2 .or. &
+                              seen(i_update)%n_update_orbs /= i_update - 1, &
+                              i_update=2, n_updates)])) then
+                        write(stderr, *) "test_solver failed: Macro iteration or "// &
+                            "number of orbital updates in the state wrong during "// &
+                            "the optimization for "//trim(case_name)//"."
+                        test_solver = .false.
+                    end if
+                    if (any([( &
+                        abs(seen(i_update)%step_size - step_norms(i_update)) > tol, &
+                        i_update=2, n_updates)])) then
+                        write(stderr, *) "test_solver failed: Step size in the "// &
+                            "state wrong during the optimization for "// &
+                            trim(case_name)//"."
+                        test_solver = .false.
+                    end if
+                    if (settings%subsystem_solver == "tcg") then
+                        if (any([(abs(seen(i_update)%level_shift) > 0.0_rp, &
+                                  i_update=2, n_updates)])) then
+                            write(stderr, *) "test_solver failed: Level shift in "// &
+                                "the state does not vanish for "//trim(case_name)//"."
+                            test_solver = .false.
+                        end if
+                    else if (seen(2)%level_shift <= 0.0_rp) then
+                        write(stderr, *) "test_solver failed: Level shift of the "// &
+                            "step the trust radius truncates not in the state for "// &
+                            trim(case_name)//"."
+                        test_solver = .false.
+                    end if
+                    if (any([(sign(1.0_rp, seen(i_update)%level_shift) < 0.0_rp, &
+                              i_update=2, n_updates)])) then
+                        write(stderr, *) "test_solver failed: Negative level shift "// &
+                            "or negative zero in the state for "//trim(case_name)//"."
+                        test_solver = .false.
+                    end if
+                    if (settings%subsystem_solver /= "tcg" .and. .not. any([( &
+                        seen(i_update)%micro_iteration == 0 .and. &
+                        seen(i_update)%jacobi_davidson_iteration == 0 .and. &
+                        abs(seen(i_update)%level_shift) < tol .and. &
+                        abs(seen(i_update)%relative_residual) < tol .and. &
+                        seen(i_update)%step_size > 0.0_rp .and. &
+                        seen(i_update - 1)%micro_iteration > 0, i_update=3, &
+                        n_updates)])) then
+                        write(stderr, *) "test_solver failed: Step along the "// &
+                            "unstable mode after steps of the subsystem solver not "// &
+                            "in the state for "//trim(case_name)//"."
+                        test_solver = .false.
+                    end if
+                end associate
+            end do
+        end do
 
         ! inject faults by running the solver from the saddle point, where it performs
         ! the internal stability check and the line search along the unstable mode,
@@ -2720,8 +2832,8 @@ contains
         !
         use opentrustregion, only: &
             solver_settings_type, hess_x_type, obj_func_type, check_stationary_point, &
-            error_solver, error_obj_func, started_at_saddle_point_warning_msg, &
-            reached_saddle_point_warning_msg
+            error_solver, error_obj_func, subsystem_solver_options, &
+            started_at_saddle_point_warning_msg, reached_saddle_point_warning_msg
         use test_reference, only: arm_host_context, host_context_reached
 
         type(solver_settings_type) :: settings
@@ -2731,7 +2843,7 @@ contains
         procedure(obj_func_type), pointer :: obj_func_funptr
         real(rp) :: kappa(2), kappa_norm
         logical :: stable
-        integer(ip) :: error
+        integer(ip) :: error, i_solver
 
         ! the double well function x^2 - y^2 + y^4 has the Hessian diagonal (2, -2) at
         ! its saddle point at the origin, where the logarithmic line search along the
@@ -2753,9 +2865,8 @@ contains
         ! callback functions of the stability check, that the Hessian linear
         ! transformations of the check and the objective function evaluations of the
         ! line search are added to the solver's counters, that the step along the
-        ! unstable mode is returned with its Euclidean norm, which is the norm of the
-        ! trust region of the Davidson solvers, and that the warning for starting at a
-        ! saddle point is printed
+        ! unstable mode is returned and that the warning for starting at a saddle point
+        ! is printed
         call setup_settings(settings, context)
         state%n_hess_x = 5
         state%n_obj_func = 3
@@ -2777,11 +2888,6 @@ contains
         if (abs(kappa(1)) > tol .or. abs(abs(kappa(2)) - saddle_step) > tol) then
             write(stderr, *) "test_check_stationary_point failed: Step along "// &
                 "unstable mode not correct."
-            test_check_stationary_point = .false.
-        end if
-        if (abs(kappa_norm - saddle_step) > tol) then
-            write(stderr, *) "test_check_stationary_point failed: Euclidean norm "// &
-                "of the step along the unstable mode not returned."
             test_check_stationary_point = .false.
         end if
         if (.not. host_context_reached("check_stationary_point", context)) &
@@ -2845,27 +2951,34 @@ contains
             test_check_stationary_point = .false.
         end if
 
-        ! check the saddle point for the truncated conjugate gradient solver, whose
-        ! trust region is measured in the norm of the absolute Hessian diagonal, and
-        ! check that the norm of the step along the unstable mode is returned in it
-        call setup_settings(settings, context)
-        settings%stability_settings%context => context
-        settings%subsystem_solver = "tcg"
-        context%vars = [0.0_rp, 0.0_rp]
-        call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
-                                    obj_func_funptr, 2_ip, settings, state, stable, &
-                                    kappa, kappa_norm, error)
-        if (error /= 0) then
-            write(stderr, *) "test_check_stationary_point failed: Produced error "// &
-                "at saddle point for truncated conjugate gradient."
-            test_check_stationary_point = .false.
-        end if
-        if (abs(kappa_norm - sqrt(sum(kappa**2 / abs(saddle_h_diag)))) > tol) then
-            write(stderr, *) "test_check_stationary_point failed: Norm of the step "// &
-                "along the unstable mode not returned in the metric of the "// &
-                "absolute Hessian diagonal for truncated conjugate gradient."
-            test_check_stationary_point = .false.
-        end if
+        ! check the saddle point for every subsystem solver and check that the norm of
+        ! the step along the unstable mode is returned in the metric of its trust
+        ! region, the Euclidean norm for (Jacobi-)Davidson and the norm of the absolute
+        ! Hessian diagonal for truncated conjugate gradient
+        do i_solver = 1, size(subsystem_solver_options)
+            call setup_settings(settings, context)
+            settings%stability_settings%context => context
+            settings%subsystem_solver = subsystem_solver_options(i_solver)
+            context%vars = [0.0_rp, 0.0_rp]
+            call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
+                                        obj_func_funptr, 2_ip, settings, state, &
+                                        stable, kappa, kappa_norm, error)
+            if (error /= 0) then
+                write(stderr, *) "test_check_stationary_point failed: Produced "// &
+                    "error at saddle point for "// &
+                    trim(subsystem_solver_options(i_solver))//" subsystem solver."
+                test_check_stationary_point = .false.
+            end if
+            if (abs(kappa_norm - &
+                    merge(sqrt(sum(kappa**2 / abs(saddle_h_diag))), saddle_step, &
+                          settings%subsystem_solver == "tcg")) > tol) then
+                write(stderr, *) "test_check_stationary_point failed: Norm of the "// &
+                    "step along the unstable mode not returned in the metric of "// &
+                    "the trust region for "// &
+                    trim(subsystem_solver_options(i_solver))//" subsystem solver."
+                test_check_stationary_point = .false.
+            end if
+        end do
 
         ! check that a minimum is found to be stable
         call setup_settings(settings, context)
@@ -4620,10 +4733,6 @@ contains
         ! assume tests pass
         test_minres = .true.
 
-        ! start the counter of Hessian linear transformations, which this test does
-        ! not check
-        n_hess_x = 0
-
         ! setup settings object
         call setup_settings(settings, context)
 
@@ -4643,16 +4752,24 @@ contains
         rhs = matmul(context%hess, solution) - mu * solution
 
         ! run minimum residual method, check if Jacobi-Davidson correction equation is
-        ! solved and whether Hessian linear transformation is correct, if rhs and
+        ! solved, whether Hessian linear transformation is correct and whether the
+        ! Hessian linear transformations of the iterations are counted, if rhs and
         ! solution are orthogonal (as in Jacobi-Davidson), the final vector will be
         ! orthogonal to the solution vector and consequently the Hessian linear
         ! transformation of the projected vector is equivalent to the Hessian linear
         ! transformation of the vector itself
+        n_hess_x = 0
+        context%n_hess_x_calls = 0
         call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
                     hess_vector, settings, n_hess_x, error)
         if (error /= 0) then
             write(stderr, *) "test_minres failed: Produced error for correction "// &
                 "equation."
+            test_minres = .false.
+        end if
+        if (context%n_hess_x_calls < 1 .or. n_hess_x /= context%n_hess_x_calls) then
+            write(stderr, *) "test_minres failed: Hessian linear transformations "// &
+                "of the iterations not counted for correction equation."
             test_minres = .false.
         end if
         corr_vector = vector - dot_product(vector, solution) * solution
@@ -4712,11 +4829,12 @@ contains
 
         ! run minimum residual method from an initial guess which solves the
         ! Jacobi-Davidson correction equation exactly and check that the guess is
-        ! returned with only its own Hessian linear transformation
+        ! returned with only its own Hessian linear transformation, which is counted
         call random_number(guess)
         guess = guess - dot_product(guess, solution) * solution
         corr_vector = matmul(context%hess, guess) - mu * guess
         rhs = -(corr_vector - dot_product(corr_vector, solution) * solution)
+        n_hess_x = 0
         context%n_hess_x_calls = 0
         call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
                     hess_vector, settings, n_hess_x, error, guess=guess)
@@ -4728,6 +4846,11 @@ contains
         if (context%n_hess_x_calls /= 1) then
             write(stderr, *) "test_minres failed: Initial guess which solves the "// &
                 "equation not accepted after a single Hessian linear transformation."
+            test_minres = .false.
+        end if
+        if (n_hess_x /= 1) then
+            write(stderr, *) "test_minres failed: Hessian linear transformation of "// &
+                "initial guess which solves the equation not counted."
             test_minres = .false.
         end if
         if (any(abs(vector - guess) > tol)) then
@@ -6174,12 +6297,16 @@ contains
         context%hess = hartmann6d_hessian(context%vars)
         h_diag = [(context%hess(i, i), i=1, size(h_diag))]
 
-        ! run truncated conjugate gradient, check whether the solution stays within the
-        ! trust region and reduces the function value, whether its norm in the metric
-        ! of the absolute Hessian diagonal is returned, whether the micro iterations
-        ! and the converged residual relative to the initial one are in the state and
-        ! whether the reported numbers of Hessian linear transformations and objective
-        ! function evaluations agree with the calls
+        ! run truncated conjugate gradient with micro iterations left in the state by
+        ! a previous subproblem, check whether the solution stays within the trust
+        ! region and reduces the function value, whether its norm in the metric of the
+        ! absolute Hessian diagonal is returned, whether the micro iterations, one per
+        ! Hessian linear transformation, and the converged residual relative to the
+        ! initial one are in the state and whether the reported numbers of Hessian
+        ! linear transformations and objective function evaluations agree with the
+        ! calls
+        state%micro_iteration = 100
+        state%jacobi_davidson_iteration = 100
         state%n_hess_x = 0
         state%n_obj_func = 0
         context%n_hess_x_calls = 0
@@ -6196,7 +6323,9 @@ contains
                                     "near minimum", n_hess_x=state%n_hess_x, &
                                     n_obj_func=state%n_obj_func)) &
             test_truncated_conjugate_gradient = .false.
-        if (state%micro_iteration < 1 .or. state%jacobi_davidson_iteration /= 0 .or. &
+        if (state%micro_iteration < 1 .or. &
+            state%micro_iteration /= context%n_hess_x_calls .or. &
+            state%jacobi_davidson_iteration /= 0 .or. &
             state%relative_residual <= 0.0_rp .or. state%relative_residual > 1e-3_rp) &
             then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Micro "// &
@@ -6381,8 +6510,8 @@ contains
         ! first step, so that the trust radius shrinks without a new evaluation while
         ! the step still lies within it before the step is cut back to the shrunk trust
         ! region boundary, evaluated again and accepted, and check that the objective
-        ! function is evaluated twice and that the returned step lies at the trust
-        ! region boundary
+        ! function is evaluated and counted twice and that the returned step lies at
+        ! the trust region boundary
         call setup_settings(settings, fault_context)
         fault_context%vars = near_minimum
         fault_context%hess = hartmann6d_hessian(near_minimum)
@@ -6391,6 +6520,7 @@ contains
         h_diag = [(fault_context%hess(i, i), i=1, size(h_diag))]
         obj_func_funptr => first_step_rejecting_obj_func
         state%trust_radius = 10.0_rp
+        state%n_obj_func = 0
         fault_context%n_callback_calls = 0
         call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
                                           obj_func_funptr, hess_x_funptr, settings, &
@@ -6404,6 +6534,12 @@ contains
             write(stderr, *) "test_truncated_conjugate_gradient failed: Objective "// &
                 "function not evaluated once more for cut back step when step "// &
                 "inside trust region is rejected."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (state%n_obj_func /= 2) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Objective "// &
+                "function evaluations not counted when step inside trust region is "// &
+                "rejected."
             test_truncated_conjugate_gradient = .false.
         end if
         ratio = (hartmann6d_func(near_minimum + solution) - func) / dot_product( &

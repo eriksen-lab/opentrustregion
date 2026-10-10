@@ -124,7 +124,9 @@ module c_interface
         type(stability_state_type_c) :: stability_state
     end type
 
-    ! bundle of the C callback functions belonging to a single call
+    ! bundle of the C callback functions belonging to a single call, together with
+    ! the host context and, if the host gave a record of the state, the state of the
+    ! call and this record, into which the state is copied
     type :: c_callbacks_type
         procedure(update_orbs_c_type), pointer, nopass :: update_orbs => null()
         procedure(hess_x_c_type), pointer, nopass :: hess_x => null()
@@ -179,7 +181,8 @@ module c_interface
         conv_check_f_wrapper
     procedure(logger_type), pointer :: logger_f_wrapper_ptr => logger_f_wrapper
 
-    ! interfaces for converting C settings to Fortran settings
+    ! interfaces for converting settings between C and Fortran and states from
+    ! Fortran to C
     interface assignment(=)
         module procedure assign_solver_f_c
         module procedure assign_stability_f_c
@@ -433,6 +436,8 @@ contains
         !
         type(c_callbacks_type), intent(in) :: callbacks
 
+        ! copy the solver and the stability check state into the host's records which
+        ! were given
         if (associated(callbacks%solver_state_c)) &
             callbacks%solver_state_c = callbacks%solver_state
         if (associated(callbacks%stability_state_c)) &

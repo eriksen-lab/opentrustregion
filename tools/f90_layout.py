@@ -63,9 +63,10 @@ The layout of a statement is the best one under these rules:
    whole where breaking outside it costs no line. The condition of a single-line ``if``
    is looser than the statement it controls, and the commas between the entities of a
    declaration are looser than an initializer. A break between the control list of a
-   ``read`` or ``write`` statement and its input/output list costs as much as splitting
-   a group that fits whole, so that it is only taken where it saves a line or keeps the
-   control list, such as a format that would otherwise be split, whole.
+   ``read`` or ``write`` statement, also one a single-line ``if`` controls, and its
+   input/output list costs as much as splitting a group that fits whole, so that it is
+   only taken where it saves a line or keeps the control list, such as a format that
+   would otherwise be split, whole.
 5. A trailing ``then`` that does not fit takes a hanging indent of four columns like
    any other continuation line. Breaking before it is looser than any break in the
    condition.
@@ -96,7 +97,8 @@ The layout of a statement is the best one under these rules:
    An operator named in ``operator(...)`` has no blanks.
 8. The format of an input/output statement (the second positional or the ``fmt``
    argument of ``read`` and ``write``, and the first item of ``print``) is written in
-   single quotes, and every other string literal in double quotes. String literals
+   single quotes, like the pieces of a split format joined to it by ``//``, and every
+   other string literal in double quotes. String literals
    joined by ``//`` are merged into one, and a string literal is only
    split after a blank between two words, into ``"... "// &`` and ``"..."`` on the next
    line, where the word starting the next line contains a letter or digit, so that a
@@ -1285,13 +1287,14 @@ def structure(code: str, text: str, context: Context) -> Structure:
                 strings[b] = text[first]
                 lengths[b] = last - first + 1
 
-    # a break between the control list of a read or write statement and its
-    # input/output list
+    # a break between the control list of a read or write statement, also one a
+    # single-line if controls, and its input/output list
     io_breaks: Set[int] = set()
-    m = re.match(r"\s*(read|write)\s*\(", lower)
-    if m and match.get(m.end() - 1) is not None:
-        io_breaks.add(match[m.end() - 1] + 1)
-        candidates.update(io_breaks)
+    for start in statement_starts(code):
+        m = re.match(r"(read|write)\s*\(", lower[start:])
+        if m and match.get(start + m.end() - 1) is not None:
+            io_breaks.add(match[start + m.end() - 1] + 1)
+    candidates.update(io_breaks)
 
     # a break before a lone then, which is looser than any break in the condition, and
     # before the result or bind of a procedure

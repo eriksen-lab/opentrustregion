@@ -494,8 +494,9 @@ contains
                 "for settings that were not initialized."
             test_solver_c_wrapper = .false.
         end if
-        if (solver_state_bundled .or. associated(received_callbacks%solver_state_c)) &
-            then
+        if (solver_state_bundled .or. &
+            associated(received_callbacks%solver_state_c) .or. &
+            associated(received_stability_callbacks%solver_state_c)) then
             write(stderr, *) "test_solver_c_wrapper failed: State handed to the "// &
                 "callback bundles without a host's record."
             test_solver_c_wrapper = .false.
@@ -1674,9 +1675,11 @@ contains
         ! this function tests that the function that converts a solver state from
         ! Fortran to C correctly performs this conversion
         !
+        use opentrustregion, only: solver_state_type
         use c_interface, only: solver_state_type_c, assignment(=)
         use test_reference, only: ref_solver_state, operator(/=)
 
+        type(solver_state_type) :: state
         type(solver_state_type_c) :: state_c
 
         ! assume tests pass
@@ -1688,6 +1691,17 @@ contains
         if (state_c /= ref_solver_state) then
             write(stderr, *) "test_assign_solver_state_c_f failed: State not "// &
                 "converted correctly."
+            test_assign_solver_state_c_f = .false.
+        end if
+
+        ! convert the reference state with the opposite maximum precision flag, so
+        ! that a conversion which writes a constant flag is detected
+        state = ref_solver_state
+        state%max_precision_reached = .false.
+        state_c = state
+        if (state_c /= state) then
+            write(stderr, *) "test_assign_solver_state_c_f failed: State with the "// &
+                "opposite maximum precision flag not converted correctly."
             test_assign_solver_state_c_f = .false.
         end if
 
