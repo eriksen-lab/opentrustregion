@@ -1631,6 +1631,7 @@ contains
         type(half_step_context_type), target :: half_step_context
         type(double_well_state_context_type), target :: state_context
         type(solver_state_type), target :: state
+        type(solver_state_type) :: explicit_state
         integer(ip) :: n_updates, i_update
 
         ! assume tests pass
@@ -1904,9 +1905,10 @@ contains
         end if
 
         ! run solver with settings that were not initialized but carry a logging
-        ! function and check that these are initialized and that a warning is printed
-        ! through the logging function, the initialization also resets their host
-        ! context, so the callback functions are ones that need no test context
+        ! function and check that a warning is printed through the logging function and
+        ! that the solver initializes a copy of them, which leaves the caller's settings
+        ! as they are, the initialization also resets the host context of the copy, so
+        ! the callback functions are ones that need no test context
         update_orbs_funptr => stationary_update_orbs
         obj_func_funptr => constant_obj_func
         uninitialized_settings%logger => logger
@@ -1919,8 +1921,34 @@ contains
                 "were not initialized."
             test_solver = .false.
         end if
-        if (.not. uninitialized_settings%initialized) then
-            write(stderr, *) "test_solver failed: Settings were not initialized."
+        if (uninitialized_settings%initialized .or. &
+            .not. associated(uninitialized_settings%logger, logger)) then
+            write(stderr, *) "test_solver failed: Settings of the caller changed."
+            test_solver = .false.
+        end if
+
+        ! run solver without settings, so that it uses the default settings, and with
+        ! the default settings and check that both take exactly the same steps, the
+        ! stationary point needs no test context, which the solver cannot hand to the
+        ! callback functions without settings
+        settings = default_settings
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
+                    explicit_state)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, state=state)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error without settings."
+            test_solver = .false.
+        end if
+        if (state%n_update_orbs /= explicit_state%n_update_orbs .or. &
+            state%n_hess_x /= explicit_state%n_hess_x .or. &
+            state%stability_state%n_hess_x /= &
+            explicit_state%stability_state%n_hess_x .or. &
+            abs(state%func - explicit_state%func) > 0.0_rp .or. &
+            abs(state%grad_rms - explicit_state%grad_rms) > 0.0_rp .or. &
+            abs(state%stability_state%min_eigval - &
+                explicit_state%stability_state%min_eigval) > 0.0_rp) then
+            write(stderr, *) "test_solver failed: Did not use the default settings "// &
+                "without settings."
             test_solver = .false.
         end if
         if (index(context%log_message, " "//settings_uninitialized_warning_msg) == 0) &
@@ -2267,7 +2295,7 @@ contains
             stability_check, error_stability_check, error_stability_check_max_iter, &
             verbosity_debug, verbosity_warning, error_hess_x, error_precond, &
             error_project, diag_solver_options, unstable_warning_msg, &
-            settings_uninitialized_warning_msg
+            settings_uninitialized_warning_msg, default_stability_settings
         use test_reference, only: arm_host_context, host_context_reached
 
         real(rp) :: h_diag(n_param), direction(n_param), hess_eigvals(n_param), &
@@ -2277,7 +2305,7 @@ contains
         integer(ip) :: error, i
         character(len=300) :: msg
         type(stability_settings_type) :: settings, uninitialized_settings
-        type(stability_state_type) :: state
+        type(stability_state_type) :: state, explicit_state
         integer(ip) :: i_solver, callback, i_call, n_calls(n_fault_callbacks)
         integer(ip), parameter :: &
             fault_callbacks(3) = [fault_hess_x, fault_precond, fault_project], &
@@ -2540,10 +2568,11 @@ contains
         end if
 
         ! run stability check with settings that were not initialized but carry a
-        ! logging function and check that these are initialized and that a warning is
-        ! printed through the logging function, the initialization also resets their
-        ! host context, so the Hessian linear transformation is one that needs no test
-        ! context
+        ! logging function and check that a warning is printed through the logging
+        ! function and that the stability check initializes a copy of them, which leaves
+        ! the caller's settings as they are, the initialization also resets the host
+        ! context of the copy, so the Hessian linear transformation is one that needs no
+        ! test context
         hess_x_funptr => identity_hess_x
         uninitialized_settings%logger => logger
         uninitialized_settings%context => context
@@ -2555,9 +2584,33 @@ contains
                 "settings that were not initialized."
             test_stability_check = .false.
         end if
-        if (.not. uninitialized_settings%initialized) then
-            write(stderr, *) "test_stability_check failed: Settings were not "// &
-                "initialized."
+        if (uninitialized_settings%initialized .or. &
+            .not. associated(uninitialized_settings%logger, logger)) then
+            write(stderr, *) "test_stability_check failed: Settings of the caller "// &
+                "changed."
+            test_stability_check = .false.
+        end if
+
+        ! run stability check without settings, so that it uses the default settings,
+        ! and with the default settings and check that both reach exactly the same
+        ! eigenvalue and residual with the same Hessian linear transformations, the
+        ! Hessian linear transformation needs no test context, which the stability
+        ! check cannot hand to it without settings
+        settings = default_stability_settings
+        call stability_check(h_diag, hess_x_funptr, stable, error, settings, &
+                             explicit_state)
+        call stability_check(h_diag, hess_x_funptr, stable, error, state=state)
+        if (error /= 0) then
+            write(stderr, *) "test_stability_check failed: Produced error without "// &
+                "settings."
+            test_stability_check = .false.
+        end if
+        if (state%n_hess_x /= explicit_state%n_hess_x .or. &
+            state%iteration /= explicit_state%iteration .or. &
+            abs(state%min_eigval - explicit_state%min_eigval) > 0.0_rp .or. &
+            abs(state%residual_rms - explicit_state%residual_rms) > 0.0_rp) then
+            write(stderr, *) "test_stability_check failed: Did not use the default "// &
+                "settings without settings."
             test_stability_check = .false.
         end if
         if (index(context%log_message, " "//settings_uninitialized_warning_msg) == 0) &
@@ -2667,8 +2720,8 @@ contains
         !
         use opentrustregion, only: &
             solver_settings_type, hess_x_type, obj_func_type, check_stationary_point, &
-            verbosity_debug, error_solver, error_obj_func, &
-            started_at_saddle_point_warning_msg, reached_saddle_point_warning_msg
+            error_solver, error_obj_func, started_at_saddle_point_warning_msg, &
+            reached_saddle_point_warning_msg
         use test_reference, only: arm_host_context, host_context_reached
 
         type(solver_settings_type) :: settings
@@ -2695,21 +2748,19 @@ contains
         hess_x_funptr => double_well_hess_x
         obj_func_funptr => double_well_obj_func
 
-        ! check the saddle point in the first macro iteration with nested stability
-        ! check settings without callback functions, verbosity or context of their own,
-        ! which have to inherit the solver's for the duration of the check, and check
-        ! that the Hessian linear transformations of the check and the objective
-        ! function evaluations of the line search are added to the solver's counters,
-        ! that the step along the unstable mode is returned with its Euclidean norm,
-        ! which is the norm of the trust region of the Davidson solvers, and that the
-        ! warning for starting at a saddle point is printed
+        ! check the saddle point in the first macro iteration with a context in the
+        ! nested stability check settings and check that this context reaches the
+        ! callback functions of the stability check, that the Hessian linear
+        ! transformations of the check and the objective function evaluations of the
+        ! line search are added to the solver's counters, that the step along the
+        ! unstable mode is returned with its Euclidean norm, which is the norm of the
+        ! trust region of the Davidson solvers, and that the warning for starting at a
+        ! saddle point is printed
         call setup_settings(settings, context)
-        settings%precond => identity_precond
-        settings%project => identity_project
         state%n_hess_x = 5
         state%n_obj_func = 3
         context%vars = [0.0_rp, 0.0_rp]
-        call arm_host_context(settings, context)
+        call arm_host_context(settings%stability_settings, context)
         call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
                                     obj_func_funptr, 1_ip, settings, state, stable, &
                                     kappa, kappa_norm, error)
@@ -2733,35 +2784,8 @@ contains
                 "of the step along the unstable mode not returned."
             test_check_stationary_point = .false.
         end if
-        if (.not. associated(settings%stability_settings%precond, identity_precond)) &
-            then
-            write(stderr, *) "test_check_stationary_point failed: Solver's "// &
-                "preconditioner not inherited."
-            test_check_stationary_point = .false.
-        end if
-        if (.not. associated(settings%stability_settings%project, identity_project)) &
-            then
-            write(stderr, *) "test_check_stationary_point failed: Solver's "// &
-                "projection not inherited."
-            test_check_stationary_point = .false.
-        end if
-        if (.not. associated(settings%stability_settings%logger, logger)) then
-            write(stderr, *) "test_check_stationary_point failed: Solver's logging "// &
-                "function not inherited."
-            test_check_stationary_point = .false.
-        end if
-        if (settings%stability_settings%verbose /= settings%verbose) then
-            write(stderr, *) "test_check_stationary_point failed: Solver's "// &
-                "verbosity not inherited."
-            test_check_stationary_point = .false.
-        end if
         if (.not. host_context_reached("check_stationary_point", context)) &
             test_check_stationary_point = .false.
-        if (associated(settings%stability_settings%context)) then
-            write(stderr, *) "test_check_stationary_point failed: Host context "// &
-                "lent to the stability check left on the nested settings."
-            test_check_stationary_point = .false.
-        end if
         if (state%stability_state%n_hess_x <= 0) then
             write(stderr, *) "test_check_stationary_point failed: Hessian linear "// &
                 "transformations of the stability check not counted."
@@ -2787,17 +2811,15 @@ contains
         end if
 
         ! check the saddle point in a later macro iteration with nested stability check
-        ! settings with a verbosity above the solver's and a context of their own,
-        ! which they have to keep, the stability check hands this context to every
-        ! callback function it calls, which its own test covers, the Hessian linear
-        ! transformation has to receive it while the objective function of the line
-        ! search receives the solver's, and check that the warning for reaching a
-        ! saddle point is printed
+        ! settings with a context of their own, which the stability check hands to
+        ! every callback function it calls, which its own test covers, so that the
+        ! Hessian linear transformation has to receive it while the objective function
+        ! of the line search receives the solver's, and check that the warning for
+        ! reaching a saddle point is printed
         call setup_settings(settings, context)
         context%vars = [0.0_rp, 0.0_rp]
         context%n_obj_func_calls = 0
         stability_context%vars = [0.0_rp, 0.0_rp]
-        settings%stability_settings%verbose = verbosity_debug
         settings%stability_settings%context => stability_context
         call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
                                     obj_func_funptr, 2_ip, settings, state, stable, &
@@ -2805,17 +2827,6 @@ contains
         if (error /= 0) then
             write(stderr, *) "test_check_stationary_point failed: Produced error "// &
                 "at saddle point in later macro iteration."
-            test_check_stationary_point = .false.
-        end if
-        if (settings%stability_settings%verbose /= verbosity_debug) then
-            write(stderr, *) "test_check_stationary_point failed: Verbosity of "// &
-                "nested settings above the solver's replaced."
-            test_check_stationary_point = .false.
-        end if
-        if (.not. associated(settings%stability_settings%context, stability_context)) &
-            then
-            write(stderr, *) "test_check_stationary_point failed: Context of "// &
-                "nested settings replaced."
             test_check_stationary_point = .false.
         end if
         if (.not. stability_context%hess_x_called) then
@@ -2838,6 +2849,7 @@ contains
         ! trust region is measured in the norm of the absolute Hessian diagonal, and
         ! check that the norm of the step along the unstable mode is returned in it
         call setup_settings(settings, context)
+        settings%stability_settings%context => context
         settings%subsystem_solver = "tcg"
         context%vars = [0.0_rp, 0.0_rp]
         call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
@@ -2855,17 +2867,9 @@ contains
             test_check_stationary_point = .false.
         end if
 
-        ! check a minimum with nested stability check settings which provide their own
-        ! preconditioner and projection, which differ from the solver's, and their own
-        ! logging function while the solver has none, all of which they have to keep,
-        ! and check that the minimum is found to be stable
+        ! check that a minimum is found to be stable
         call setup_settings(settings, context)
-        settings%precond => mock_precond
-        settings%project => mock_project
-        settings%logger => null()
-        settings%stability_settings%precond => identity_precond
-        settings%stability_settings%project => identity_project
-        settings%stability_settings%logger => logger
+        settings%stability_settings%context => context
         context%vars = [0.0_rp, 1.0_rp / sqrt(2.0_rp)]
         call check_stationary_point(double_well_func(context%vars), minimum_h_diag, &
                                     hess_x_funptr, obj_func_funptr, 2_ip, settings, &
@@ -2880,28 +2884,12 @@ contains
                 "found to be stable."
             test_check_stationary_point = .false.
         end if
-        if (.not. associated(settings%stability_settings%precond, identity_precond)) &
-            then
-            write(stderr, *) "test_check_stationary_point failed: Preconditioner "// &
-                "of nested settings replaced."
-            test_check_stationary_point = .false.
-        end if
-        if (.not. associated(settings%stability_settings%project, identity_project)) &
-            then
-            write(stderr, *) "test_check_stationary_point failed: Projection of "// &
-                "nested settings replaced."
-            test_check_stationary_point = .false.
-        end if
-        if (.not. associated(settings%stability_settings%logger, logger)) then
-            write(stderr, *) "test_check_stationary_point failed: Logging function "// &
-                "of nested settings replaced."
-            test_check_stationary_point = .false.
-        end if
 
         ! check that an error is returned and an error message is printed when no step
         ! along the unstable mode lowers the objective function
         call settings%init(error)
         call setup_error_logging(settings, context)
+        settings%stability_settings%context => context
         context%vars = [0.0_rp, 0.0_rp]
         obj_func_funptr => raised_double_well_obj_func
         call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
@@ -2921,6 +2909,7 @@ contains
         ! check that the error of a failing objective function during the line search
         ! is reported with its origin
         call setup_settings(settings, context)
+        settings%stability_settings%context => context
         obj_func_funptr => obj_func_failing
         call check_stationary_point(0.0_rp, saddle_h_diag, hess_x_funptr, &
                                     obj_func_funptr, 1_ip, settings, state, stable, &
@@ -5456,6 +5445,86 @@ contains
         end if
 
     end function test_accept_trust_region_step
+
+    logical(c_bool) function test_init_defaults() bind(C)
+        !
+        ! this function tests the subroutine that resolves settings defaults that
+        ! depend on other settings
+        !
+        use opentrustregion, only: solver_settings_type, init_defaults, &
+                                   verbosity_info, verbosity_debug
+
+        type(solver_settings_type) :: settings
+        type(test_context_type), target :: context, stability_context
+
+        ! assume tests pass
+        test_init_defaults = .true.
+
+        ! check that nested stability check settings without callback functions or a
+        ! context of their own and with a verbosity below the solver's inherit the
+        ! solver's preconditioning, projection and logging functions, context and
+        ! verbosity
+        call setup_settings(settings, context)
+        settings%precond => identity_precond
+        settings%project => identity_project
+        settings%verbose = verbosity_debug
+        call init_defaults(settings)
+        if (.not. associated(settings%stability_settings%precond, &
+                             identity_precond) .or. &
+            .not. associated(settings%stability_settings%project, &
+                             identity_project) .or. &
+            .not. associated(settings%stability_settings%logger, logger)) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings did not inherit the solver's callback functions."
+            test_init_defaults = .false.
+        end if
+        if (.not. associated(settings%stability_settings%context, context)) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings did not inherit the solver's context."
+            test_init_defaults = .false.
+        end if
+        if (settings%stability_settings%verbose /= verbosity_debug) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings did not inherit the solver's higher verbosity."
+            test_init_defaults = .false.
+        end if
+
+        ! check that nested stability check settings with callback functions and a
+        ! context of their own, a logging function while the solver has none and a
+        ! verbosity above the solver's keep all of these
+        call setup_settings(settings, context)
+        settings%precond => mock_precond
+        settings%project => mock_project
+        settings%logger => null()
+        settings%verbose = verbosity_info
+        settings%stability_settings%precond => identity_precond
+        settings%stability_settings%project => identity_project
+        settings%stability_settings%logger => logger
+        settings%stability_settings%context => stability_context
+        settings%stability_settings%verbose = verbosity_debug
+        call init_defaults(settings)
+        if (.not. associated(settings%stability_settings%precond, &
+                             identity_precond) .or. &
+            .not. associated(settings%stability_settings%project, &
+                             identity_project) .or. &
+            .not. associated(settings%stability_settings%logger, logger)) then
+            write(stderr, *) "test_init_defaults failed: Callback functions of "// &
+                "nested stability check settings replaced."
+            test_init_defaults = .false.
+        end if
+        if (.not. associated(settings%stability_settings%context, stability_context)) &
+            then
+            write(stderr, *) "test_init_defaults failed: Context of nested "// &
+                "stability check settings replaced."
+            test_init_defaults = .false.
+        end if
+        if (settings%stability_settings%verbose /= verbosity_debug) then
+            write(stderr, *) "test_init_defaults failed: Higher verbosity of "// &
+                "nested stability check settings replaced."
+            test_init_defaults = .false.
+        end if
+
+    end function test_init_defaults
 
     logical(c_bool) function test_solver_sanity_check() bind(C)
         !

@@ -119,6 +119,7 @@ fortran_tests = {
         "generate_random_trial_vectors",
         "generate_trial_vectors",
         "gram_schmidt",
+        "init_defaults",
         "init_rng",
         "init_solver_settings",
         "init_stability_settings",

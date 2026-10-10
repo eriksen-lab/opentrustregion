@@ -52,11 +52,19 @@ contains
         procedure(obj_func_type), intent(in), pointer :: obj_func_funptr
         integer(ip), intent(in) :: n_param
         integer(ip), intent(out) :: error
-        type(solver_settings_type), intent(inout) :: settings
+        type(solver_settings_type), intent(in), optional :: settings
         type(solver_state_type), intent(out), target, optional :: state
 
         ! assume tests pass
         test_passed = .true.
+
+        ! set error code and check that the C wrapper passes the settings it converted
+        error = mock_error
+        if (.not. present(settings)) then
+            write(stderr, *) "test_solver_c_wrapper failed: Settings not passed."
+            test_passed = .false.
+            return
+        end if
 
         ! test passed orbital update subroutine
         if (.not. check_update_orbs_funptr(update_orbs_funptr, "solver_c_wrapper", &
@@ -108,8 +116,7 @@ contains
             received_stability_callbacks = callbacks
         end select
 
-        ! set output quantities and state
-        error = mock_error
+        ! set state
         if (present(state)) then
             state%max_precision_reached = .false.
             state%n_update_orbs = mock_n_update_orbs
@@ -133,12 +140,23 @@ contains
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         logical, intent(out) :: stable
         integer(ip), intent(out) :: error
-        type(stability_settings_type), intent(inout) :: settings
+        type(stability_settings_type), intent(in), optional :: settings
         type(stability_state_type), intent(out), target, optional :: state
         real(rp), intent(out), optional :: kappa(:)
 
         ! assume tests pass
         test_passed = .true.
+
+        ! set error code and stability and check that the C wrapper passes the settings
+        ! it converted
+        error = mock_error
+        stable = mock_stable
+        if (.not. present(settings)) then
+            write(stderr, *) "test_stability_check_c_wrapper failed: Settings not "// &
+                "passed."
+            test_passed = .false.
+            return
+        end if
 
         ! check Hessian diagonal
         if (size(h_diag) /= n_param) then
@@ -178,10 +196,8 @@ contains
             received_callbacks = callbacks
         end select
 
-        ! set output quantities and state
-        stable = mock_stable
+        ! set optional output quantities and state
         if (present(kappa)) kappa = 1.0_rp
-        error = mock_error
         if (present(state)) state%n_hess_x = mock_stability_check_n_hess_x
 
     end subroutine mock_stability_check
