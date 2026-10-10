@@ -7,10 +7,10 @@
 /* Pure-C integration tests for the public C interface declared in opentrustregion.h
  *
  * The Fortran-side c_interface_unit_tests cover the bind(C) wrappers but never compile
- * against the C header itself. These tests do, and test_settings_layout checks that
- * the settings structs have the size of the bind(C) settings types and that every
- * settings field is read back under its own name, so any drift between the bind(C)
- * settings types (Fortran) and the settings structs (C) is caught here. */
+ * against the C header itself. These tests do, and test_settings_layout and
+ * test_state_layout check that the settings and state structs have the size of the
+ * bind(C) types and that every field is read back under its own name, so any drift
+ * between the bind(C) types (Fortran) and the structs (C) is caught here. */
 
 #include <math.h>
 #include <stdio.h>
@@ -40,10 +40,17 @@ static const c_real *saddle_point = hartmann6d_saddle_point;
 extern const c_real hartmann6d_near_minimum[N_PARAM];
 
 /* Host data handed to the callbacks through the context of the settings: the current
- * point and its Hessian, and flags recording which callbacks were reached. */
+ * point and its Hessian, flags recording which callbacks were reached, and the state
+ * records of the call with what the callbacks read from them. */
 typedef struct {
   c_real curr_vars[N_PARAM];
   c_real hess[N_PARAM][N_PARAM];
+  const solver_state_type *solver_state;
+  const stability_state_type *stability_state;
+  int n_update_orbs_calls;
+  int state_not_current;
+  c_int n_hess_x_seen;
+  c_int nested_n_hess_x_seen;
   int precond_called;
   int project_called;
   int logger_called;
@@ -117,6 +124,12 @@ static c_int hess_x_fun(const c_real *x, c_real *hx, void *context) {
   hartmann_context *ctx = context;
   if (!ctx)
     return 1;
+  if (ctx->stability_state)
+    ctx->n_hess_x_seen = ctx->stability_state->n_hess_x;
+  /* the internal stability check of a solve calls this function too, the last time
+   * after all its other Hessian linear transformations */
+  if (ctx->solver_state)
+    ctx->nested_n_hess_x_seen = ctx->solver_state->stability_state.n_hess_x;
   for (int i = 0; i < N_PARAM; i++) {
     c_real s = 0.0;
     for (int j = 0; j < N_PARAM; j++)
@@ -131,6 +144,11 @@ static c_int update_orbs(const c_real *delta_vars, c_real *func, c_real *grad,
   hartmann_context *ctx = context;
   if (!ctx)
     return 1;
+  /* the state is copied before every callback, so it counts the updates before this
+   * one */
+  if (ctx->solver_state && ctx->solver_state->n_update_orbs != ctx->n_update_orbs_calls)
+    ctx->state_not_current = 1;
+  ctx->n_update_orbs_calls++;
   for (int i = 0; i < N_PARAM; i++)
     ctx->curr_vars[i] += delta_vars[i];
   *func = hartmann_func(ctx->curr_vars);
@@ -231,7 +249,7 @@ static c_int conv_check_nested(c_bool *converged, void *context) {
       h_diag[i] = ctx->hess[i][i];
     ctx->in_nested = 1;
     ctx->nested_check_error =
-        stability_check(h_diag, inner_hess_x, N_PARAM, &stable, &inner, NULL);
+        stability_check(h_diag, inner_hess_x, N_PARAM, &stable, &inner, NULL, NULL);
     ctx->in_nested = 0;
   }
   return 0;
@@ -279,6 +297,18 @@ bool is_default_solver_settings(const solver_settings_type *settings);
 bool is_default_stability_settings(const stability_settings_type *settings);
 
 /* ------------------------------------------------------------------
+ * Reference states provided by test_reference.f90 in the same way: the reference
+ * value of a field by its name, prefixed by "stability_state." for the nested state, a
+ * C state filled with these values field by field, and the sizes of the bind(C) state
+ * types
+ * ------------------------------------------------------------------ */
+
+c_real reference_state_field(const char *name);
+void get_reference_solver_state_values(solver_state_type *state);
+size_t solver_state_size(void);
+size_t stability_state_size(void);
+
+/* ------------------------------------------------------------------
  * Helpers
  * ------------------------------------------------------------------ */
 
@@ -296,6 +326,14 @@ static bool check_field(c_real value, const char *name) {
   reference_field(name, &ref_value, ref_keyword);
   if (value != ref_value) {
     fprintf(stderr, "test_settings_layout failed: Field %s misplaced.\n", name);
+    return false;
+  }
+  return true;
+}
+
+static bool check_state_field(c_real value, const char *name) {
+  if (value != reference_state_field(name)) {
+    fprintf(stderr, "test_state_layout failed: Field %s misplaced.\n", name);
     return false;
   }
   return true;
@@ -339,13 +377,12 @@ bool test_settings_layout(void) {
   /* check that every logical is read back under its own name, only one is set at a
    * time so that swapped logicals can be told apart */
   static const char *logicals[] = {"stability", "line_search", "initialized",
-                                   "max_precision_reached",
                                    "stability_settings.initialized"};
   const int n_logicals = sizeof logicals / sizeof *logicals;
   for (int i = 0; i < n_logicals; i++) {
     solver_settings_type s = {0};
     get_reference_solver_values(&s, logicals[i]);
-    bool read[] = {s.stability, s.line_search, s.initialized, s.max_precision_reached,
+    bool read[] = {s.stability, s.line_search, s.initialized,
                    s.stability_settings.initialized};
     _Static_assert(sizeof read / sizeof *read == sizeof logicals / sizeof *logicals,
                    "test_settings_layout: every logical needs a name and a field");
@@ -376,8 +413,6 @@ bool test_settings_layout(void) {
   ok &= check_field(s.jacobi_davidson_start, "jacobi_davidson_start");
   ok &= check_field(s.seed, "seed");
   ok &= check_field(s.verbose, "verbose");
-  ok &= check_field(s.n_update_orbs, "n_update_orbs");
-  ok &= check_field(s.n_hess_x, "n_hess_x");
   ok &= check_keyword(s.subsystem_solver, "subsystem_solver");
 
   /* check the nested stability settings, which share their type with the settings
@@ -395,8 +430,53 @@ bool test_settings_layout(void) {
       check_field(ss.jacobi_davidson_start, "stability_settings.jacobi_davidson_start");
   ok &= check_field(ss.seed, "stability_settings.seed");
   ok &= check_field(ss.verbose, "stability_settings.verbose");
-  ok &= check_field(ss.n_hess_x, "stability_settings.n_hess_x");
   ok &= check_keyword(ss.diag_solver, "stability_settings.diag_solver");
+
+  return ok;
+}
+
+bool test_state_layout(void) {
+  bool ok = true;
+
+  /* check that the state structs have the size of the bind(C) state types, so that a
+   * field missing from either is detected, which the field checks below would not
+   * read, and stop otherwise, since filling a smaller state would write past its end */
+  if (sizeof(solver_state_type) != solver_state_size()) {
+    fprintf(stderr, "test_state_layout failed: Size of solver state differs from the "
+                    "library's.\n");
+    ok = false;
+  }
+  if (sizeof(stability_state_type) != stability_state_size()) {
+    fprintf(stderr, "test_state_layout failed: Size of stability check state differs "
+                    "from the library's.\n");
+    ok = false;
+  }
+  if (!ok)
+    return false;
+
+  /* check that every field is read back under its own name */
+  solver_state_type s = {0};
+  get_reference_solver_state_values(&s);
+  ok &= check_state_field(s.max_precision_reached, "max_precision_reached");
+  ok &= check_state_field(s.func, "func");
+  ok &= check_state_field(s.grad_rms, "grad_rms");
+  ok &= check_state_field(s.trust_radius, "trust_radius");
+  ok &= check_state_field(s.relative_residual, "relative_residual");
+  ok &= check_state_field(s.level_shift, "level_shift");
+  ok &= check_state_field(s.step_size, "step_size");
+  ok &= check_state_field(s.macro_iteration, "macro_iteration");
+  ok &= check_state_field(s.micro_iteration, "micro_iteration");
+  ok &= check_state_field(s.jacobi_davidson_iteration, "jacobi_davidson_iteration");
+  ok &= check_state_field(s.n_update_orbs, "n_update_orbs");
+  ok &= check_state_field(s.n_obj_func, "n_obj_func");
+  ok &= check_state_field(s.n_hess_x, "n_hess_x");
+
+  /* the nested state, which also describes a standalone stability check state */
+  stability_state_type ss = s.stability_state;
+  ok &= check_state_field(ss.min_eigval, "stability_state.min_eigval");
+  ok &= check_state_field(ss.residual_rms, "stability_state.residual_rms");
+  ok &= check_state_field(ss.iteration, "stability_state.iteration");
+  ok &= check_state_field(ss.n_hess_x, "stability_state.n_hess_x");
 
   return ok;
 }
@@ -458,14 +538,16 @@ bool test_solver_c(void) {
 
   /* the maximum precision flag starts opposite to the one the converging solve
    * returns, so that its write-back is detected */
-  settings.max_precision_reached = true;
+  solver_state_type state = {0};
+  state.max_precision_reached = true;
+  ctx.solver_state = &state;
 
-  c_int error = solver(update_orbs, obj_func, N_PARAM, &settings);
+  c_int error = solver(update_orbs, obj_func, N_PARAM, &settings, &state);
   if (error != 0) {
     fprintf(stderr, "test_solver_c failed: Produced error.\n");
     ok = false;
   }
-  if (settings.max_precision_reached) {
+  if (state.max_precision_reached) {
     fprintf(stderr, "test_solver_c failed: Maximum precision reached flag was not "
                     "returned.\n");
     ok = false;
@@ -487,19 +569,31 @@ bool test_solver_c(void) {
                     "context.\n");
     ok = false;
   }
-  if (settings.n_update_orbs <= 0) {
+  if (state.n_update_orbs <= 0) {
     fprintf(stderr, "test_solver_c failed: Orbital update counter was not "
                     "populated.\n");
     ok = false;
   }
-  if (settings.n_hess_x <= 0) {
+  if (state.n_obj_func <= 0) {
+    fprintf(stderr, "test_solver_c failed: Objective function counter was not "
+                    "populated.\n");
+    ok = false;
+  }
+  if (state.n_hess_x <= 0) {
     fprintf(stderr, "test_solver_c failed: Hessian linear transformation counter was "
                     "not populated.\n");
     ok = false;
   }
-  if (settings.stability_settings.n_hess_x <= 0) {
+  if (state.stability_state.n_hess_x <= 0) {
     fprintf(stderr, "test_solver_c failed: Hessian linear transformation counter of "
                     "the internal stability check was not populated.\n");
+    ok = false;
+  }
+  /* every orbital update read the updates before it, and the last Hessian linear
+   * transformation of the internal stability check the ones before it */
+  if (ctx.state_not_current || ctx.n_update_orbs_calls != state.n_update_orbs ||
+      ctx.nested_n_hess_x_seen != state.stability_state.n_hess_x - 1) {
+    fprintf(stderr, "test_solver_c failed: State was not current in the callbacks.\n");
     ok = false;
   }
   if (!ctx.stability_precond_called) {
@@ -563,8 +657,10 @@ bool test_stability_check_c(void) {
   for (int i = 0; i < N_PARAM; i++)
     direction[i] = 1.0;
   c_bool stable = false;
-  c_int error =
-      stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, direction);
+  stability_state_type state = {0};
+  ctx.stability_state = &state;
+  c_int error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, &state,
+                                direction);
   if (error != 0) {
     fprintf(stderr, "test_stability_check_c failed: Produced error.\n");
     ok = false;
@@ -591,11 +687,22 @@ bool test_stability_check_c(void) {
                     "host context.\n");
     ok = false;
   }
-  if (settings.n_hess_x <= 0) {
+  if (state.n_hess_x <= 0) {
     fprintf(stderr, "test_stability_check_c failed: Hessian linear transformation "
                     "counter was not populated.\n");
     ok = false;
   }
+  if (state.iteration <= 0) {
+    fprintf(stderr, "test_stability_check_c failed: State was not returned.\n");
+    ok = false;
+  }
+  /* the last Hessian linear transformation read the ones before it */
+  if (ctx.n_hess_x_seen != state.n_hess_x - 1) {
+    fprintf(stderr, "test_stability_check_c failed: State was not current in the "
+                    "callbacks.\n");
+    ok = false;
+  }
+  ctx.stability_state = NULL;
   for (int i = 0; i < N_PARAM; i++) {
     if (direction[i] != 0.0) {
       fprintf(stderr, "test_stability_check_c failed: Stability check does not return "
@@ -611,7 +718,8 @@ bool test_stability_check_c(void) {
     h_diag[i] = ctx.hess[i][i];
 
   stable = true;
-  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, direction);
+  error =
+      stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, NULL, direction);
   if (error != 0) {
     fprintf(stderr, "test_stability_check_c failed: Produced error near saddle.\n");
     ok = false;
@@ -643,7 +751,7 @@ bool test_stability_check_c(void) {
 
   /* also exercise the no-direction path */
   stable = true;
-  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, NULL);
+  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, NULL, NULL);
   if (error != 0) {
     fprintf(stderr, "test_stability_check_c failed: Produced error when not passing "
                     "direction.\n");

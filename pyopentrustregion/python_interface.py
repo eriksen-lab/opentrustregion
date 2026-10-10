@@ -354,7 +354,6 @@ class StabilitySettingsC(Structure):
         ("jacobi_davidson_start", c_int),
         ("seed", c_int),
         ("verbose", c_int),
-        ("n_hess_x", c_int),
         ("diag_solver", c_char * (kw_len + 1)),
         ("context", c_void_p),
     ]
@@ -369,7 +368,6 @@ class SolverSettingsC(Structure):
         ("stability", c_bool),
         ("line_search", c_bool),
         ("initialized", c_bool),
-        ("max_precision_reached", c_bool),
         ("conv_tol", c_real),
         ("start_trust_radius", c_real),
         ("global_red_factor", c_real),
@@ -380,11 +378,38 @@ class SolverSettingsC(Structure):
         ("jacobi_davidson_start", c_int),
         ("seed", c_int),
         ("verbose", c_int),
-        ("n_update_orbs", c_int),
-        ("n_hess_x", c_int),
         ("subsystem_solver", c_char * (kw_len + 1)),
         ("stability_settings", StabilitySettingsC),
         ("context", c_void_p),
+    ]
+
+
+# define classes corresponding to C structs for states
+class StabilityStateC(Structure):
+    _fields_ = [
+        ("min_eigval", c_real),
+        ("residual_rms", c_real),
+        ("iteration", c_int),
+        ("n_hess_x", c_int),
+    ]
+
+
+class SolverStateC(Structure):
+    _fields_ = [
+        ("max_precision_reached", c_bool),
+        ("func", c_real),
+        ("grad_rms", c_real),
+        ("trust_radius", c_real),
+        ("relative_residual", c_real),
+        ("level_shift", c_real),
+        ("step_size", c_real),
+        ("macro_iteration", c_int),
+        ("micro_iteration", c_int),
+        ("jacobi_davidson_iteration", c_int),
+        ("n_update_orbs", c_int),
+        ("n_obj_func", c_int),
+        ("n_hess_x", c_int),
+        ("stability_state", StabilityStateC),
     ]
 
 
@@ -596,6 +621,66 @@ auto_bind_fields(SolverSettings)
 auto_bind_fields(StabilitySettings)
 
 
+# define classes for states, which the library keeps current during a call and which
+# can therefore be read by the callback functions
+class State:
+
+    c_struct: type[Structure]
+
+    def __init__(self, state_c: Optional[Structure] = None):
+        """
+        this function initializes the state class on a new C struct, which holds the
+        default values, or on a given one
+        """
+        self.state_c = self.c_struct() if state_c is None else state_c
+
+
+class SolverState(State):
+
+    c_struct = SolverStateC
+
+    def __init__(self):
+        super().__init__()
+        self._stability_state = StabilityState(state_c=self.state_c.stability_state)
+
+    @property
+    def stability_state(self) -> StabilityState:
+        return self._stability_state
+
+
+class StabilityState(State):
+
+    c_struct = StabilityStateC
+
+
+def bind_state_fields(cls: type[State]):
+    """
+    this function generates read-only properties for the fields of the C struct of a
+    state class, apart from the nested state
+    """
+    for field_info in cls.c_struct._fields_:
+        field_name, field_type = field_info[:2]
+
+        # skip nested structures
+        if isinstance(field_type, type) and issubclass(field_type, Structure):
+            continue
+
+        def make_property(name):
+
+            def getter(self):
+                return getattr(self.state_c, name)
+
+            return property(getter)
+
+        # capture field_name in current loop scope
+        setattr(cls, field_name, make_property(field_name))
+
+
+# ensure that the fields of the state_c object can be read
+bind_state_fields(SolverState)
+bind_state_fields(StabilityState)
+
+
 def raise_on_failure(error: int, exception: Dict[str, Exception], name: str):
     """
     this function raises if a call into the library failed, with the exception raised
@@ -618,13 +703,14 @@ def raise_on_failure(error: int, exception: Dict[str, Exception], name: str):
 
 
 def solver(
-    obj_func: Callable[[np.ndarray], float],
     update_orbs: Callable[
         [np.ndarray, np.ndarray, np.ndarray],
         Tuple[float, Callable[[np.ndarray, np.ndarray], None]],
     ],
+    obj_func: Callable[[np.ndarray], float],
     n_param: int,
-    settings: SolverSettings,
+    settings: Optional[SolverSettings] = None,
+    state: Optional[SolverState] = None,
 ):
     # variable to capture exceptions in the callback interfaces
     exception: Dict[str, Exception] = {}
@@ -640,7 +726,8 @@ def solver(
     # set interfaces for optional callback functions, these need to be set here since
     # the interface might need parameters that are not known when the attribute to
     # settings is set (e.g. n_param)
-    settings.set_optional_callbacks(n_param, exception)
+    if settings is not None:
+        settings.set_optional_callbacks(n_param, exception)
 
     # define result and argument types
     lib.solver.restype = c_int
@@ -649,11 +736,16 @@ def solver(
         obj_func_interface_type,
         c_int,
         POINTER(SolverSettingsC),
+        POINTER(SolverStateC),
     ]
 
     # call Fortran function
     error = lib.solver(
-        update_orbs_interface, obj_func_interface, n_param, byref(settings.settings_c)
+        update_orbs_interface,
+        obj_func_interface,
+        n_param,
+        byref(settings.settings_c) if settings is not None else None,
+        byref(state.state_c) if state is not None else None,
     )
 
     raise_on_failure(error, exception, "solver")
@@ -663,7 +755,8 @@ def stability_check(
     h_diag: np.ndarray,
     hess_x: Callable[[np.ndarray, np.ndarray], None],
     n_param: int,
-    settings: StabilitySettings,
+    settings: Optional[StabilitySettings] = None,
+    state: Optional[StabilityState] = None,
     kappa: Optional[np.ndarray] = None,
 ) -> bool:
     # variable to capture exceptions in the callback interfaces
@@ -675,7 +768,8 @@ def stability_check(
     # set interfaces for optional callback functions, these need to be set here since
     # the interface might need parameters that are not known when the attribute to
     # settings is set (e.g. n_param)
-    settings.set_optional_callbacks(n_param, exception)
+    if settings is not None:
+        settings.set_optional_callbacks(n_param, exception)
 
     # define result and argument types
     lib.stability_check.restype = c_int
@@ -685,6 +779,7 @@ def stability_check(
         c_int,
         POINTER(c_bool),
         POINTER(StabilitySettingsC),
+        POINTER(StabilityStateC),
         c_void_p,
     ]
 
@@ -697,7 +792,8 @@ def stability_check(
         hess_x_interface,
         n_param,
         byref(stable),
-        byref(settings.settings_c),
+        byref(settings.settings_c) if settings is not None else None,
+        byref(state.state_c) if state is not None else None,
         kappa.ctypes.data_as(POINTER(c_real)) if kappa is not None else kappa,
     )
 

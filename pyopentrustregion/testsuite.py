@@ -32,6 +32,8 @@ try:
     from pyopentrustregion.python_interface import (
         SolverSettings,
         StabilitySettings,
+        SolverState,
+        StabilityState,
         solver,
         stability_check,
         c_int,
@@ -51,6 +53,8 @@ except ImportError:
     from pyopentrustregion.python_interface import (
         SolverSettings,
         StabilitySettings,
+        SolverState,
+        StabilityState,
         solver,
         stability_check,
         c_int,
@@ -119,6 +123,7 @@ fortran_tests = {
         "generate_random_trial_vectors",
         "generate_trial_vectors",
         "gram_schmidt",
+        "init_defaults",
         "init_rng",
         "init_solver_settings",
         "init_stability_settings",
@@ -144,11 +149,14 @@ fortran_tests = {
     "c_interface_unit_tests": [
         "assign_solver_c_f",
         "assign_solver_f_c",
+        "assign_solver_state_c_f",
         "assign_stability_c_f",
         "assign_stability_f_c",
+        "assign_stability_state_c_f",
         "character_from_c",
         "character_to_c",
         "conv_check_f_wrapper",
+        "copy_state_to_c",
         "hess_x_f_wrapper",
         "init_solver_settings_c",
         "init_stability_settings_c",
@@ -176,6 +184,7 @@ fortran_tests = {
         "solver_settings_init",
         "stability_check_c",
         "stability_settings_init",
+        "state_layout",
     ],
 }
 
@@ -194,6 +203,16 @@ lib.get_reference_solver_values.restype = None
 lib.solver_settings_size.restype = c_size_t
 lib.stability_settings_size.restype = c_size_t
 
+# define signatures of the Fortran functions providing the reference states
+lib.reference_state_field.argtypes = [c_char_p]
+lib.reference_state_field.restype = c_real
+lib.get_reference_solver_state_values.argtypes = [POINTER(SolverState.c_struct)]
+lib.get_reference_solver_state_values.restype = None
+lib.get_reference_stability_state_values.argtypes = [POINTER(StabilityState.c_struct)]
+lib.get_reference_stability_state_values.restype = None
+lib.solver_state_size.restype = c_size_t
+lib.stability_state_size.restype = c_size_t
+
 
 def reference(name, field_type):
     """
@@ -211,6 +230,20 @@ def reference(name, field_type):
     if field_type == c_int:
         return int(value.value)
     return value.value
+
+
+def reference_state(name, field_type):
+    """
+    this function returns the reference value of a state field by its name, prefixed
+    by "stability_state." for the nested state, which also describes a standalone
+    stability check state, from the Fortran test reference module
+    """
+    value = lib.reference_state_field(name.encode())
+    if field_type == c_bool:
+        return bool(value)
+    if field_type == c_int:
+        return int(value)
+    return value
 
 
 # define function to add tests to test classes
@@ -381,8 +414,15 @@ class PyInterfaceUnitTests(unittest.TestCase):
         # is cleared before and read right after the call
         interface_flag = c_bool.in_dll(lib, "test_solver_interface")
         interface_flag.value = False
-        solver(mock_obj_func, mock_update_orbs, n_param, settings)
+        state = SolverState()
+        solver(mock_update_orbs, mock_obj_func, n_param, settings, state=state)
         interface_passed = interface_flag.value
+
+        # check that the state is passed, which the mock fills with the reference
+        # values
+        state_passed = self._state_holds_reference(
+            "test_solver_py_interface", state, ""
+        )
 
         # check if every callback function was called through its own slot
         test_logger = "test" in messages and "test" in stability_messages
@@ -404,7 +444,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             try:
-                solver(mock_obj_func, mock_update_orbs, n_param, settings)
+                solver(mock_update_orbs, mock_obj_func, n_param, settings)
                 logger_error_reported = any(
                     issubclass(w.category, RuntimeWarning)
                     and isinstance(w.message.__cause__, ValueError)
@@ -426,7 +466,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         settings.logger = messages.append
         callback_error_reported = False
         try:
-            solver(raising_obj_func, mock_update_orbs, n_param, settings)
+            solver(mock_update_orbs, raising_obj_func, n_param, settings)
         except RuntimeError as e:
             callback_error_reported = isinstance(e.__cause__, ValueError)
         if not callback_error_reported:
@@ -435,12 +475,28 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "function was not reported."
             )
 
+        # call solver python interface without settings, which have to be passed as
+        # none so that the library uses its default settings, the results of the mock
+        # start opposite to the expected ones
+        settings_flag = c_bool.in_dll(lib, "solver_settings_passed")
+        settings_flag.value = True
+        interface_flag.value = False
+        solver(mock_update_orbs, mock_obj_func, n_param)
+        no_settings_passed = interface_flag.value and not settings_flag.value
+        if settings_flag.value:
+            print(
+                " test_solver_py_interface failed: Settings passed although none were "
+                "given."
+            )
+
         self.assertTrue(
             interface_passed
+            and state_passed
             and test_logger
             and callbacks_called
             and logger_error_reported
-            and callback_error_reported,
+            and callback_error_reported
+            and no_settings_passed,
             "test_solver_py_interface failed",
         )
         print(" test_solver_py_interface PASSED")
@@ -483,8 +539,17 @@ class PyInterfaceUnitTests(unittest.TestCase):
         # the mock is cleared before and read right after the call
         interface_flag = c_bool.in_dll(lib, "test_stability_check_interface")
         interface_flag.value = False
-        stable = stability_check(h_diag, mock_hess_x, n_param, settings, kappa=kappa)
+        state = StabilityState()
+        stable = stability_check(
+            h_diag, mock_hess_x, n_param, settings, kappa=kappa, state=state
+        )
         interface_passed = interface_flag.value
+
+        # check that the state is passed, which the mock fills with the reference
+        # values
+        state_passed = self._state_holds_reference(
+            "test_stability_check_py_interface", state, "stability_state."
+        )
 
         # check if logger was called correctly
         test_logger = "test" in messages
@@ -565,15 +630,33 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "Hessian linear transformation was not reported."
             )
 
+        # call stability check python interface without settings, which have to be
+        # passed as none so that the library uses its default settings, the results of
+        # the mock start opposite to the expected ones
+        settings_flag = c_bool.in_dll(lib, "stability_settings_passed")
+        settings_flag.value = True
+        interface_flag.value = False
+        stable_without_settings = stability_check(h_diag, mock_hess_x, n_param)
+        no_settings_passed = (
+            interface_flag.value and not settings_flag.value and stable_without_settings
+        )
+        if settings_flag.value:
+            print(
+                " test_stability_check_py_interface failed: Settings passed although "
+                "none were given."
+            )
+
         self.assertTrue(
             interface_passed
+            and state_passed
             and test_logger
             and stable
             and not wrong_direction
             and logger_error_reported
             and stable_with_failed_logger
             and stable_without_direction
-            and callback_error_reported,
+            and callback_error_reported
+            and no_settings_passed,
             "test_stability_check_py_interface failed",
         )
         print(" test_stability_check_py_interface PASSED")
@@ -618,6 +701,56 @@ class PyInterfaceUnitTests(unittest.TestCase):
                         f"correctly{location}."
                     )
                     test_passed = False
+        return test_passed
+
+    @staticmethod
+    def _state_holds_reference(test_name, state, prefix, location=""):
+        """
+        this function checks that every field of a state object holds its reference
+        value, the names of the stability check state carry the prefix
+        "stability_state."
+        """
+        test_passed = True
+        for field_info in state.c_struct._fields_:
+            field_name, field_type = field_info[:2]
+            if isinstance(field_type, type) and issubclass(field_type, Structure):
+                test_passed &= PyInterfaceUnitTests._state_holds_reference(
+                    test_name,
+                    getattr(state, field_name),
+                    "stability_state.",
+                    " for nested stability check state",
+                )
+            elif getattr(state, field_name) != reference_state(
+                prefix + field_name, field_type
+            ):
+                print(
+                    f" {test_name} failed: Field {field_name} not read correctly"
+                    f"{location}."
+                )
+                test_passed = False
+        return test_passed
+
+    @staticmethod
+    def _state_holds_defaults(test_name, state, location=""):
+        """
+        this function checks that every field of a state object holds its default
+        value, zero or false
+        """
+        test_passed = True
+        for field_info in state.c_struct._fields_:
+            field_name, field_type = field_info[:2]
+            if isinstance(field_type, type) and issubclass(field_type, Structure):
+                test_passed &= PyInterfaceUnitTests._state_holds_defaults(
+                    test_name,
+                    getattr(state, field_name),
+                    " for nested stability check state",
+                )
+            elif getattr(state, field_name) != 0:
+                print(
+                    f" {test_name} failed: Field {field_name} does not start from "
+                    f"its default value{location}."
+                )
+                test_passed = False
         return test_passed
 
     def test_callback_interfaces(self):
@@ -885,6 +1018,45 @@ class PyInterfaceUnitTests(unittest.TestCase):
         self.assertTrue(test_passed, "test_stability_settings failed")
         print(" test_stability_settings PASSED")
 
+    def test_solver_state(self):
+        """
+        this function ensures the SolverState object starts from the default values
+        and reads every field of the underlying C struct, including those of the
+        nested stability check state, which it does not let be set
+        """
+        state = SolverState()
+        test_passed = self._state_holds_defaults("test_solver_state", state)
+        lib.get_reference_solver_state_values(byref(state.state_c))
+        test_passed &= self._state_holds_reference("test_solver_state", state, "")
+        try:
+            state.n_update_orbs = 1
+            print(" test_solver_state failed: Field could be set.")
+            test_passed = False
+        except AttributeError:
+            pass
+        self.assertTrue(test_passed, "test_solver_state failed")
+        print(" test_solver_state PASSED")
+
+    def test_stability_state(self):
+        """
+        this function ensures the StabilityState object starts from the default values
+        and reads every field of the underlying C struct, which it does not let be set
+        """
+        state = StabilityState()
+        test_passed = self._state_holds_defaults("test_stability_state", state)
+        lib.get_reference_stability_state_values(byref(state.state_c))
+        test_passed &= self._state_holds_reference(
+            "test_stability_state", state, "stability_state."
+        )
+        try:
+            state.n_hess_x = 1
+            print(" test_stability_state failed: Field could be set.")
+            test_passed = False
+        except AttributeError:
+            pass
+        self.assertTrue(test_passed, "test_stability_state failed")
+        print(" test_stability_state PASSED")
+
 
 @add_tests
 class OpenTrustRegionSystemTests(unittest.TestCase):
@@ -1077,6 +1249,48 @@ class PyIntegrationTests(unittest.TestCase):
         self.assertTrue(test_passed, "test_settings_layout failed")
         print(" test_settings_layout PASSED")
 
+    def test_state_layout(self):
+        """
+        this function checks that every field of the Python state structures,
+        including the nested stability check state, is read back under its own name
+        from a state whose fields Fortran sets one by one to the reference values
+        """
+        test_passed = True
+
+        # check that the state structures have the size of the bind(C) state types,
+        # so that a field missing from either is detected, which the field checks
+        # below would not read, and stop otherwise, since filling a smaller state
+        # would write past its end
+        for state, size in [
+            (SolverState, lib.solver_state_size()),
+            (StabilityState, lib.stability_state_size()),
+        ]:
+            if sizeof(state.c_struct) != size:
+                print(
+                    f" test_state_layout failed: Size of {state.__name__} structure "
+                    "differs from the library's."
+                )
+                test_passed = False
+        self.assertTrue(test_passed, "test_state_layout failed")
+
+        # check that every field is read back under its own name
+        state_c = SolverState.c_struct()
+        lib.get_reference_solver_state_values(byref(state_c))
+        for struct, prefix in [
+            (state_c, ""),
+            (state_c.stability_state, "stability_state."),
+        ]:
+            for name, field_type in struct._fields_:
+                if field_type == StabilityState.c_struct:
+                    continue
+                if getattr(struct, name) != reference_state(prefix + name, field_type):
+                    print(
+                        f" test_state_layout failed: Field {prefix + name} misplaced."
+                    )
+                    test_passed = False
+        self.assertTrue(test_passed, "test_state_layout failed")
+        print(" test_state_layout PASSED")
+
     def test_solver_py(self):
         """
         this function drives solver() end-to-end from near a minimum with every
@@ -1091,9 +1305,20 @@ class PyIntegrationTests(unittest.TestCase):
             "curr": self.near_minimum.copy(),
             "hess": None,
             "called": set(),
+            "n_update_orbs_calls": 0,
+            "state_not_current": False,
+            "nested_n_hess_x_seen": None,
         }
 
+        # the solver state record, which the callbacks read during the solve
+        solver_state = SolverState()
+
         def update_orbs(delta_vars, grad, h_diag):
+            # the state is copied before every callback, so it counts the updates
+            # before this one
+            if solver_state.n_update_orbs != state["n_update_orbs_calls"]:
+                state["state_not_current"] = True
+            state["n_update_orbs_calls"] += 1
             state["curr"] = state["curr"] + delta_vars
             x = state["curr"]
             state["hess"] = self._hess(x)
@@ -1101,6 +1326,9 @@ class PyIntegrationTests(unittest.TestCase):
             h_diag[:] = np.diag(state["hess"])
 
             def hess_x(v, hv):
+                # the internal stability check calls this function too, the last time
+                # after all its other Hessian linear transformations
+                state["nested_n_hess_x_seen"] = solver_state.stability_state.n_hess_x
                 hv[:] = state["hess"] @ v
 
             return self._func(x), hess_x
@@ -1145,10 +1373,10 @@ class PyIntegrationTests(unittest.TestCase):
 
         # the maximum precision flag starts opposite to the one the converging solve
         # returns, so that its write-back is detected
-        settings.max_precision_reached = True
+        solver_state.state_c.max_precision_reached = True
 
-        solver(obj_func, update_orbs, self.n_param, settings)
-        if settings.max_precision_reached:
+        solver(update_orbs, obj_func, self.n_param, settings, state=solver_state)
+        if solver_state.max_precision_reached:
             print(
                 " test_solver_py failed: Maximum precision reached flag was not "
                 "returned."
@@ -1163,20 +1391,36 @@ class PyIntegrationTests(unittest.TestCase):
             if name not in state["called"]:
                 print(f" test_solver_py failed: {description} was not called.")
                 test_passed = False
-        if settings.n_update_orbs <= 0:
+        if solver_state.n_update_orbs <= 0:
             print(" test_solver_py failed: Orbital update counter was not populated.")
             test_passed = False
-        if settings.n_hess_x <= 0:
+        if solver_state.n_obj_func <= 0:
+            print(
+                " test_solver_py failed: Objective function counter was not populated."
+            )
+            test_passed = False
+        if solver_state.n_hess_x <= 0:
             print(
                 " test_solver_py failed: Hessian linear transformation counter was not "
                 "populated."
             )
             test_passed = False
-        if settings.stability_settings.n_hess_x <= 0:
+        if solver_state.stability_state.n_hess_x <= 0:
             print(
                 " test_solver_py failed: Hessian linear transformation counter of the "
                 "internal stability check was not populated."
             )
+            test_passed = False
+
+        # every orbital update read the updates before it, and the last Hessian linear
+        # transformation of the internal stability check the ones before it
+        if (
+            state["state_not_current"]
+            or state["n_update_orbs_calls"] != solver_state.n_update_orbs
+            or state["nested_n_hess_x_seen"]
+            != solver_state.stability_state.n_hess_x - 1
+        ):
+            print(" test_solver_py failed: State was not current in the callbacks.")
             test_passed = False
         for name, description in [
             ("stability_precond", "Preconditioner"),
@@ -1226,12 +1470,39 @@ class PyIntegrationTests(unittest.TestCase):
         def hess_x(v, hv):
             hv[:] = H @ v
 
+        # the stability check state record, which the Hessian linear transformation
+        # reads during the first call
+        stability_state = StabilityState()
+        n_hess_x_seen = []
+
+        def watching_hess_x(v, hv):
+            n_hess_x_seen.append(stability_state.n_hess_x)
+            hess_x(v, hv)
+
         kappa = np.zeros(self.n_param)
-        stable = stability_check(h_diag, hess_x, self.n_param, settings, kappa=kappa)
+        stable = stability_check(
+            h_diag,
+            watching_hess_x,
+            self.n_param,
+            settings,
+            kappa=kappa,
+            state=stability_state,
+        )
         if not stable:
             print(
                 " test_stability_check_py failed: Stability incorrectly classifies "
                 "stability of minimum."
+            )
+            test_passed = False
+        if stability_state.iteration <= 0:
+            print(" test_stability_check_py failed: State was not returned.")
+            test_passed = False
+
+        # the last Hessian linear transformation read the ones before it
+        if not n_hess_x_seen or n_hess_x_seen[-1] != stability_state.n_hess_x - 1:
+            print(
+                " test_stability_check_py failed: State was not current in the "
+                "callbacks."
             )
             test_passed = False
         for name, description in [
@@ -1242,7 +1513,7 @@ class PyIntegrationTests(unittest.TestCase):
             if name not in called:
                 print(f" test_stability_check_py failed: {description} was not called.")
                 test_passed = False
-        if settings.n_hess_x <= 0:
+        if stability_state.n_hess_x <= 0:
             print(
                 " test_stability_check_py failed: Hessian linear transformation "
                 "counter was not populated."

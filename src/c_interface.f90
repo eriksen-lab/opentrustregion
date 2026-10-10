@@ -10,7 +10,8 @@ module c_interface
                                standard_stability_check => stability_check, &
                                default_solver_settings, default_stability_settings, &
                                update_orbs_type, hess_x_type, obj_func_type, &
-                               precond_type, project_type, conv_check_type, logger_type
+                               precond_type, project_type, conv_check_type, &
+                               logger_type, solver_state_type, stability_state_type
     use, intrinsic :: iso_c_binding, only: &
         c_double, c_int64_t, c_int32_t, c_bool, c_ptr, c_funptr, c_f_pointer, &
         c_f_procpointer, c_associated, c_char, c_null_char, c_null_ptr, c_null_funptr
@@ -107,7 +108,25 @@ module c_interface
         end subroutine logger_c_type
     end interface
 
-    ! bundle of the C callback functions belonging to a single call
+    ! derived type for the stability check state
+    type, bind(C) :: stability_state_type_c
+        real(c_rp) :: min_eigval, residual_rms
+        integer(c_ip) :: iteration, n_hess_x
+    end type
+
+    ! derived type for the solver state
+    type, bind(C) :: solver_state_type_c
+        logical(c_bool) :: max_precision_reached
+        real(c_rp) :: func, grad_rms, trust_radius, relative_residual, level_shift, &
+                      step_size
+        integer(c_ip) :: macro_iteration, micro_iteration, jacobi_davidson_iteration, &
+                         n_update_orbs, n_obj_func, n_hess_x
+        type(stability_state_type_c) :: stability_state
+    end type
+
+    ! bundle of the C callback functions belonging to a single call, together with
+    ! the host context and, if the host gave a record of the state, the state of the
+    ! call and this record, into which the state is copied
     type :: c_callbacks_type
         procedure(update_orbs_c_type), pointer, nopass :: update_orbs => null()
         procedure(hess_x_c_type), pointer, nopass :: hess_x => null()
@@ -118,6 +137,10 @@ module c_interface
         procedure(logger_c_type), pointer, nopass :: logger => null()
         type(c_ptr) :: host_context = c_null_ptr
         type(c_callbacks_type), pointer :: stability => null()
+        type(solver_state_type), pointer :: solver_state => null()
+        type(solver_state_type_c), pointer :: solver_state_c => null()
+        type(stability_state_type), pointer :: stability_state => null()
+        type(stability_state_type_c), pointer :: stability_state_c => null()
     end type
 
     ! derived type for stability check settings
@@ -126,7 +149,7 @@ module c_interface
         logical(c_bool) :: initialized
         real(c_rp) :: conv_tol
         integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
-                         verbose, n_hess_x
+                         verbose
         character(kind=c_char) :: diag_solver(kw_len + 1)
         type(c_ptr) :: context
     end type
@@ -134,10 +157,10 @@ module c_interface
     ! derived type for solver settings
     type, bind(C) :: solver_settings_type_c
         type(c_funptr) :: precond, project, conv_check, logger
-        logical(c_bool) :: stability, line_search, initialized, max_precision_reached
+        logical(c_bool) :: stability, line_search, initialized
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
-                         jacobi_davidson_start, seed, verbose, n_update_orbs, n_hess_x
+                         jacobi_davidson_start, seed, verbose
         character(kind=c_char) :: subsystem_solver(kw_len + 1)
         type(stability_settings_type_c) :: stability_settings
         type(c_ptr) :: context
@@ -158,18 +181,22 @@ module c_interface
         conv_check_f_wrapper
     procedure(logger_type), pointer :: logger_f_wrapper_ptr => logger_f_wrapper
 
-    ! interfaces for converting C settings to Fortran settings
+    ! interfaces for converting settings between C and Fortran and states from
+    ! Fortran to C
     interface assignment(=)
         module procedure assign_solver_f_c
         module procedure assign_stability_f_c
         module procedure assign_solver_c_f
         module procedure assign_stability_c_f
+        module procedure assign_solver_state_c_f
+        module procedure assign_stability_state_c_f
     end interface
 
 contains
 
     function solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param_c, &
-                              settings_c) result(error_c) bind(C, name="solver")
+                              settings_c, state_c_ptr) result(error_c) &
+        bind(C, name="solver")
         !
         ! this function exposes a Fortran-implemented solver subroutine to C
         !
@@ -179,32 +206,52 @@ contains
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
-        type(solver_settings_type_c), intent(inout) :: settings_c
+        type(solver_settings_type_c), intent(in), optional :: settings_c
+        type(c_ptr), intent(in), value :: state_c_ptr
         integer(c_ip) :: error_c
 
         procedure(update_orbs_f_wrapper), pointer :: update_orbs
         procedure(obj_func_f_wrapper), pointer :: obj_func
         integer(ip) :: n_param, error
         type(solver_settings_type) :: settings
+        type(solver_settings_type_c) :: local_settings_c
+        type(solver_state_type), target :: state
         type(c_callbacks_type), target :: callbacks, stability_callbacks
+
+        ! work on a copy of the given settings or, without any, of the default
+        ! settings
+        if (present(settings_c)) then
+            local_settings_c = settings_c
+        else
+            local_settings_c = default_solver_settings
+        end if
 
         ! bundle the C function pointers
         call c_f_procpointer(cptr=update_orbs_c_funptr, fptr=callbacks%update_orbs)
         call c_f_procpointer(cptr=obj_func_c_funptr, fptr=callbacks%obj_func)
         call store_optional_c_callbacks( &
-            callbacks, settings_c%initialized, settings_c%precond, settings_c%project, &
-            settings_c%conv_check, settings_c%logger, settings_c%context)
+            callbacks, local_settings_c%initialized, local_settings_c%precond, &
+            local_settings_c%project, local_settings_c%conv_check, &
+            local_settings_c%logger, local_settings_c%context)
+
+        ! let the bundle refer to the state and to the host's record, if one is given,
+        ! so that the state is copied into it before every callback function
+        if (c_associated(state_c_ptr)) then
+            callbacks%solver_state => state
+            call c_f_pointer(cptr=state_c_ptr, fptr=callbacks%solver_state_c)
+        end if
 
         ! the solver lets the internal stability check inherit its optional callback
         ! functions when the nested settings do not provide their own, so the nested
         ! bundle starts as a copy of the solver's and only the provided ones override
         stability_callbacks = callbacks
         call store_optional_c_callbacks( &
-            stability_callbacks, &
-            settings_c%initialized .and. settings_c%stability_settings%initialized, &
-            settings_c%stability_settings%precond, &
-            settings_c%stability_settings%project, c_null_funptr, &
-            settings_c%stability_settings%logger, settings_c%stability_settings%context)
+            stability_callbacks, local_settings_c%initialized .and. &
+            local_settings_c%stability_settings%initialized, &
+            local_settings_c%stability_settings%precond, &
+            local_settings_c%stability_settings%project, c_null_funptr, &
+            local_settings_c%stability_settings%logger, &
+            local_settings_c%stability_settings%context)
         callbacks%stability => stability_callbacks
 
         ! associate procedure pointer to wrapper function
@@ -216,7 +263,7 @@ contains
 
         ! convert settings and hand the bundles to the callback wrappers as opaque
         ! context
-        settings = settings_c
+        settings = local_settings_c
         settings%context => callbacks
         settings%stability_settings%context => stability_callbacks
 
@@ -225,9 +272,9 @@ contains
         ! printed here regardless of the verbosity, through the logging function of
         ! the solver settings or on stderr since settings that were not initialized
         ! provide none
-        if (.not. settings_c%initialized) then
+        if (.not. local_settings_c%initialized) then
             write(stderr, '(A)') " "//settings_uninitialized_warning_msg
-        else if (.not. settings_c%stability_settings%initialized) then
+        else if (.not. local_settings_c%stability_settings%initialized) then
             if (associated(settings%logger)) then
                 call settings%logger( &
                     " "//stability_settings_uninitialized_warning_msg, settings%context)
@@ -237,15 +284,10 @@ contains
         end if
 
         ! call solver
-        call solver(update_orbs, obj_func, n_param, error, settings)
+        call solver(update_orbs, obj_func, n_param, error, settings, state)
 
-        ! write output fields back into the C settings object directly
-        settings_c%max_precision_reached = &
-            logical(settings%max_precision_reached, kind=c_bool)
-        settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
-        settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
-        settings_c%stability_settings%n_hess_x = &
-            int(settings%stability_settings%n_hess_x, kind=c_ip)
+        ! copy the state into the host's record once more, also after an error
+        call copy_state_to_c(callbacks)
 
         ! convert return arguments to C kind
         error_c = int(error, kind=c_ip)
@@ -253,8 +295,8 @@ contains
     end function solver_c_wrapper
 
     function stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, stable_c, &
-                                       settings_c, kappa_c_ptr) result(error_c) &
-        bind(C, name="stability_check")
+                                       settings_c, state_c_ptr, kappa_c_ptr) &
+        result(error_c) bind(C, name="stability_check")
         !
         ! this function exposes a Fortran-implemented stability check subroutine to C
         !
@@ -265,8 +307,8 @@ contains
         integer(c_ip), intent(in), value :: n_param_c
         type(c_funptr), intent(in), value :: hess_x_c_funptr
         logical(c_bool), intent(out) :: stable_c
-        type(stability_settings_type_c), intent(inout) :: settings_c
-        type(c_ptr), intent(in), value :: kappa_c_ptr
+        type(stability_settings_type_c), intent(in), optional :: settings_c
+        type(c_ptr), intent(in), value :: state_c_ptr, kappa_c_ptr
         integer(c_ip) :: error_c
 
         real(rp), pointer :: h_diag_ptr(:), kappa_ptr(:)
@@ -275,13 +317,31 @@ contains
         integer(ip) :: error
         procedure(hess_x_f_wrapper), pointer :: hess_x
         type(stability_settings_type) :: settings
+        type(stability_settings_type_c) :: local_settings_c
+        type(stability_state_type), target :: state
         type(c_callbacks_type), target :: callbacks
+
+        ! work on a copy of the given settings or, without any, of the default
+        ! settings
+        if (present(settings_c)) then
+            local_settings_c = settings_c
+        else
+            local_settings_c = default_stability_settings
+        end if
 
         ! bundle the C function pointers
         call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
         call store_optional_c_callbacks( &
-            callbacks, settings_c%initialized, settings_c%precond, settings_c%project, &
-            c_null_funptr, settings_c%logger, settings_c%context)
+            callbacks, local_settings_c%initialized, local_settings_c%precond, &
+            local_settings_c%project, c_null_funptr, local_settings_c%logger, &
+            local_settings_c%context)
+
+        ! let the bundle refer to the state and to the host's record, if one is given,
+        ! so that the state is copied into it before every callback function
+        if (c_associated(state_c_ptr)) then
+            callbacks%stability_state => state
+            call c_f_pointer(cptr=state_c_ptr, fptr=callbacks%stability_state_c)
+        end if
 
         ! associate procedure pointer to wrapper function
         hess_x => hess_x_f_wrapper
@@ -304,31 +364,31 @@ contains
 
         ! convert settings and hand the bundle to the callback wrappers as opaque
         ! context
-        settings = settings_c
+        settings = local_settings_c
         settings%context => callbacks
 
         ! the conversion replaces settings that were not initialized by the default
         ! settings, so the stability check cannot detect these anymore and the warning
         ! is printed here on stderr regardless of the verbosity since settings that
         ! were not initialized provide no logging function
-        if (.not. settings_c%initialized) &
+        if (.not. local_settings_c%initialized) &
             write(stderr, '(A)') " "//settings_uninitialized_warning_msg
 
         ! call stability check
         if (c_associated(kappa_c_ptr)) then
-            call stability_check(h_diag_ptr, hess_x, stable, error, settings, &
+            call stability_check(h_diag_ptr, hess_x, stable, error, settings, state, &
                                  kappa=kappa_ptr)
             if (rp /= c_rp) then
                 kappa_ptr_c = kappa_ptr
                 deallocate(kappa_ptr)
             end if
         else
-            call stability_check(h_diag_ptr, hess_x, stable, error, settings)
+            call stability_check(h_diag_ptr, hess_x, stable, error, settings, state)
         end if
         if (rp /= c_rp) deallocate(h_diag_ptr)
 
-        ! write output fields back into the C settings object directly
-        settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
+        ! copy the state into the host's record once more, also after an error
+        call copy_state_to_c(callbacks)
 
         ! convert return arguments to C kind
         stable_c = logical(stable, kind=c_bool)
@@ -369,6 +429,22 @@ contains
 
     end subroutine store_optional_c_callbacks
 
+    subroutine copy_state_to_c(callbacks)
+        !
+        ! this subroutine copies the state of a call into the host's record if the
+        ! host gave one, before a callback function into C and when the call returns
+        !
+        type(c_callbacks_type), intent(in) :: callbacks
+
+        ! copy the solver and the stability check state into the host's records which
+        ! were given
+        if (associated(callbacks%solver_state_c)) &
+            callbacks%solver_state_c = callbacks%solver_state
+        if (associated(callbacks%stability_state_c)) &
+            callbacks%stability_state_c = callbacks%stability_state
+
+    end subroutine copy_state_to_c
+
     subroutine update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x, error, context)
         !
         ! this subroutine exposes a C-implemented orbital update function to Fortran
@@ -404,6 +480,7 @@ contains
         hess_x_c_funptr = c_null_funptr
         select type (callbacks => context)
         type is (c_callbacks_type)
+            call copy_state_to_c(callbacks)
             error_c = callbacks%update_orbs(kappa_c, func_c, grad_c, h_diag_c, &
                                             hess_x_c_funptr, callbacks%host_context)
             if (c_associated(hess_x_c_funptr)) then
@@ -463,6 +540,7 @@ contains
         ! call C function
         select type (callbacks => context)
         type is (c_callbacks_type)
+            call copy_state_to_c(callbacks)
             error_c = callbacks%hess_x(x_c, hess_x_c, callbacks%host_context)
         class default
             error_c = 1
@@ -503,6 +581,7 @@ contains
         obj_func_c = 0.0_c_rp
         select type (callbacks => context)
         type is (c_callbacks_type)
+            call copy_state_to_c(callbacks)
             error_c = callbacks%obj_func(kappa_c, obj_func_c, callbacks%host_context)
         class default
             error_c = 1
@@ -545,6 +624,7 @@ contains
         ! call precond C function
         select type (callbacks => context)
         type is (c_callbacks_type)
+            call copy_state_to_c(callbacks)
             error_c = callbacks%precond(residual_c, mu_c, precond_residual_c, &
                                         callbacks%host_context)
         class default
@@ -583,6 +663,7 @@ contains
         ! call project C function
         select type (callbacks => context)
         type is (c_callbacks_type)
+            call copy_state_to_c(callbacks)
             error_c = callbacks%project(vector_c, callbacks%host_context)
         class default
             error_c = 1
@@ -612,6 +693,7 @@ contains
         converged_c = .false._c_bool
         select type (callbacks => context)
         type is (c_callbacks_type)
+            call copy_state_to_c(callbacks)
             error_c = callbacks%conv_check(converged_c, callbacks%host_context)
         class default
             error_c = 1
@@ -646,6 +728,7 @@ contains
         ! call logging C function
         select type (callbacks => context)
         type is (c_callbacks_type)
+            call copy_state_to_c(callbacks)
             call callbacks%logger(message_c, callbacks%host_context)
         end select
         deallocate(message_c)
@@ -708,7 +791,6 @@ contains
             ! convert logicals
             settings%stability = logical(settings_c%stability)
             settings%line_search = logical(settings_c%line_search)
-            settings%max_precision_reached = logical(settings_c%max_precision_reached)
 
             ! convert reals
             settings%conv_tol = real(settings_c%conv_tol, kind=rp)
@@ -725,8 +807,6 @@ contains
                 int(settings_c%jacobi_davidson_start, kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
-            settings%n_update_orbs = int(settings_c%n_update_orbs, kind=ip)
-            settings%n_hess_x = int(settings_c%n_hess_x, kind=ip)
 
             ! convert characters
             settings%subsystem_solver = character_from_c(settings_c%subsystem_solver)
@@ -783,7 +863,6 @@ contains
                 int(settings_c%jacobi_davidson_start, kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
-            settings%n_hess_x = int(settings_c%n_hess_x, kind=ip)
 
             ! convert characters
             settings%diag_solver = character_from_c(settings_c%diag_solver)
@@ -818,8 +897,6 @@ contains
             ! convert logicals
             settings_c%stability = logical(settings%stability, kind=c_bool)
             settings_c%line_search = logical(settings%line_search, kind=c_bool)
-            settings_c%max_precision_reached = &
-                logical(settings%max_precision_reached, kind=c_bool)
 
             ! convert reals
             settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
@@ -836,8 +913,6 @@ contains
                 int(settings%jacobi_davidson_start, kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
-            settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
-            settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
 
             ! convert characters
             settings_c%subsystem_solver = character_to_c(settings%subsystem_solver)
@@ -880,7 +955,6 @@ contains
                 int(settings%jacobi_davidson_start, kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
-            settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
 
             ! convert characters
             settings_c%diag_solver = character_to_c(settings%diag_solver)
@@ -893,6 +967,56 @@ contains
         end if
 
     end subroutine assign_stability_c_f
+
+    subroutine assign_solver_state_c_f(state_c, state)
+        !
+        ! this subroutine converts a solver state from Fortran to C
+        !
+        type(solver_state_type_c), intent(out) :: state_c
+        type(solver_state_type), intent(in) :: state
+
+        ! convert logicals
+        state_c%max_precision_reached = &
+            logical(state%max_precision_reached, kind=c_bool)
+
+        ! convert reals
+        state_c%func = real(state%func, kind=c_rp)
+        state_c%grad_rms = real(state%grad_rms, kind=c_rp)
+        state_c%trust_radius = real(state%trust_radius, kind=c_rp)
+        state_c%relative_residual = real(state%relative_residual, kind=c_rp)
+        state_c%level_shift = real(state%level_shift, kind=c_rp)
+        state_c%step_size = real(state%step_size, kind=c_rp)
+
+        ! convert integers
+        state_c%macro_iteration = int(state%macro_iteration, kind=c_ip)
+        state_c%micro_iteration = int(state%micro_iteration, kind=c_ip)
+        state_c%jacobi_davidson_iteration = &
+            int(state%jacobi_davidson_iteration, kind=c_ip)
+        state_c%n_update_orbs = int(state%n_update_orbs, kind=c_ip)
+        state_c%n_obj_func = int(state%n_obj_func, kind=c_ip)
+        state_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
+
+        ! convert objects
+        state_c%stability_state = state%stability_state
+
+    end subroutine assign_solver_state_c_f
+
+    subroutine assign_stability_state_c_f(state_c, state)
+        !
+        ! this subroutine converts a stability check state from Fortran to C
+        !
+        type(stability_state_type_c), intent(out) :: state_c
+        type(stability_state_type), intent(in) :: state
+
+        ! convert reals
+        state_c%min_eigval = real(state%min_eigval, kind=c_rp)
+        state_c%residual_rms = real(state%residual_rms, kind=c_rp)
+
+        ! convert integers
+        state_c%iteration = int(state%iteration, kind=c_ip)
+        state_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
+
+    end subroutine assign_stability_state_c_f
 
     function character_from_c(char_c) result(char_f)
         !

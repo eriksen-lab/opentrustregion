@@ -7,6 +7,8 @@
 from .python_interface import (
     SolverSettings,
     StabilitySettings,
+    SolverState,
+    StabilityState,
     solver,
     stability_check,
     c_int,

@@ -7,7 +7,8 @@
 module opentrustregion_mock
 
     use opentrustregion, only: rp, ip, stderr, solver, stability_check, &
-                               solver_settings_type, stability_settings_type
+                               solver_settings_type, stability_settings_type, &
+                               solver_state_type, stability_state_type
     use c_interface, only: c_callbacks_type
     use test_reference, only: tol
 
@@ -15,11 +16,20 @@ module opentrustregion_mock
 
     logical :: test_passed
 
-    ! output values the mock solver and stability check return or write into the
-    ! settings object, so that a test can check the C wrappers hand them back
-    integer(ip), parameter :: mock_error = 7, mock_n_update_orbs = 3, &
-                              mock_n_hess_x = 5, mock_stability_n_hess_x = 2, &
-                              mock_stability_check_n_hess_x = 4
+    ! error code the mock solver and stability check return and states they write,
+    ! with values distinct from those of the reference states, so that a test can
+    ! check the C wrappers hand them back
+    integer(ip), parameter :: mock_error = 7
+    type(stability_state_type), parameter :: mock_nested_state = stability_state_type( &
+        iteration=7, min_eigval=-0.5_rp, residual_rms=0.25_rp, n_hess_x=2)
+    type(solver_state_type), parameter :: mock_solver_state = solver_state_type( &
+        macro_iteration=4, func=-1.5_rp, grad_rms=0.75_rp, trust_radius=0.5_rp, &
+        micro_iteration=6, jacobi_davidson_iteration=1, relative_residual=0.375_rp, &
+        level_shift=2.5_rp, step_size=0.125_rp, n_update_orbs=3, n_obj_func=8, &
+        n_hess_x=5, max_precision_reached=.false., stability_state=mock_nested_state)
+    type(stability_state_type), parameter :: mock_stability_state = &
+        stability_state_type(iteration=9, min_eigval=-0.75_rp, residual_rms=0.0625_rp, &
+                             n_hess_x=4)
 
     ! stability the mock stability check returns, which a test sets
     logical :: mock_stable = .true.
@@ -31,6 +41,11 @@ module opentrustregion_mock
     type(stability_settings_type) :: received_stability_settings
     type(c_callbacks_type) :: received_callbacks, received_stability_callbacks
 
+    ! whether the callback bundles the mock solver and stability check received refer
+    ! to the state record they were given, so that a test can check that the C
+    ! wrappers copy this record into the host's
+    logical :: solver_state_bundled, stability_state_bundled
+
     ! create function pointers to ensure that routines comply with interface
     procedure(solver), pointer :: mock_solver_ptr => mock_solver
     procedure(stability_check), pointer :: mock_stability_check_ptr => &
@@ -39,7 +54,7 @@ module opentrustregion_mock
 contains
 
     subroutine mock_solver(update_orbs_funptr, obj_func_funptr, n_param, error, &
-                           settings)
+                           settings, state)
         !
         ! this subroutine is a mock routine for solver to test the C interface
         !
@@ -52,10 +67,19 @@ contains
         procedure(obj_func_type), intent(in), pointer :: obj_func_funptr
         integer(ip), intent(in) :: n_param
         integer(ip), intent(out) :: error
-        type(solver_settings_type), intent(inout) :: settings
+        type(solver_settings_type), intent(in), optional :: settings
+        type(solver_state_type), intent(out), target, optional :: state
 
         ! assume tests pass
         test_passed = .true.
+
+        ! set error code and check that the C wrapper passes the settings it converted
+        error = mock_error
+        if (.not. present(settings)) then
+            write(stderr, *) "test_solver_c_wrapper failed: Settings not passed."
+            test_passed = .false.
+            return
+        end if
 
         ! test passed orbital update subroutine
         if (.not. check_update_orbs_funptr(update_orbs_funptr, "solver_c_wrapper", &
@@ -107,17 +131,30 @@ contains
             received_stability_callbacks = callbacks
         end select
 
-        ! set output quantities and fields
-        error = mock_error
-        settings%max_precision_reached = .false.
-        settings%n_update_orbs = mock_n_update_orbs
-        settings%n_hess_x = mock_n_hess_x
-        settings%stability_settings%n_hess_x = mock_stability_n_hess_x
+        ! record whether the callback bundles of the settings and the nested settings
+        ! both refer to the state record
+        solver_state_bundled = .false.
+        if (present(state)) then
+            select type (callbacks => settings%context)
+            type is (c_callbacks_type)
+                solver_state_bundled = associated(callbacks%solver_state, state)
+            end select
+            select type (callbacks => settings%stability_settings%context)
+            type is (c_callbacks_type)
+                solver_state_bundled = solver_state_bundled .and. &
+                                       associated(callbacks%solver_state, state)
+            class default
+                solver_state_bundled = .false.
+            end select
+        end if
+
+        ! set state
+        if (present(state)) state = mock_solver_state
 
     end subroutine mock_solver
 
     subroutine mock_stability_check(h_diag, hess_x_funptr, stable, error, settings, &
-                                    kappa)
+                                    state, kappa)
         !
         ! this subroutine is a mock routine for the stability check to test the C
         ! interface
@@ -130,11 +167,23 @@ contains
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         logical, intent(out) :: stable
         integer(ip), intent(out) :: error
-        type(stability_settings_type), intent(inout) :: settings
+        type(stability_settings_type), intent(in), optional :: settings
+        type(stability_state_type), intent(out), target, optional :: state
         real(rp), intent(out), optional :: kappa(:)
 
         ! assume tests pass
         test_passed = .true.
+
+        ! set error code and stability and check that the C wrapper passes the settings
+        ! it converted
+        error = mock_error
+        stable = mock_stable
+        if (.not. present(settings)) then
+            write(stderr, *) "test_stability_check_c_wrapper failed: Settings not "// &
+                "passed."
+            test_passed = .false.
+            return
+        end if
 
         ! check Hessian diagonal
         if (size(h_diag) /= n_param) then
@@ -174,11 +223,18 @@ contains
             received_callbacks = callbacks
         end select
 
-        ! set output quantities and fields
-        stable = mock_stable
+        ! record whether the callback bundle refers to the state record
+        stability_state_bundled = .false.
+        if (present(state)) then
+            select type (callbacks => settings%context)
+            type is (c_callbacks_type)
+                stability_state_bundled = associated(callbacks%stability_state, state)
+            end select
+        end if
+
+        ! set optional output quantities and state
         if (present(kappa)) kappa = 1.0_rp
-        error = mock_error
-        settings%n_hess_x = mock_stability_check_n_hess_x
+        if (present(state)) state = mock_stability_state
 
     end subroutine mock_stability_check
 

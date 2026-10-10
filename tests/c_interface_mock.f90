@@ -17,9 +17,10 @@ module c_interface_mock
     implicit none
 
     ! results of the mocks, which the Python tests clear before and read after the
-    ! call whose arguments they check
-    logical(c_bool), bind(C) :: test_solver_interface = .false., &
-                                test_stability_check_interface = .false.
+    ! call whose arguments they check, and whether the mocks received settings
+    logical(c_bool), bind(C) :: &
+        test_solver_interface = .false., test_stability_check_interface = .false., &
+        solver_settings_passed = .false., stability_settings_passed = .false.
 
     ! create function pointers to ensure that routines comply with interface
     procedure(solver_c_wrapper), pointer :: mock_solver_c_wrapper_ptr => &
@@ -34,21 +35,26 @@ module c_interface_mock
 contains
 
     function mock_solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param_c, &
-                                   settings_c) result(error_c) &
+                                   settings_c, state_c_ptr) result(error_c) &
         bind(C, name="mock_solver")
         !
         ! this function is a mock routine for the solver C wrapper function
         !
-        use c_interface, only: solver_settings_type_c, logger_c_type, obj_func_c_type
+        use c_interface, only: solver_settings_type_c, solver_state_type_c, &
+                               logger_c_type, obj_func_c_type
         use test_reference, only: check_update_orbs_c_funptr, check_obj_func_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
-                                  check_conv_check_c_funptr, operator(/=)
+                                  check_conv_check_c_funptr, &
+                                  get_reference_solver_state_values, operator(/=)
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
-        type(solver_settings_type_c), intent(inout) :: settings_c
+        type(solver_settings_type_c), intent(in), optional :: settings_c
+        type(c_ptr), intent(in), value :: state_c_ptr
         integer(c_ip) :: error_c
 
+        type(c_ptr) :: context
+        type(solver_state_type_c), pointer :: state_c
         procedure(logger_c_type), pointer :: logger_funptr
         procedure(obj_func_c_type), pointer :: obj_func_funptr
         character(len=:), allocatable, target :: message
@@ -57,23 +63,29 @@ contains
         ! assume tests pass
         test_solver_interface = .true.
 
+        ! record whether settings were passed, the callback functions receive their
+        ! host context or none without settings
+        solver_settings_passed = present(settings_c)
+        context = c_null_ptr
+        if (present(settings_c)) context = settings_c%context
+
         ! evaluate the objective function once and return its error as the solver
         ! would, so that a test can check how an error of a callback function is
         ! reported
         kappa = 0.0_c_rp
         call c_f_procpointer(cptr=obj_func_c_funptr, fptr=obj_func_funptr)
-        error_c = obj_func_funptr(kappa, func, settings_c%context)
+        error_c = obj_func_funptr(kappa, func, context)
         if (error_c /= 0) return
 
         ! test passed orbital update function
         if (.not. check_update_orbs_c_funptr( &
             update_orbs_c_funptr, "solver_py_interface", " by given orbital "// &
-            "updating function", settings_c%context)) test_solver_interface = .false.
+            "updating function", context)) test_solver_interface = .false.
 
         ! test passed objective function
-        if (.not. check_obj_func_c_funptr( &
-            obj_func_c_funptr, "solver_py_interface", " by given objective function", &
-            settings_c%context)) test_solver_interface = .false.
+        if (.not. check_obj_func_c_funptr(obj_func_c_funptr, "solver_py_interface", &
+                                          " by given objective function", context)) &
+            test_solver_interface = .false.
 
         ! check if passed number of parameters is correct
         if (n_param_c /= n_param) then
@@ -82,44 +94,55 @@ contains
             test_solver_interface = .false.
         end if
 
-        ! test passed preconditioner function
-        if (.not. check_precond_c_funptr( &
-            settings_c%precond, "solver_py_interface", " by given preconditioning "// &
-            "function", settings_c%context)) test_solver_interface = .false.
+        ! check the optional callback functions and the values of the settings where
+        ! these were passed
+        if (present(settings_c)) then
+            ! test passed preconditioner function
+            if (.not. check_precond_c_funptr( &
+                settings_c%precond, "solver_py_interface", " by given "// &
+                "preconditioning function", context)) test_solver_interface = .false.
 
-        ! test passed projection function
-        if (.not. check_project_c_funptr( &
-            settings_c%project, "solver_py_interface", " by given projection "// &
-            "function", settings_c%context)) test_solver_interface = .false.
+            ! test passed projection function
+            if (.not. check_project_c_funptr( &
+                settings_c%project, "solver_py_interface", " by given projection "// &
+                "function", context)) test_solver_interface = .false.
 
-        ! test passed convergence check function
-        if (.not. check_conv_check_c_funptr( &
-            settings_c%conv_check, "solver_py_interface", " by given convergence "// &
-            "check function", settings_c%context)) test_solver_interface = .false.
+            ! test passed convergence check function
+            if (.not. check_conv_check_c_funptr( &
+                settings_c%conv_check, "solver_py_interface", " by given "// &
+                "convergence check function", context)) test_solver_interface = .false.
 
-        ! get Fortran pointer to passed logging function and call it
-        message = "test"//c_null_char
-        call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
-        call logger_funptr(message, settings_c%context)
+            ! get Fortran pointer to passed logging function and call it
+            message = "test"//c_null_char
+            call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
+            call logger_funptr(message, context)
 
-        ! test the callback functions of the nested stability check settings
-        if (.not. check_precond_c_funptr( &
-            settings_c%stability_settings%precond, "solver_py_interface", &
-            " by preconditioning function of nested settings", settings_c%context)) &
-            test_solver_interface = .false.
-        if (.not. check_project_c_funptr( &
-            settings_c%stability_settings%project, "solver_py_interface", &
-            " by projection function of nested settings", settings_c%context)) &
-            test_solver_interface = .false.
-        call c_f_procpointer(cptr=settings_c%stability_settings%logger, &
-                             fptr=logger_funptr)
-        call logger_funptr(message, settings_c%context)
+            ! test the callback functions of the nested stability check settings
+            if (.not. check_precond_c_funptr( &
+                settings_c%stability_settings%precond, "solver_py_interface", &
+                " by preconditioning function of nested settings", context)) &
+                test_solver_interface = .false.
+            if (.not. check_project_c_funptr( &
+                settings_c%stability_settings%project, "solver_py_interface", &
+                " by projection function of nested settings", context)) &
+                test_solver_interface = .false.
+            call c_f_procpointer(cptr=settings_c%stability_settings%logger, &
+                                 fptr=logger_funptr)
+            call logger_funptr(message, context)
 
-        ! check optional settings against reference values
-        if (settings_c /= ref_solver_settings) then
-            write(stderr, *) "test_solver_py_interface failed: Passed settings "// &
-                "associated with wrong values."
-            test_solver_interface = .false.
+            ! check optional settings against reference values
+            if (settings_c /= ref_solver_settings) then
+                write(stderr, *) "test_solver_py_interface failed: Passed settings "// &
+                    "associated with wrong values."
+                test_solver_interface = .false.
+            end if
+        end if
+
+        ! fill a given state with the reference values, so that a test can check
+        ! that the Python interface passes its state and reads every field
+        if (c_associated(state_c_ptr)) then
+            call c_f_pointer(state_c_ptr, state_c)
+            call get_reference_solver_state_values(state_c)
         end if
 
         ! set return arguments
@@ -127,26 +150,29 @@ contains
 
     end function mock_solver_c_wrapper
 
-    function mock_stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, &
-                                            stable_c, settings_c, kappa_c_ptr) &
-        result(error_c) bind(C, name="mock_stability_check")
+    function mock_stability_check_c_wrapper( &
+        h_diag_c, hess_x_c_funptr, n_param_c, stable_c, settings_c, state_c_ptr, &
+        kappa_c_ptr) result(error_c) bind(C, name="mock_stability_check")
         !
         ! this function is a mock routine for the stability check C wrapper function
         !
-        use c_interface, only: stability_settings_type_c, logger_c_type, hess_x_c_type
+        use c_interface, only: stability_settings_type_c, stability_state_type_c, &
+                               logger_c_type, hess_x_c_type
         use test_reference, only: tol_c, check_hess_x_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
-                                  operator(/=)
+                                  get_reference_stability_state_values, operator(/=)
 
         real(c_rp), intent(in), target :: h_diag_c(*)
         type(c_funptr), intent(in), value :: hess_x_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
         logical(c_bool), intent(out) :: stable_c
-        type(stability_settings_type_c), intent(inout) :: settings_c
-        type(c_ptr), intent(in), value :: kappa_c_ptr
+        type(stability_settings_type_c), intent(in), optional :: settings_c
+        type(c_ptr), intent(in), value :: state_c_ptr, kappa_c_ptr
         integer(c_ip) :: error_c
 
+        type(c_ptr) :: context
         real(c_rp), pointer :: kappa_ptr(:)
+        type(stability_state_type_c), pointer :: state_c
         procedure(logger_c_type), pointer :: logger_funptr
         procedure(hess_x_c_type), pointer :: hess_x_funptr
         character(len=:), allocatable, target :: message
@@ -155,12 +181,18 @@ contains
         ! assume tests pass
         test_stability_check_interface = .true.
 
+        ! record whether settings were passed, the callback functions receive their
+        ! host context or none without settings
+        stability_settings_passed = present(settings_c)
+        context = c_null_ptr
+        if (present(settings_c)) context = settings_c%context
+
         ! apply the Hessian linear transformation once and return its error as the
         ! stability check would, so that a test can check how an error of a callback
         ! function is reported
         x = 0.0_c_rp
         call c_f_procpointer(cptr=hess_x_c_funptr, fptr=hess_x_funptr)
-        error_c = hess_x_funptr(x, hess_x, settings_c%context)
+        error_c = hess_x_funptr(x, hess_x, context)
         if (error_c /= 0) then
             stable_c = .false.
             return
@@ -176,7 +208,7 @@ contains
         ! test passed Hessian linear transformation
         if (.not. check_hess_x_c_funptr( &
             hess_x_c_funptr, "stability_check_py_interface", &
-            " by given Hessian linear transformation function", settings_c%context)) &
+            " by given Hessian linear transformation function", context)) &
             test_stability_check_interface = .false.
 
         ! check if passed number of parameters is correct
@@ -186,28 +218,39 @@ contains
             test_stability_check_interface = .false.
         end if
 
-        ! test passed preconditioner
-        if (.not. check_precond_c_funptr( &
-            settings_c%precond, "stability_check_py_interface", &
-            " by given preconditioning function", settings_c%context)) &
-            test_stability_check_interface = .false.
+        ! check the optional callback functions and the values of the settings where
+        ! these were passed
+        if (present(settings_c)) then
+            ! test passed preconditioner
+            if (.not. check_precond_c_funptr( &
+                settings_c%precond, "stability_check_py_interface", &
+                " by given preconditioning function", context)) &
+                test_stability_check_interface = .false.
 
-        ! test passed projection function
-        if (.not. check_project_c_funptr( &
-            settings_c%project, "stability_check_py_interface", &
-            " by given projection function", settings_c%context)) &
-            test_stability_check_interface = .false.
+            ! test passed projection function
+            if (.not. check_project_c_funptr( &
+                settings_c%project, "stability_check_py_interface", &
+                " by given projection function", context)) &
+                test_stability_check_interface = .false.
 
-        ! get Fortran pointer to passed logging function and call it
-        message = "test"//c_null_char
-        call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
-        call logger_funptr(message, settings_c%context)
+            ! get Fortran pointer to passed logging function and call it
+            message = "test"//c_null_char
+            call c_f_procpointer(cptr=settings_c%logger, fptr=logger_funptr)
+            call logger_funptr(message, context)
 
-        ! check optional settings against reference values
-        if (settings_c /= ref_stability_settings) then
-            write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
-                "settings associated with wrong values."
-            test_stability_check_interface = .false.
+            ! check optional settings against reference values
+            if (settings_c /= ref_stability_settings) then
+                write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
+                    "settings associated with wrong values."
+                test_stability_check_interface = .false.
+            end if
+        end if
+
+        ! fill a given state with the reference values, so that a test can check
+        ! that the Python interface passes its state and reads every field
+        if (c_associated(state_c_ptr)) then
+            call c_f_pointer(state_c_ptr, state_c)
+            call get_reference_stability_state_values(state_c)
         end if
 
         ! set return arguments

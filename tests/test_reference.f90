@@ -7,8 +7,9 @@
 module test_reference
 
     use opentrustregion, only: rp, ip, kw_len, stderr, solver_settings_type, &
-                               stability_settings_type
-    use c_interface, only: c_rp, c_ip
+                               stability_settings_type, solver_state_type, &
+                               stability_state_type
+    use c_interface, only: c_rp, c_ip, solver_state_type_c
     use, intrinsic :: iso_c_binding, only: c_bool, c_char, c_null_char, c_funptr, &
                                            c_null_funptr, c_f_procpointer, &
                                            c_associated, c_ptr, c_null_ptr, c_loc, &
@@ -32,21 +33,32 @@ module test_reference
     ! stability check settings of the reference solver settings are the reference
     ! stability check settings
     type(stability_settings_type), parameter :: ref_stability_settings = &
-        stability_settings_type(precond=null(), project=null(), logger=null(), &
-                                initialized=.true., conv_tol=5e-6_rp, &
-                                n_random_trial_vectors=6, n_iter=60, &
-                                jacobi_davidson_start=13, seed=34, verbose=2, &
-                                n_hess_x=12, diag_solver="jacobi-davidson")
+        stability_settings_type( &
+            precond=null(), project=null(), logger=null(), initialized=.true., &
+            conv_tol=5e-6_rp, n_random_trial_vectors=6, n_iter=60, &
+            jacobi_davidson_start=13, seed=34, verbose=2, diag_solver="jacobi-davidson")
     type(solver_settings_type), parameter :: ref_solver_settings = &
-        solver_settings_type(precond=null(), project=null(), conv_check=null(), &
-                             logger=null(), stability=.true., line_search=.false., &
-                             initialized=.true., max_precision_reached=.true., &
-                             conv_tol=2e-3_rp, start_trust_radius=0.3_rp, &
-                             global_red_factor=3e-2_rp, local_red_factor=4e-3_rp, &
-                             n_random_trial_vectors=5, n_macro=300, n_micro=200, &
-                             jacobi_davidson_start=10, seed=33, verbose=3, &
-                             n_update_orbs=7, n_hess_x=11, subsystem_solver="tcg", &
-                             stability_settings=ref_stability_settings)
+        solver_settings_type( &
+            precond=null(), project=null(), conv_check=null(), logger=null(), &
+            stability=.true., line_search=.false., initialized=.true., &
+            conv_tol=2e-3_rp, start_trust_radius=0.3_rp, global_red_factor=3e-2_rp, &
+            local_red_factor=4e-3_rp, n_random_trial_vectors=5, n_macro=300, &
+            n_micro=200, jacobi_davidson_start=10, seed=33, verbose=3, &
+            subsystem_solver="tcg", stability_settings=ref_stability_settings)
+
+    ! reference states, every field with a value distinct from every other field of
+    ! the same kind in either state and from its default value, so that a field read
+    ! from or written to the wrong place or not converted at all is detected, the
+    ! nested state of the internal stability check of the reference solver state is
+    ! the reference stability check state
+    type(stability_state_type), parameter :: ref_stability_state = &
+        stability_state_type(iteration=16, min_eigval=-0.25_rp, residual_rms=0.125_rp, &
+                             n_hess_x=12)
+    type(solver_state_type), parameter :: ref_solver_state = solver_state_type( &
+        macro_iteration=17, func=-2.5_rp, grad_rms=0.375_rp, trust_radius=0.625_rp, &
+        micro_iteration=18, jacobi_davidson_iteration=19, relative_residual=0.0625_rp, &
+        level_shift=1.5_rp, step_size=0.875_rp, n_update_orbs=7, n_obj_func=20, &
+        n_hess_x=11, max_precision_reached=.true., stability_state=ref_stability_state)
 
     ! host context handed to the callback functions by the tests that exercise it,
     ! together with the bookkeeping those callback functions keep, so that a test can
@@ -61,6 +73,13 @@ module test_reference
 
     logical :: host_context_armed = .false., host_context_wrong = .false., &
                host_context_missing = .false.
+
+    ! a solver state with its default values that a test lets a callback bundle refer
+    ! to, the host's record holding the reference values it is copied into, and
+    ! whether a C callback function found it not copied when it was called
+    type(solver_state_type), target :: armed_state
+    type(solver_state_type_c), target :: armed_state_c
+    logical :: state_armed = .false., state_not_copied = .false.
 
     ! checks and operations on all callback functions of settings, so that a new
     ! callback function only needs to be added here
@@ -86,6 +105,8 @@ module test_reference
         module procedure equal_stability
         module procedure equal_solver_c
         module procedure equal_stability_c
+        module procedure equal_solver_state_c
+        module procedure equal_stability_state_c
     end interface
 
     interface operator(/=)
@@ -93,6 +114,8 @@ module test_reference
         module procedure not_equal_stability
         module procedure not_equal_solver_c
         module procedure not_equal_stability_c
+        module procedure not_equal_solver_state_c
+        module procedure not_equal_stability_state_c
     end interface
 
 contains
@@ -142,6 +165,12 @@ contains
             context%n_calls = context%n_calls + 1
         else
             host_context_wrong = .true.
+        end if
+
+        ! a callback function of a bundle a test armed with a state finds the state
+        ! copied into the host's record
+        if (state_armed) then
+            if (armed_state_c /= armed_state) state_not_copied = .true.
         end if
 
     end subroutine check_host_context_c
@@ -215,6 +244,8 @@ contains
         host_context_armed = .true.
         host_context_wrong = .false.
         host_context_missing = .false.
+        state_armed = .false.
+        state_not_copied = .false.
 
     end subroutine reset_host_context
 
@@ -250,6 +281,26 @@ contains
 
     end subroutine arm_host_context_c
 
+    subroutine arm_state_c(callbacks)
+        !
+        ! this subroutine lets a callback bundle refer to a solver state with its
+        ! default values and to a host's record holding the reference values, so that
+        ! the C callback functions find whether the state was copied into the record
+        ! before they were called
+        !
+        use c_interface, only: c_callbacks_type
+
+        type(c_callbacks_type), intent(inout) :: callbacks
+
+        armed_state = solver_state_type()
+        call get_reference_solver_state_values(armed_state_c)
+        callbacks%solver_state => armed_state
+        callbacks%solver_state_c => armed_state_c
+        state_armed = .true.
+        state_not_copied = .false.
+
+    end subroutine arm_state_c
+
     subroutine get_reference_solver_values(values_out, true_logical) bind(C)
         !
         ! this subroutine exports the reference solver settings as C settings whose
@@ -281,12 +332,10 @@ contains
             values_out%stability = ref_solver_settings%stability
             values_out%line_search = ref_solver_settings%line_search
             values_out%initialized = ref_solver_settings%initialized
-            values_out%max_precision_reached = ref_solver_settings%max_precision_reached
         else
             values_out%stability = name == "stability"
             values_out%line_search = name == "line_search"
             values_out%initialized = name == "initialized"
-            values_out%max_precision_reached = name == "max_precision_reached"
         end if
 
         ! set reals
@@ -302,8 +351,6 @@ contains
         values_out%jacobi_davidson_start = ref_solver_settings%jacobi_davidson_start
         values_out%seed = ref_solver_settings%seed
         values_out%verbose = ref_solver_settings%verbose
-        values_out%n_update_orbs = ref_solver_settings%n_update_orbs
-        values_out%n_hess_x = ref_solver_settings%n_hess_x
 
         ! set keyword
         values_out%subsystem_solver = &
@@ -342,7 +389,6 @@ contains
         values_out%jacobi_davidson_start = ref_stability_settings%jacobi_davidson_start
         values_out%seed = ref_stability_settings%seed
         values_out%verbose = ref_stability_settings%verbose
-        values_out%n_hess_x = ref_stability_settings%n_hess_x
 
         ! set keyword
         values_out%diag_solver = ref_character_to_c(ref_stability_settings%diag_solver)
@@ -374,6 +420,82 @@ contains
         stability_settings_size = c_sizeof(settings_c)
 
     end function stability_settings_size
+
+    subroutine get_reference_solver_state_values(values_out) bind(C)
+        !
+        ! this subroutine exports the reference solver state as a C state whose fields
+        ! are set one by one without the conversion routines under test
+        !
+        use c_interface, only: solver_state_type_c
+
+        type(solver_state_type_c), intent(out) :: values_out
+
+        ! set logical
+        values_out%max_precision_reached = ref_solver_state%max_precision_reached
+
+        ! set reals
+        values_out%func = ref_solver_state%func
+        values_out%grad_rms = ref_solver_state%grad_rms
+        values_out%trust_radius = ref_solver_state%trust_radius
+        values_out%relative_residual = ref_solver_state%relative_residual
+        values_out%level_shift = ref_solver_state%level_shift
+        values_out%step_size = ref_solver_state%step_size
+
+        ! set integers
+        values_out%macro_iteration = ref_solver_state%macro_iteration
+        values_out%micro_iteration = ref_solver_state%micro_iteration
+        values_out%jacobi_davidson_iteration = &
+            ref_solver_state%jacobi_davidson_iteration
+        values_out%n_update_orbs = ref_solver_state%n_update_orbs
+        values_out%n_obj_func = ref_solver_state%n_obj_func
+        values_out%n_hess_x = ref_solver_state%n_hess_x
+
+        ! set nested stability check state
+        call get_reference_stability_state_values(values_out%stability_state)
+
+    end subroutine get_reference_solver_state_values
+
+    subroutine get_reference_stability_state_values(values_out) bind(C)
+        !
+        ! this subroutine exports the reference stability check state as a C state
+        ! whose fields are set one by one without the conversion routines under test
+        !
+        use c_interface, only: stability_state_type_c
+
+        type(stability_state_type_c), intent(out) :: values_out
+
+        values_out%min_eigval = ref_stability_state%min_eigval
+        values_out%residual_rms = ref_stability_state%residual_rms
+        values_out%iteration = ref_stability_state%iteration
+        values_out%n_hess_x = ref_stability_state%n_hess_x
+
+    end subroutine get_reference_stability_state_values
+
+    integer(c_size_t) function solver_state_size() bind(C)
+        !
+        ! this function returns the size of the C solver state, so that the layout
+        ! tests detect a field missing from the C or Python state
+        !
+        use c_interface, only: solver_state_type_c
+
+        type(solver_state_type_c) :: state_c
+
+        solver_state_size = c_sizeof(state_c)
+
+    end function solver_state_size
+
+    integer(c_size_t) function stability_state_size() bind(C)
+        !
+        ! this function returns the size of the C stability check state, so that the
+        ! layout tests detect a field missing from the C or Python state
+        !
+        use c_interface, only: stability_state_type_c
+
+        type(stability_state_type_c) :: state_c
+
+        stability_state_size = c_sizeof(state_c)
+
+    end function stability_state_size
 
     subroutine reference_field(name_c, field_value, keyword_c) bind(C)
         !
@@ -417,8 +539,6 @@ contains
             field_value = merge(1.0_c_rp, 0.0_c_rp, values%line_search)
         case ("initialized")
             field_value = merge(1.0_c_rp, 0.0_c_rp, values%initialized)
-        case ("max_precision_reached")
-            field_value = merge(1.0_c_rp, 0.0_c_rp, values%max_precision_reached)
         case ("conv_tol")
             field_value = values%conv_tol
         case ("start_trust_radius")
@@ -439,10 +559,6 @@ contains
             field_value = values%seed
         case ("verbose")
             field_value = values%verbose
-        case ("n_update_orbs")
-            field_value = values%n_update_orbs
-        case ("n_hess_x")
-            field_value = values%n_hess_x
         case ("subsystem_solver")
             keyword_c = values%subsystem_solver
         case ("stability_settings.precond")
@@ -469,8 +585,6 @@ contains
             field_value = values%stability_settings%seed
         case ("stability_settings.verbose")
             field_value = values%stability_settings%verbose
-        case ("stability_settings.n_hess_x")
-            field_value = values%stability_settings%n_hess_x
         case ("stability_settings.diag_solver")
             keyword_c = values%stability_settings%diag_solver
         case default
@@ -491,6 +605,68 @@ contains
         end function address
 
     end subroutine reference_field
+
+    real(c_rp) function reference_state_field(name_c) bind(C)
+        !
+        ! this function returns the value of a field of the C solver state exported by
+        ! get_reference_solver_state_values by its name, prefixed by
+        ! "stability_state." for the nested state, which also describes a standalone
+        ! stability check state, a logical as 1 or 0, so that the C and Python tests
+        ! need no values of their own and compare what they read through their own
+        ! declarations with what the Fortran declaration reads
+        !
+        use c_interface, only: solver_state_type_c
+
+        character(kind=c_char), intent(in) :: name_c(*)
+
+        type(solver_state_type_c) :: values
+        character(len=:), allocatable :: name
+
+        ! export reference values and select field by name
+        reference_state_field = 0.0_c_rp
+        call get_reference_solver_state_values(values)
+        name = ref_character_from_c(name_c)
+        select case (name)
+        case ("max_precision_reached")
+            reference_state_field = &
+                merge(1.0_c_rp, 0.0_c_rp, values%max_precision_reached)
+        case ("func")
+            reference_state_field = values%func
+        case ("grad_rms")
+            reference_state_field = values%grad_rms
+        case ("trust_radius")
+            reference_state_field = values%trust_radius
+        case ("relative_residual")
+            reference_state_field = values%relative_residual
+        case ("level_shift")
+            reference_state_field = values%level_shift
+        case ("step_size")
+            reference_state_field = values%step_size
+        case ("macro_iteration")
+            reference_state_field = values%macro_iteration
+        case ("micro_iteration")
+            reference_state_field = values%micro_iteration
+        case ("jacobi_davidson_iteration")
+            reference_state_field = values%jacobi_davidson_iteration
+        case ("n_update_orbs")
+            reference_state_field = values%n_update_orbs
+        case ("n_obj_func")
+            reference_state_field = values%n_obj_func
+        case ("n_hess_x")
+            reference_state_field = values%n_hess_x
+        case ("stability_state.min_eigval")
+            reference_state_field = values%stability_state%min_eigval
+        case ("stability_state.residual_rms")
+            reference_state_field = values%stability_state%residual_rms
+        case ("stability_state.iteration")
+            reference_state_field = values%stability_state%iteration
+        case ("stability_state.n_hess_x")
+            reference_state_field = values%stability_state%n_hess_x
+        case default
+            write(stderr, *) "reference_state_field: Unknown field "//name//"."
+        end select
+
+    end function reference_state_field
 
     subroutine unset_solver_callbacks_c(settings_c)
         !
@@ -556,8 +732,14 @@ contains
                 "received the host context that was set."
             host_context_reached = .false.
         end if
+        if (state_not_copied) then
+            write(stderr, *) "test_"//test_name//" failed: A callback function was "// &
+                "called before the state was copied into the host's record."
+            host_context_reached = .false.
+        end if
 
         host_context_armed = .false.
+        state_armed = .false.
 
     end function host_context_reached
 
@@ -572,7 +754,6 @@ contains
             (lhs%stability .eqv. rhs%stability) .and. &
             (lhs%line_search .eqv. rhs%line_search) .and. &
             (lhs%initialized .eqv. rhs%initialized) .and. &
-            (lhs%max_precision_reached .eqv. rhs%max_precision_reached) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
             abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
@@ -581,8 +762,6 @@ contains
             lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%n_update_orbs == rhs%n_update_orbs .and. &
-            lhs%n_hess_x == rhs%n_hess_x .and. &
             lhs%subsystem_solver == rhs%subsystem_solver .and. &
             lhs%stability_settings == rhs%stability_settings
 
@@ -613,7 +792,7 @@ contains
             lhs%n_iter == rhs%n_iter .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
-            lhs%n_hess_x == rhs%n_hess_x .and. lhs%diag_solver == rhs%diag_solver
+            lhs%diag_solver == rhs%diag_solver
 
     end function equal_stability
 
@@ -643,8 +822,6 @@ contains
             (lhs_c%stability .eqv. logical(rhs%stability, kind=c_bool)) .and. &
             (lhs_c%line_search .eqv. logical(rhs%line_search, kind=c_bool)) .and. &
             (lhs_c%initialized .eqv. logical(rhs%initialized, kind=c_bool)) .and. &
-            (lhs_c%max_precision_reached .eqv. &
-             logical(rhs%max_precision_reached, kind=c_bool)) .and. &
             abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs_c%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
             abs(lhs_c%global_red_factor - rhs%global_red_factor) <= tol .and. &
@@ -653,8 +830,6 @@ contains
             lhs_c%n_macro == rhs%n_macro .and. lhs_c%n_micro == rhs%n_micro .and. &
             lhs_c%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs_c%seed == rhs%seed .and. lhs_c%verbose == rhs%verbose .and. &
-            lhs_c%n_update_orbs == rhs%n_update_orbs .and. &
-            lhs_c%n_hess_x == rhs%n_hess_x .and. &
             ref_character_from_c(lhs_c%subsystem_solver) == &
             trim(rhs%subsystem_solver) .and. &
             lhs_c%stability_settings == rhs%stability_settings
@@ -693,7 +868,6 @@ contains
             lhs_c%n_iter == rhs%n_iter .and. &
             lhs_c%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs_c%seed == rhs%seed .and. lhs_c%verbose == rhs%verbose .and. &
-            lhs_c%n_hess_x == rhs%n_hess_x .and. &
             ref_character_from_c(lhs_c%diag_solver) == trim(rhs%diag_solver)
 
     end function equal_stability_c
@@ -711,6 +885,82 @@ contains
         not_equal_stability_c = .not. (lhs_c == rhs)
 
     end function not_equal_stability_c
+
+    logical function equal_solver_state_c(lhs_c, rhs)
+        !
+        ! this function overloads the comparison operator to compare a C solver state
+        ! to a Fortran solver state field by field, independently of the conversion
+        ! routines under test
+        !
+        use c_interface, only: solver_state_type_c
+
+        type(solver_state_type_c), intent(in) :: lhs_c
+        type(solver_state_type), intent(in) :: rhs
+
+        equal_solver_state_c = &
+            (lhs_c%max_precision_reached .eqv. &
+             logical(rhs%max_precision_reached, kind=c_bool)) .and. &
+            abs(lhs_c%func - rhs%func) <= tol .and. &
+            abs(lhs_c%grad_rms - rhs%grad_rms) <= tol .and. &
+            abs(lhs_c%trust_radius - rhs%trust_radius) <= tol .and. &
+            abs(lhs_c%relative_residual - rhs%relative_residual) <= tol .and. &
+            abs(lhs_c%level_shift - rhs%level_shift) <= tol .and. &
+            abs(lhs_c%step_size - rhs%step_size) <= tol .and. &
+            lhs_c%macro_iteration == rhs%macro_iteration .and. &
+            lhs_c%micro_iteration == rhs%micro_iteration .and. &
+            lhs_c%jacobi_davidson_iteration == rhs%jacobi_davidson_iteration .and. &
+            lhs_c%n_update_orbs == rhs%n_update_orbs .and. &
+            lhs_c%n_obj_func == rhs%n_obj_func .and. &
+            lhs_c%n_hess_x == rhs%n_hess_x .and. &
+            lhs_c%stability_state == rhs%stability_state
+
+    end function equal_solver_state_c
+
+    logical function not_equal_solver_state_c(lhs_c, rhs)
+        !
+        ! this function overloads the negated comparison operator to compare a C
+        ! solver state to a Fortran solver state
+        !
+        use c_interface, only: solver_state_type_c
+
+        type(solver_state_type_c), intent(in) :: lhs_c
+        type(solver_state_type), intent(in) :: rhs
+
+        not_equal_solver_state_c = .not. (lhs_c == rhs)
+
+    end function not_equal_solver_state_c
+
+    logical function equal_stability_state_c(lhs_c, rhs)
+        !
+        ! this function overloads the comparison operator to compare a C stability
+        ! check state to a Fortran stability check state field by field,
+        ! independently of the conversion routines under test
+        !
+        use c_interface, only: stability_state_type_c
+
+        type(stability_state_type_c), intent(in) :: lhs_c
+        type(stability_state_type), intent(in) :: rhs
+
+        equal_stability_state_c = &
+            abs(lhs_c%min_eigval - rhs%min_eigval) <= tol .and. &
+            abs(lhs_c%residual_rms - rhs%residual_rms) <= tol .and. &
+            lhs_c%iteration == rhs%iteration .and. lhs_c%n_hess_x == rhs%n_hess_x
+
+    end function equal_stability_state_c
+
+    logical function not_equal_stability_state_c(lhs_c, rhs)
+        !
+        ! this function overloads the negated comparison operator to compare a C
+        ! stability check state to a Fortran stability check state
+        !
+        use c_interface, only: stability_state_type_c
+
+        type(stability_state_type_c), intent(in) :: lhs_c
+        type(stability_state_type), intent(in) :: rhs
+
+        not_equal_stability_state_c = .not. (lhs_c == rhs)
+
+    end function not_equal_stability_state_c
 
     logical function solver_callbacks_unset(settings)
         !

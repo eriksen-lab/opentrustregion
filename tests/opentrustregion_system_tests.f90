@@ -535,7 +535,8 @@ contains
             if (diag_solver == "jacobi-davidson") settings%jacobi_davidson_start = 0
 
             ! perform stability check
-            call stability_check(h_diag, hess_x_funptr, stable, error, settings, kappa)
+            call stability_check(h_diag, hess_x_funptr, stable, error, settings, &
+                                 kappa=kappa)
             if (error /= 0) then
                 write(stderr, *) "test_"//test_name//" failed: Stability check "// &
                     "produced error at the "//trim(point_names(i_point))//"."

@@ -85,7 +85,6 @@ typedef struct {
   c_int jacobi_davidson_start;
   c_int seed;
   c_int verbose;
-  c_int n_hess_x;
 
   char diag_solver[OTR_KW_LEN + 1];
 
@@ -106,7 +105,6 @@ typedef struct {
   c_bool stability;
   c_bool line_search;
   c_bool initialized;
-  c_bool max_precision_reached;
 
   c_real conv_tol;
   c_real start_trust_radius;
@@ -119,8 +117,6 @@ typedef struct {
   c_int jacobi_davidson_start;
   c_int seed;
   c_int verbose;
-  c_int n_update_orbs;
-  c_int n_hess_x;
 
   char subsystem_solver[OTR_KW_LEN + 1];
 
@@ -134,6 +130,40 @@ typedef struct {
 void init_solver_settings(solver_settings_type *settings);
 
 /* ------------------------------------------------------------------
+ * Structs corresponding to Fortran states
+ * ------------------------------------------------------------------ */
+
+// Struct corresponding to Fortran type(stability_state_type_c)
+typedef struct {
+  c_real min_eigval;
+  c_real residual_rms;
+
+  c_int iteration;
+  c_int n_hess_x;
+} stability_state_type;
+
+// Struct corresponding to Fortran type(solver_state_type_c)
+typedef struct {
+  c_bool max_precision_reached;
+
+  c_real func;
+  c_real grad_rms;
+  c_real trust_radius;
+  c_real relative_residual;
+  c_real level_shift;
+  c_real step_size;
+
+  c_int macro_iteration;
+  c_int micro_iteration;
+  c_int jacobi_davidson_iteration;
+  c_int n_update_orbs;
+  c_int n_obj_func;
+  c_int n_hess_x;
+
+  stability_state_type stability_state;
+} solver_state_type;
+
+/* ------------------------------------------------------------------
  * Fortran wrappers
  * ------------------------------------------------------------------ */
 
@@ -143,11 +173,15 @@ void init_solver_settings(solver_settings_type *settings);
  * @param update_orbs_ptr   Pointer to update_orbs callback
  * @param obj_func_ptr      Pointer to objective function callback
  * @param n_param           Number of parameters
- * @param settings          Pointer to struct of solver settings
+ * @param settings          Pointer to struct of solver settings, may be NULL to use
+ *                          the default settings
+ * @param state             Pointer to struct that receives the state of the
+ *                          optimization, may be NULL to
+ *                          skip returning it
  * @return                  Integer error code from Fortran
  */
 c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_param,
-             solver_settings_type *settings);
+             const solver_settings_type *settings, solver_state_type *state);
 
 /**
  * Fortran-callable stability check interface
@@ -156,14 +190,18 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  * @param hess_x_ptr        Pointer to Hessian–vector product callback
  * @param n_param           Number of parameters
  * @param stable            Pointer to bool that receives stability result
- * @param settings          Pointer to struct of stability solver settings
+ * @param settings          Pointer to struct of stability solver settings, may be
+ *                          NULL to use the default settings
+ * @param state             Pointer to struct that receives the state of the
+ *                          stability check , may be NULL to
+ *                          skip returning it
  * @param kappa_ptr         Pointer to array that receives the orbital rotation along
  *                          the unstable mode, zero if stable, or NULL
  * @return                  Integer error code from Fortran
  */
 c_int stability_check(const c_real *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_param,
-                      c_bool *stable, stability_settings_type *settings,
-                      c_real *kappa_ptr);
+                      c_bool *stable, const stability_settings_type *settings,
+                      stability_state_type *state, c_real *kappa_ptr);
 
 #ifdef __cplusplus
 }
