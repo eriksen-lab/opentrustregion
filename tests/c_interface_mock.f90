@@ -39,10 +39,12 @@ contains
         !
         ! this function is a mock routine for the solver C wrapper function
         !
-        use c_interface, only: solver_settings_type_c, logger_c_type, obj_func_c_type
+        use c_interface, only: solver_settings_type_c, solver_state_type_c, &
+                               logger_c_type, obj_func_c_type
         use test_reference, only: check_update_orbs_c_funptr, check_obj_func_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
-                                  check_conv_check_c_funptr, operator(/=)
+                                  check_conv_check_c_funptr, &
+                                  get_reference_solver_state_values, operator(/=)
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
@@ -50,6 +52,7 @@ contains
         type(c_ptr), intent(in), value :: state_c_ptr
         integer(c_ip) :: error_c
 
+        type(solver_state_type_c), pointer :: state_c
         procedure(logger_c_type), pointer :: logger_funptr
         procedure(obj_func_c_type), pointer :: obj_func_funptr
         character(len=:), allocatable, target :: message
@@ -123,10 +126,11 @@ contains
             test_solver_interface = .false.
         end if
 
-        ! the Python interface passes no state
+        ! fill a given state with the reference values, so that a test can check
+        ! that the Python interface passes its state and reads every field
         if (c_associated(state_c_ptr)) then
-            write(stderr, *) "test_solver_py_interface failed: State passed."
-            test_solver_interface = .false.
+            call c_f_pointer(state_c_ptr, state_c)
+            call get_reference_solver_state_values(state_c)
         end if
 
         ! set return arguments
@@ -140,10 +144,11 @@ contains
         !
         ! this function is a mock routine for the stability check C wrapper function
         !
-        use c_interface, only: stability_settings_type_c, logger_c_type, hess_x_c_type
+        use c_interface, only: stability_settings_type_c, stability_state_type_c, &
+                               logger_c_type, hess_x_c_type
         use test_reference, only: tol_c, check_hess_x_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
-                                  operator(/=)
+                                  get_reference_stability_state_values, operator(/=)
 
         real(c_rp), intent(in), target :: h_diag_c(*)
         type(c_funptr), intent(in), value :: hess_x_c_funptr
@@ -154,6 +159,7 @@ contains
         integer(c_ip) :: error_c
 
         real(c_rp), pointer :: kappa_ptr(:)
+        type(stability_state_type_c), pointer :: state_c
         procedure(logger_c_type), pointer :: logger_funptr
         procedure(hess_x_c_type), pointer :: hess_x_funptr
         character(len=:), allocatable, target :: message
@@ -217,10 +223,11 @@ contains
             test_stability_check_interface = .false.
         end if
 
-        ! the Python interface passes no state
+        ! fill a given state with the reference values, so that a test can check
+        ! that the Python interface passes its state and reads every field
         if (c_associated(state_c_ptr)) then
-            write(stderr, *) "test_stability_check_py_interface failed: State passed."
-            test_stability_check_interface = .false.
+            call c_f_pointer(state_c_ptr, state_c)
+            call get_reference_stability_state_values(state_c)
         end if
 
         ! set return arguments
