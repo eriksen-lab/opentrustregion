@@ -649,11 +649,16 @@ def solver(
         obj_func_interface_type,
         c_int,
         POINTER(SolverSettingsC),
+        c_void_p,
     ]
 
-    # call Fortran function
+    # call Fortran function without a state record
     error = lib.solver(
-        update_orbs_interface, obj_func_interface, n_param, byref(settings.settings_c)
+        update_orbs_interface,
+        obj_func_interface,
+        n_param,
+        byref(settings.settings_c),
+        None,
     )
 
     raise_on_failure(error, exception, "solver")
@@ -686,18 +691,20 @@ def stability_check(
         POINTER(c_bool),
         POINTER(StabilitySettingsC),
         c_void_p,
+        c_void_p,
     ]
 
     # initialize return variables
     stable = c_bool(False)
 
-    # call Fortran function
+    # call Fortran function without a state record
     error = lib.stability_check(
         h_diag.ctypes.data_as(POINTER(c_real)),
         hess_x_interface,
         n_param,
         byref(stable),
         byref(settings.settings_c),
+        None,
         kappa.ctypes.data_as(POINTER(c_real)) if kappa is not None else kappa,
     )
 

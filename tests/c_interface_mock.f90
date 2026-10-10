@@ -34,7 +34,7 @@ module c_interface_mock
 contains
 
     function mock_solver_c_wrapper(update_orbs_c_funptr, obj_func_c_funptr, n_param_c, &
-                                   settings_c) result(error_c) &
+                                   settings_c, state_c_ptr) result(error_c) &
         bind(C, name="mock_solver")
         !
         ! this function is a mock routine for the solver C wrapper function
@@ -47,6 +47,7 @@ contains
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
         type(solver_settings_type_c), intent(inout) :: settings_c
+        type(c_ptr), intent(in), value :: state_c_ptr
         integer(c_ip) :: error_c
 
         procedure(logger_c_type), pointer :: logger_funptr
@@ -122,14 +123,20 @@ contains
             test_solver_interface = .false.
         end if
 
+        ! the Python interface passes no state
+        if (c_associated(state_c_ptr)) then
+            write(stderr, *) "test_solver_py_interface failed: State passed."
+            test_solver_interface = .false.
+        end if
+
         ! set return arguments
         error_c = 0
 
     end function mock_solver_c_wrapper
 
-    function mock_stability_check_c_wrapper(h_diag_c, hess_x_c_funptr, n_param_c, &
-                                            stable_c, settings_c, kappa_c_ptr) &
-        result(error_c) bind(C, name="mock_stability_check")
+    function mock_stability_check_c_wrapper( &
+        h_diag_c, hess_x_c_funptr, n_param_c, stable_c, settings_c, state_c_ptr, &
+        kappa_c_ptr) result(error_c) bind(C, name="mock_stability_check")
         !
         ! this function is a mock routine for the stability check C wrapper function
         !
@@ -143,7 +150,7 @@ contains
         integer(c_ip), intent(in), value :: n_param_c
         logical(c_bool), intent(out) :: stable_c
         type(stability_settings_type_c), intent(inout) :: settings_c
-        type(c_ptr), intent(in), value :: kappa_c_ptr
+        type(c_ptr), intent(in), value :: state_c_ptr, kappa_c_ptr
         integer(c_ip) :: error_c
 
         real(c_rp), pointer :: kappa_ptr(:)
@@ -207,6 +214,12 @@ contains
         if (settings_c /= ref_stability_settings) then
             write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
                 "settings associated with wrong values."
+            test_stability_check_interface = .false.
+        end if
+
+        ! the Python interface passes no state
+        if (c_associated(state_c_ptr)) then
+            write(stderr, *) "test_stability_check_py_interface failed: State passed."
             test_stability_check_interface = .false.
         end if
 

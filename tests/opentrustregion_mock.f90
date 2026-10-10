@@ -7,7 +7,8 @@
 module opentrustregion_mock
 
     use opentrustregion, only: rp, ip, stderr, solver, stability_check, &
-                               solver_settings_type, stability_settings_type
+                               solver_settings_type, stability_settings_type, &
+                               solver_state_type, stability_state_type
     use c_interface, only: c_callbacks_type
     use test_reference, only: tol
 
@@ -15,11 +16,20 @@ module opentrustregion_mock
 
     logical :: test_passed
 
-    ! output values the mock solver and stability check return or write into the state,
-    ! so that a test can check the C wrappers hand them back
-    integer(ip), parameter :: mock_error = 7, mock_n_update_orbs = 3, &
-                              mock_n_hess_x = 5, mock_stability_n_hess_x = 2, &
-                              mock_stability_check_n_hess_x = 4
+    ! error code the mock solver and stability check return and states they write,
+    ! with values distinct from those of the reference states, so that a test can
+    ! check the C wrappers hand them back
+    integer(ip), parameter :: mock_error = 7
+    type(stability_state_type), parameter :: mock_nested_state = stability_state_type( &
+        iteration=3, min_eigval=-0.5_rp, residual_rms=0.25_rp, n_hess_x=2)
+    type(solver_state_type), parameter :: mock_solver_state = solver_state_type( &
+        macro_iteration=4, func=-1.5_rp, grad_rms=0.75_rp, trust_radius=0.5_rp, &
+        micro_iteration=6, jacobi_davidson_iteration=1, relative_residual=0.375_rp, &
+        level_shift=2.5_rp, step_size=0.125_rp, n_update_orbs=3, n_obj_func=8, &
+        n_hess_x=5, max_precision_reached=.false., stability_state=mock_nested_state)
+    type(stability_state_type), parameter :: mock_stability_state = &
+        stability_state_type(iteration=9, min_eigval=-0.75_rp, residual_rms=0.0625_rp, &
+                             n_hess_x=4)
 
     ! stability the mock stability check returns, which a test sets
     logical :: mock_stable = .true.
@@ -30,6 +40,11 @@ module opentrustregion_mock
     type(solver_settings_type) :: received_solver_settings
     type(stability_settings_type) :: received_stability_settings
     type(c_callbacks_type) :: received_callbacks, received_stability_callbacks
+
+    ! whether the callback bundles the mock solver and stability check received refer
+    ! to the state record they were given, so that a test can check that the C
+    ! wrappers copy this record into the host's
+    logical :: solver_state_bundled, stability_state_bundled
 
     ! create function pointers to ensure that routines comply with interface
     procedure(solver), pointer :: mock_solver_ptr => mock_solver
@@ -43,7 +58,7 @@ contains
         !
         ! this subroutine is a mock routine for solver to test the C interface
         !
-        use opentrustregion, only: update_orbs_type, obj_func_type, solver_state_type
+        use opentrustregion, only: update_orbs_type, obj_func_type
         use test_reference, only: check_update_orbs_funptr, check_obj_func_funptr, &
                                   check_precond_funptr, check_project_funptr, &
                                   check_conv_check_funptr, n_param_ref => n_param
@@ -116,13 +131,25 @@ contains
             received_stability_callbacks = callbacks
         end select
 
-        ! set state
+        ! record whether the callback bundles of the settings and the nested settings
+        ! both refer to the state record
+        solver_state_bundled = .false.
         if (present(state)) then
-            state%max_precision_reached = .false.
-            state%n_update_orbs = mock_n_update_orbs
-            state%n_hess_x = mock_n_hess_x
-            state%stability_state%n_hess_x = mock_stability_n_hess_x
+            select type (callbacks => settings%context)
+            type is (c_callbacks_type)
+                solver_state_bundled = associated(callbacks%solver_state, state)
+            end select
+            select type (callbacks => settings%stability_settings%context)
+            type is (c_callbacks_type)
+                solver_state_bundled = solver_state_bundled .and. &
+                                       associated(callbacks%solver_state, state)
+            class default
+                solver_state_bundled = .false.
+            end select
         end if
+
+        ! set state
+        if (present(state)) state = mock_solver_state
 
     end subroutine mock_solver
 
@@ -132,7 +159,7 @@ contains
         ! this subroutine is a mock routine for the stability check to test the C
         ! interface
         !
-        use opentrustregion, only: hess_x_type, stability_state_type
+        use opentrustregion, only: hess_x_type
         use test_reference, only: check_hess_x_funptr, check_precond_funptr, &
                                   check_project_funptr, n_param
 
@@ -196,9 +223,18 @@ contains
             received_callbacks = callbacks
         end select
 
+        ! record whether the callback bundle refers to the state record
+        stability_state_bundled = .false.
+        if (present(state)) then
+            select type (callbacks => settings%context)
+            type is (c_callbacks_type)
+                stability_state_bundled = associated(callbacks%stability_state, state)
+            end select
+        end if
+
         ! set optional output quantities and state
         if (present(kappa)) kappa = 1.0_rp
-        if (present(state)) state%n_hess_x = mock_stability_check_n_hess_x
+        if (present(state)) state = mock_stability_state
 
     end subroutine mock_stability_check
 
