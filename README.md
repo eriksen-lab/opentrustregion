@@ -28,6 +28,8 @@ cmake --build .
 
 The installation can be tested by running the ```testsuite.py``` file in the ```pyopentrustregion``` directory.
 
+A Fortran or C program has to be rebuilt against the modules or the header of the library version it links, since the settings and state types can change from one version to the next.
+
 ### Python Usage
 To install the library for use with Python:
 
@@ -59,7 +61,7 @@ The build process can be customized using the following CMake options:
 
 ### Nested and Concurrent Calls
 
-The library keeps no state of its own between calls, so a solver or stability check call can be nested inside a callback function of another call, or run concurrently with another call in a different thread, as long as each call is given its own settings object. A nested call re-enters procedures of the library that are still running, which Fortran only permits for procedures compiled for recursion, and a concurrent call needs their local variables on its own thread's stack. The library then has to be built with `-frecursive` for gfortran (implied by `-fopenmp`) or `-recursive` for Intel:
+The library keeps no state of its own between calls, so a solver or stability check call can be nested inside a callback function of another call, or run concurrently with another call in a different thread, as long as each call is given its own settings object and state record. A nested call re-enters procedures of the library that are still running, which Fortran only permits for procedures compiled for recursion, and a concurrent call needs their local variables on its own thread's stack. The library then has to be built with `-frecursive` for gfortran (implied by `-fopenmp`) or `-recursive` for Intel:
 
 ```sh
 cmake .. -DCMAKE_Fortran_FLAGS=-frecursive                  # Fortran or C
@@ -105,19 +107,22 @@ The optimization process is initiated by calling a `solver` subroutine. This rou
   - Receives the host context as its last argument.
 - **`n_param`** (integer): Specifies the number of parameters to be optimized.
 - **`error`** (integer): An integer code indicating the success or failure of the solver. The error code structure is explained below.
-- **`settings`** (settings_type): Settings object which controls optional arguments as described below.
+- **`settings`** (settings_type, optional): Settings object which controls optional arguments as described below. The solver only reads it. Without it, the default settings are used.
+- **`state`** (state_type, optional): Record that the solver keeps up to date during the optimization and that holds the final state of the optimization once the solver returns, as described below.
 
 ---
 
 The following Fortran snippet demonstrates how to use the `solver` interface:
 
 ```fortran
-use opentrustregion, only: ip, rp, update_orbs_type, obj_func_type, solver_settings_type, solver
+use opentrustregion, only: ip, rp, update_orbs_type, obj_func_type, &
+                           solver_settings_type, solver_state_type, solver
 
 procedure(update_orbs_type), pointer :: update_orbs_funptr
 procedure(obj_func_type), pointer :: obj_func_funptr
 integer(ip) :: n_param, error
 type(solver_settings_type) :: settings
+type(solver_state_type) :: state
 
 ! set callback function pointers to existing implementations
 update_orbs_funptr => update_orbs
@@ -135,18 +140,18 @@ settings%subsystem_solver = "tcg"
 settings%context => host_data
 
 ! run solver
-call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, state)
 
-! read back output fields
-print *, "Number of orbital updates:", settings%n_update_orbs
+! read the final state
+print *, "Number of orbital updates:", state%n_update_orbs
 ```
 
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized using the `init()` method of the derived type, and default settings can be overridden (here, `conv_tol` and `n_macro`).
 - `host_data` is a variable of any type declared with the `target` attribute. Every callback function receives it as its last argument, declared as `class(*), intent(in), pointer :: context`, and recovers its own type with `select type`. The `intent(in)` applies to the pointer rather than the data, so a callback function may modify `host_data` but not point `context` elsewhere. Leaving `settings%context` unset is fine; the callback functions then receive an unassociated pointer.
-- Finally, the `solver` is called with the initialized settings and callback functions.
-- After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other component.
+- Finally, the `solver` is called with the callback functions, the settings and a state record. Both of these are optional: without settings, the default settings are used, and the state is only needed to read it.
+- After the call, `state` holds the final state of the optimization (here, the number of orbital updates `n_update_orbs`), see [Output](#output). The settings are left unchanged.
 
 ---
 
@@ -165,6 +170,7 @@ obj_func_fp obj_func_funptr = obj_func;
 
 // initialize settings
 solver_settings_type settings = solver_settings_init();
+solver_state_type state;
 
 // override default settings
 settings.conv_tol = 1e-6;
@@ -175,28 +181,29 @@ strcpy(settings.subsystem_solver, "tcg");
 settings.context = &host_data;
 
 // run solver
-c_int error = solver(update_orbs_funptr, obj_func_funptr, n_param, &settings);
+c_int error = solver(update_orbs_funptr, obj_func_funptr, n_param, &settings, &state);
 
-// read back output fields
-printf("Number of orbital updates: %lld\n", (long long)settings.n_update_orbs);
+// read the final state
+printf("Number of orbital updates: %lld\n", (long long)state.n_update_orbs);
 ```
 
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized via a small helper function `solver_settings_init()`, which returns a struct with default values. Individual settings (here, `conv_tol` and `n_macro`) can then be overridden.
 - `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
-- Finally, the `solver` is called with a pointer to the initialized settings and callback functions and directly returns an error code in typical C fashion.
-- After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other attribute.
+- Finally, the `solver` is called with the callback functions and pointers to the settings and to a state struct, and directly returns an error code in typical C fashion. Either pointer may be `NULL`: without settings, the default settings are used, and without a state struct, none is returned. Since the host context is a setting, a host that needs one passes settings.
+- After the call, `state` holds the final state of the optimization (here, `n_update_orbs`), also after an error, see [Output](#output). The state struct needs no initialization, and the settings are left unchanged.
 
 ---
 
 The following Python snippet demonstrates the equivalent usage through the Python interface:
 
 ```python
-from pyopentrustregion import SolverSettings, solver
+from pyopentrustregion import SolverSettings, SolverState, solver
 
-# initialize settings
+# initialize settings and state
 settings = SolverSettings()
+state = SolverState()
 
 # override default settings
 settings.conv_tol = 1e-6
@@ -204,18 +211,18 @@ settings.n_macro = 100
 settings.subsystem_solver = "tcg"
 
 # run solver
-solver(update_orbs, obj_func, n_param, settings)
+solver(update_orbs, obj_func, n_param, settings, state)
 
-# read back output fields
-print(f"Number of orbital updates: {settings.n_update_orbs}")
+# read the final state
+print(f"Number of orbital updates: {state.n_update_orbs}")
 ```
 
 - Callback functions (`update_orbs`, `obj_func`) are defined elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized via the `SolverSettings` class, which returns an object with default values; individual settings (here, `conv_tol`, and `n_macro`) can then be overridden.
 - There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
-- Finally, the `solver` is called with the initialized settings and callback functions and errors can be caught in pythonic fashion in the form of a `RuntimeError`.
-- After the call, output fields on `settings` (here, `n_update_orbs`) are populated and can be read like any other attribute.
+- Finally, the `solver` is called with the callback functions, the settings and a state object, and errors can be caught in pythonic fashion in the form of a `RuntimeError`. The settings and the state are optional: without settings, the default settings are used, and the state is only needed to read it.
+- After the call, `state` holds the final state of the optimization (here, `n_update_orbs`), see [Output](#output), whose fields are read-only attributes. The settings are left unchanged.
 
 ### Optional Settings
 The optimization process can be fine-tuned using the following settings:
@@ -244,12 +251,22 @@ The optimization process can be fine-tuned using the following settings:
 - **`stability_settings`** (stability_settings_type): Settings object controlling the internal stability check that is automatically performed upon convergence when `stability` is `True` or when starting at a stationary point (see the Stability Check section below). If `stability_settings%precond`, `stability_settings%project`, `stability_settings%logger`, or `stability_settings%context` are left unset, they default to the corresponding `precond`, `project`, `logger`, and `context` supplied to `solver`. The internal stability check hands its own context to every callback function it calls, so when `stability_settings%context` is set, the Hessian linear transformation returned by `update_orbs` and any inherited `precond`, `project` or `logger` receive it instead of the solver's `context` and must accept it. Leaving it unset keeps the solver's `context` everywhere. `stability_settings%verbose` is raised to at least the solver's own `verbose` level.
 
 ### Output
-After `solver` returns, the following fields on the settings object have been populated and can be read by the caller:
+The solver keeps the state it is given up to date during the optimization, starting from the default values on every call, and leaves the final state of the optimization in it when it returns, also after an error. A callback function can therefore read the current state of the optimization: in Fortran, the state record is declared with the `target` attribute and reached through a pointer, for example one in the host context; in C, the state is copied into the host's struct before every callback function; and in Python, the state object can be read from within a callback function. The state holds the following fields:
 
-- **`n_update_orbs`** (integer): Total number of orbital update calls (`update_orbs`) performed by this `solver` call.
-- **`n_hess_x`** (integer): Total number of Hessian linear transformations (`hess_x`) performed by this `solver` call.
-- **`stability_settings%n_hess_x`** (integer): Number of Hessian linear transformations performed by the most recent internal stability check of this `solver` call.
+- **`macro_iteration`** (integer): Macro iteration of the current point, 0 for the starting point.
+- **`func`** (real): Objective function value at the current point.
+- **`grad_rms`** (real): RMS gradient at the current point.
+- **`trust_radius`** (real): Current trust radius.
+- **`micro_iteration`** (integer): Number of micro iterations of the subsystem solver in the current macro iteration, including those of rejected steps.
+- **`jacobi_davidson_iteration`** (integer): Number of these micro iterations that were Jacobi-Davidson iterations.
+- **`relative_residual`** (real): Euclidean norm of the residual of the trust-region subproblem being solved, relative to that of the gradient for the Davidson-family subsystem solvers and to that of the initial residual, the gradient with a small random perturbation, for `"tcg"`.
+- **`level_shift`** (real): Level shift of the last step, the negated eigenvalue of the augmented Hessian for the Davidson-family subsystem solvers and 0 for `"tcg"`.
+- **`step_size`** (real): Size of the last step in the norm of the trust region, after the line search if one is performed.
+- **`n_update_orbs`** (integer): Number of orbital updates (`update_orbs`).
+- **`n_obj_func`** (integer): Number of objective function evaluations (`obj_func`), including those of the line search.
+- **`n_hess_x`** (integer): Number of Hessian linear transformations (`hess_x`), those of an internal stability check added once it returns.
 - **`max_precision_reached`** (boolean): `true` if the solver stopped because the objective function stopped changing, or the trust radius collapsed, at the limit of floating-point precision, rather than because the RMS gradient dropped below `conv_tol` or a custom `conv_check` reported convergence. `error` is still `0` and the returned point is still the best one found; this flag lets the host program decide whether to accept it as-is, warn, or retighten and retry with a different starting point or subsystem solver.
+- **`stability_state`** (state_type): State of the most recent internal stability check, see the [stability check's output](#output-1).
 
 ## Stability Check
 A separate `stability_check` subroutine is available to verify whether the current solution corresponds to a minimum. If not, it returns a boolean indicating instability and optionally, writes the eigenvector corresponding to the negative eigenvalue in-place to the provided memory.
@@ -263,21 +280,24 @@ A separate `stability_check` subroutine is available to verify whether the curre
   - Receives the host context as its last argument.
 - **`stable`** (boolean): Returns whether the current point is stable.
 - **`error`** (integer): An integer code indicating the success or failure of the solver. The error code structure is explained below.
-- **`kappa`** (real array): If the memory is provided, the descent direction along the unstable mode is written in-place in this array when the current point is not stable (as can be checked from `stable`), and zeros are written when it is stable.
-- **`settings`** (settings_type): Settings object which controls optional arguments as described below.
+- **`settings`** (settings_type, optional): Settings object which controls optional arguments as described below. The stability check only reads it. Without it, the default settings are used.
+- **`state`** (state_type, optional): Record that the stability check keeps up to date during its iterations and that holds its final state once it returns, as described below.
+- **`kappa`** (real array, optional): If the memory is provided, the descent direction along the unstable mode is written in-place in this array when the current point is not stable (as can be checked from `stable`), and zeros are written when it is stable.
 
 ---
 
 The following Fortran snippet demonstrates how to use the stability check interface:
 
 ```fortran
-use opentrustregion, only: ip, rp, stability_settings_type, hess_x_type, stability_check
+use opentrustregion, only: ip, rp, stability_settings_type, stability_state_type, &
+                           hess_x_type, stability_check
 
 real(rp), allocatable :: h_diag(:), kappa(:)
 procedure(hess_x_type), pointer :: hess_x_funptr
 integer(ip) :: n_param, error
 logical :: stable
 type(stability_settings_type) :: settings
+type(stability_state_type) :: state
 
 ! set callback function pointer to existing implementation
 hess_x_funptr => hess_x
@@ -294,10 +314,10 @@ settings%diag_solver = "jacobi-davidson"
 settings%context => host_data
 
 ! run stability check
-call stability_check(h_diag, hess_x_funptr, stable, error, settings, kappa=kappa)
+call stability_check(h_diag, hess_x_funptr, stable, error, settings, state, kappa=kappa)
 
-! read back output fields
-print *, "Number of Hessian linear transformations:", settings%n_hess_x
+! read the final state
+print *, "Number of Hessian linear transformations:", state%n_hess_x
 ```
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
@@ -305,8 +325,8 @@ print *, "Number of Hessian linear transformations:", settings%n_hess_x
 - Stability settings are initialized via the `init()` method of the derived type and can be overridden (here, `conv_tol` and `n_iter`).
 - `host_data` is a variable of any type declared with the `target` attribute. Every callback function receives it as its last argument, declared as `class(*), intent(in), pointer :: context`, and recovers its own type with `select type`. The `intent(in)` applies to the pointer rather than the data, so a callback function may modify `host_data` but not point `context` elsewhere. Leaving `settings%context` unset is fine; the callback functions then receive an unassociated pointer.
 - The `stable` logical output receives the result of the stability check.
-- The descent direction `kappa` is optional and is only returned if provided.
-- After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other component.
+- The settings, the state and the descent direction `kappa` are optional: without settings, the default settings are used, and the others are only returned if provided.
+- After the call, `state` holds the final state of the stability check (here, `n_hess_x`), see [Output](#output-1). The settings are left unchanged.
 
 ---
 
@@ -325,6 +345,7 @@ hess_x_fp hess_x_funptr = hess_x;
 
 // initialize settings
 stability_settings_type settings = stability_settings_init();
+stability_state_type state;
 
 // override default settings
 settings.conv_tol = 1e-6;
@@ -339,10 +360,11 @@ c_real* h_diag;
 c_real* kappa;
 
 // run stability check
-c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, &settings, kappa);
+c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, &settings,
+                              &state, kappa);
 
-// read back output fields
-printf("Number of Hessian linear transformations: %lld\n", (long long)settings.n_hess_x);
+// read the final state
+printf("Number of Hessian linear transformations: %lld\n", (long long)state.n_hess_x);
 ```
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
@@ -350,18 +372,19 @@ printf("Number of Hessian linear transformations: %lld\n", (long long)settings.n
 - `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
 - Stability settings are initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol` and `n_iter`) can then be overridden.
 - The `stable` output receives the result of the stability check which directly returns an error code in typical C fashion.
-- The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `NULL`.
-- After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other component.
+- The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `NULL`. So can `state`, and `settings` can be `NULL` to use the default settings.
+- After the call, `state` holds the final state of the stability check (here, `n_hess_x`), also after an error, see [Output](#output-1). The state struct needs no initialization, and the settings are left unchanged.
 
 ---
 
 The following Python snippet demonstrates the equivalent usage through the Python interface:
 
 ```python
-from pyopentrustregion import StabilitySettings, stability_check
+from pyopentrustregion import StabilitySettings, StabilityState, stability_check
 
-# initialize settings
+# initialize settings and state
 settings = StabilitySettings()
+state = StabilityState()
 
 # override default settings
 settings.conv_tol = 1e-6
@@ -373,10 +396,10 @@ h_diag = np.asarray(h_diag, dtype=np.float64)
 kappa = np.empty(n_param, dtype=np.float64)
 
 # run stability check
-stable = stability_check(h_diag, hess_x, n_param, settings, kappa=kappa)
+stable = stability_check(h_diag, hess_x, n_param, settings, state, kappa=kappa)
 
-# read back output fields
-print(f"Number of Hessian linear transformations: {settings.n_hess_x}")
+# read the final state
+print(f"Number of Hessian linear transformations: {state.n_hess_x}")
 ```
 
 - `hess_x` is an existing Hessian-vector product implementation elsewhere in the program.
@@ -385,7 +408,8 @@ print(f"Number of Hessian linear transformations: {settings.n_hess_x}")
 - There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
 - The `stable` output receives the result of the stability check and errors can be caught in pythonic fashion in the form of a `RuntimeError`.
 - The descent direction `kappa` is optional and is only returned if provided.
-- After the call, output fields on `settings` (here, `n_hess_x`) are populated and can be read like any other attribute.
+- The settings and the state are optional: without settings, the default settings are used, and the state is only needed to read it.
+- After the call, `state` holds the final state of the stability check (here, `n_hess_x`), see [Output](#output-1), whose fields are read-only attributes. The settings are left unchanged.
 
 ### Optional Settings
 The stability check can be fine-tuned using the following settings:
@@ -405,9 +429,12 @@ The stability check can be fine-tuned using the following settings:
 - **`context`** (unlimited polymorphic pointer in Fortran, `void *` in C, absent in Python): Opaque host data, handed back unchanged as the last argument of every callback function so that the host does not have to reach its own state through module-level variables. The library never inspects it and never keeps it past the call, so it only has to stay valid for the duration of the call. Two stability checks can therefore run at the same time, or be nested inside one another, as long as each is given its own settings object. This requires a suitable build, see [Nested and Concurrent Calls](#nested-and-concurrent-calls).
 
 ### Output
-After `stability_check` returns, the following field on the settings object has been populated and can be read by the caller:
+The stability check keeps the state it is given up to date during its iterations, starting from the default values on every call, and leaves its final state in it when it returns, also after an error. As for the solver, a callback function can therefore read the current state. The state holds the following fields:
 
-- **`n_hess_x`** (integer): Total number of Hessian linear transformations (`hess_x`) performed by this `stability_check` call.
+- **`iteration`** (integer): Current iteration of the diagonalization.
+- **`min_eigval`** (real): Current estimate of the lowest Hessian eigenvalue.
+- **`residual_rms`** (real): RMS of the residual of this estimate.
+- **`n_hess_x`** (integer): Number of Hessian linear transformations (`hess_x`).
 
 ## Error Code Structure
 
