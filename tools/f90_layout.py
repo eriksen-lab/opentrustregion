@@ -62,7 +62,10 @@ The layout of a statement is the best one under these rules:
    group, and so does a break directly after an opening bracket, so that a call is kept
    whole where breaking outside it costs no line. The condition of a single-line ``if``
    is looser than the statement it controls, and the commas between the entities of a
-   declaration are looser than an initializer.
+   declaration are looser than an initializer. A break between the control list of a
+   ``read`` or ``write`` statement and its input/output list costs as much as splitting
+   a group that fits whole, so that it is only taken where it saves a line or keeps the
+   control list, such as a format that would otherwise be split, whole.
 5. A trailing ``then`` that does not fit takes a hanging indent of four columns like
    any other continuation line. Breaking before it is looser than any break in the
    condition.
@@ -900,8 +903,15 @@ def requote(joined: Joined) -> Joined:
     written in single quotes and every other string literal in double quotes
     """
     formats = format_literals(joined.code)
+    spans = literals(joined.text)
+    # a literal joined to a format by // continues the format, so that the pieces of a
+    # split format keep its quotes and can be merged again
+    for (a_start, a_end), (b_start, _) in zip(spans, spans[1:]):
+        between = joined.text[a_end + 1 : b_start]
+        if a_start in formats and re.fullmatch(r"\s*//\s*", between):
+            formats.add(b_start)
     edits = []
-    for first, last in literals(joined.text):
+    for first, last in spans:
         quote = "'" if first in formats else '"'
         have = joined.text[first]
         if have != quote:
@@ -991,6 +1001,9 @@ class Structure:
     # (start, end) of every entity with an initializer in a declaration of several
     # entities, where end is the comma after it or the end of the statement
     entity_spans: List[Tuple[int, int]]
+    # the break between the control list of a read or write statement and its
+    # input/output list
+    io_breaks: Set[int]
 
 
 @dataclass
@@ -1272,6 +1285,14 @@ def structure(code: str, text: str, context: Context) -> Structure:
                 strings[b] = text[first]
                 lengths[b] = last - first + 1
 
+    # a break between the control list of a read or write statement and its
+    # input/output list
+    io_breaks: Set[int] = set()
+    m = re.match(r"\s*(read|write)\s*\(", lower)
+    if m and match.get(m.end() - 1) is not None:
+        io_breaks.add(match[m.end() - 1] + 1)
+        candidates.update(io_breaks)
+
     # a break before a lone then, which is looser than any break in the condition, and
     # before the result or bind of a procedure
     m = re.search(r"\)\s*(then)\s*$", lower)
@@ -1410,6 +1431,7 @@ def structure(code: str, text: str, context: Context) -> Structure:
             for start, stop in zip(entity_starts, entity_ends + [end])
             if entities > 1 and any(start < b <= stop for b in initializers)
         ],
+        io_breaks,
     )
 
 
@@ -1638,6 +1660,10 @@ class Layout:
                 split = self.s.inner.get(b, 0)
                 arrays += self.compared.get(b, 0)
                 groups += b in self.whole_strings
+                # a break before an input/output list costs as much as a split group,
+                # so that of two layouts splitting one group the later break, which
+                # keeps the control list whole, is taken
+                groups += b in self.s.io_breaks
                 n = b if b in self.s.strings else next_content(self.j.code, b)
                 sub = search(n, self.next_indent(b, new_stack), new_stack)
                 if sub is not None:
