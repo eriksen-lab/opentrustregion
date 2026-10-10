@@ -85,7 +85,6 @@ typedef struct {
   c_int jacobi_davidson_start;
   c_int seed;
   c_int verbose;
-  c_int n_hess_x;
 
   char diag_solver[OTR_KW_LEN + 1];
 
@@ -106,7 +105,6 @@ typedef struct {
   c_bool stability;
   c_bool line_search;
   c_bool initialized;
-  c_bool max_precision_reached;
 
   c_real conv_tol;
   c_real start_trust_radius;
@@ -119,8 +117,6 @@ typedef struct {
   c_int jacobi_davidson_start;
   c_int seed;
   c_int verbose;
-  c_int n_update_orbs;
-  c_int n_hess_x;
 
   char subsystem_solver[OTR_KW_LEN + 1];
 
@@ -177,14 +173,15 @@ typedef struct {
  * @param update_orbs_ptr   Pointer to update_orbs callback
  * @param obj_func_ptr      Pointer to objective function callback
  * @param n_param           Number of parameters
- * @param settings          Pointer to struct of solver settings
+ * @param settings          Pointer to struct of solver settings, may be NULL to use
+ *                          the default settings
  * @param state             Pointer to struct that receives the state of the
  *                          optimization when the call returns, also after an error,
  *                          may be NULL to skip returning it
  * @return                  Integer error code from Fortran
  */
 c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_param,
-             solver_settings_type *settings, solver_state_type *state);
+             const solver_settings_type *settings, solver_state_type *state);
 
 /**
  * Fortran-callable stability check interface
@@ -193,7 +190,8 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  * @param hess_x_ptr        Pointer to Hessian–vector product callback
  * @param n_param           Number of parameters
  * @param stable            Pointer to bool that receives stability result
- * @param settings          Pointer to struct of stability solver settings
+ * @param settings          Pointer to struct of stability solver settings, may be
+ *                          NULL to use the default settings
  * @param state             Pointer to struct that receives the state of the
  *                          stability check when the call returns, also after an
  *                          error, may be NULL to skip returning it
@@ -202,7 +200,7 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  * @return                  Integer error code from Fortran
  */
 c_int stability_check(const c_real *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_param,
-                      c_bool *stable, stability_settings_type *settings,
+                      c_bool *stable, const stability_settings_type *settings,
                       stability_state_type *state, c_real *kappa_ptr);
 
 #ifdef __cplusplus

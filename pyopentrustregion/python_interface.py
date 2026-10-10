@@ -354,7 +354,6 @@ class StabilitySettingsC(Structure):
         ("jacobi_davidson_start", c_int),
         ("seed", c_int),
         ("verbose", c_int),
-        ("n_hess_x", c_int),
         ("diag_solver", c_char * (kw_len + 1)),
         ("context", c_void_p),
     ]
@@ -369,7 +368,6 @@ class SolverSettingsC(Structure):
         ("stability", c_bool),
         ("line_search", c_bool),
         ("initialized", c_bool),
-        ("max_precision_reached", c_bool),
         ("conv_tol", c_real),
         ("start_trust_radius", c_real),
         ("global_red_factor", c_real),
@@ -380,8 +378,6 @@ class SolverSettingsC(Structure):
         ("jacobi_davidson_start", c_int),
         ("seed", c_int),
         ("verbose", c_int),
-        ("n_update_orbs", c_int),
-        ("n_hess_x", c_int),
         ("subsystem_solver", c_char * (kw_len + 1)),
         ("stability_settings", StabilitySettingsC),
         ("context", c_void_p),
@@ -713,7 +709,7 @@ def solver(
         Tuple[float, Callable[[np.ndarray, np.ndarray], None]],
     ],
     n_param: int,
-    settings: SolverSettings,
+    settings: Optional[SolverSettings] = None,
     state: Optional[SolverState] = None,
 ):
     # variable to capture exceptions in the callback interfaces
@@ -730,7 +726,8 @@ def solver(
     # set interfaces for optional callback functions, these need to be set here since
     # the interface might need parameters that are not known when the attribute to
     # settings is set (e.g. n_param)
-    settings.set_optional_callbacks(n_param, exception)
+    if settings is not None:
+        settings.set_optional_callbacks(n_param, exception)
 
     # define result and argument types
     lib.solver.restype = c_int
@@ -747,7 +744,7 @@ def solver(
         update_orbs_interface,
         obj_func_interface,
         n_param,
-        byref(settings.settings_c),
+        byref(settings.settings_c) if settings is not None else None,
         byref(state.state_c) if state is not None else None,
     )
 
@@ -758,7 +755,7 @@ def stability_check(
     h_diag: np.ndarray,
     hess_x: Callable[[np.ndarray, np.ndarray], None],
     n_param: int,
-    settings: StabilitySettings,
+    settings: Optional[StabilitySettings] = None,
     state: Optional[StabilityState] = None,
     kappa: Optional[np.ndarray] = None,
 ) -> bool:
@@ -771,7 +768,8 @@ def stability_check(
     # set interfaces for optional callback functions, these need to be set here since
     # the interface might need parameters that are not known when the attribute to
     # settings is set (e.g. n_param)
-    settings.set_optional_callbacks(n_param, exception)
+    if settings is not None:
+        settings.set_optional_callbacks(n_param, exception)
 
     # define result and argument types
     lib.stability_check.restype = c_int
@@ -794,7 +792,7 @@ def stability_check(
         hess_x_interface,
         n_param,
         byref(stable),
-        byref(settings.settings_c),
+        byref(settings.settings_c) if settings is not None else None,
         byref(state.state_c) if state is not None else None,
         kappa.ctypes.data_as(POINTER(c_real)) if kappa is not None else kappa,
     )

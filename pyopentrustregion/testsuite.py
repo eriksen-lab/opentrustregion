@@ -475,13 +475,28 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "function was not reported."
             )
 
+        # call solver python interface without settings, which have to be passed as
+        # none so that the library uses its default settings, the results of the mock
+        # start opposite to the expected ones
+        settings_flag = c_bool.in_dll(lib, "solver_settings_passed")
+        settings_flag.value = True
+        interface_flag.value = False
+        solver(mock_obj_func, mock_update_orbs, n_param)
+        no_settings_passed = interface_flag.value and not settings_flag.value
+        if settings_flag.value:
+            print(
+                " test_solver_py_interface failed: Settings passed although none were "
+                "given."
+            )
+
         self.assertTrue(
             interface_passed
             and state_passed
             and test_logger
             and callbacks_called
             and logger_error_reported
-            and callback_error_reported,
+            and callback_error_reported
+            and no_settings_passed,
             "test_solver_py_interface failed",
         )
         print(" test_solver_py_interface PASSED")
@@ -615,6 +630,22 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "Hessian linear transformation was not reported."
             )
 
+        # call stability check python interface without settings, which have to be
+        # passed as none so that the library uses its default settings, the results of
+        # the mock start opposite to the expected ones
+        settings_flag = c_bool.in_dll(lib, "stability_settings_passed")
+        settings_flag.value = True
+        interface_flag.value = False
+        stable_without_settings = stability_check(h_diag, mock_hess_x, n_param)
+        no_settings_passed = (
+            interface_flag.value and not settings_flag.value and stable_without_settings
+        )
+        if settings_flag.value:
+            print(
+                " test_stability_check_py_interface failed: Settings passed although "
+                "none were given."
+            )
+
         self.assertTrue(
             interface_passed
             and state_passed
@@ -624,7 +655,8 @@ class PyInterfaceUnitTests(unittest.TestCase):
             and logger_error_reported
             and stable_with_failed_logger
             and stable_without_direction
-            and callback_error_reported,
+            and callback_error_reported
+            and no_settings_passed,
             "test_stability_check_py_interface failed",
         )
         print(" test_stability_check_py_interface PASSED")
@@ -1341,10 +1373,10 @@ class PyIntegrationTests(unittest.TestCase):
 
         # the maximum precision flag starts opposite to the one the converging solve
         # returns, so that its write-back is detected
-        settings.max_precision_reached = True
+        solver_state.state_c.max_precision_reached = True
 
         solver(obj_func, update_orbs, self.n_param, settings, state=solver_state)
-        if settings.max_precision_reached:
+        if solver_state.max_precision_reached:
             print(
                 " test_solver_py failed: Maximum precision reached flag was not "
                 "returned."
@@ -1359,30 +1391,25 @@ class PyIntegrationTests(unittest.TestCase):
             if name not in state["called"]:
                 print(f" test_solver_py failed: {description} was not called.")
                 test_passed = False
-        if settings.n_update_orbs <= 0:
+        if solver_state.n_update_orbs <= 0:
             print(" test_solver_py failed: Orbital update counter was not populated.")
             test_passed = False
-        if settings.n_hess_x <= 0:
+        if solver_state.n_obj_func <= 0:
+            print(
+                " test_solver_py failed: Objective function counter was not populated."
+            )
+            test_passed = False
+        if solver_state.n_hess_x <= 0:
             print(
                 " test_solver_py failed: Hessian linear transformation counter was not "
                 "populated."
             )
             test_passed = False
-        if settings.stability_settings.n_hess_x <= 0:
+        if solver_state.stability_state.n_hess_x <= 0:
             print(
                 " test_solver_py failed: Hessian linear transformation counter of the "
                 "internal stability check was not populated."
             )
-            test_passed = False
-        if (
-            solver_state.max_precision_reached
-            or solver_state.n_update_orbs != settings.n_update_orbs
-            or solver_state.n_hess_x != settings.n_hess_x
-            or solver_state.stability_state.n_hess_x
-            != settings.stability_settings.n_hess_x
-            or solver_state.n_obj_func <= 0
-        ):
-            print(" test_solver_py failed: State was not returned.")
             test_passed = False
 
         # every orbital update read the updates before it, and the last Hessian linear
@@ -1467,10 +1494,7 @@ class PyIntegrationTests(unittest.TestCase):
                 "stability of minimum."
             )
             test_passed = False
-        if (
-            stability_state.iteration <= 0
-            or stability_state.n_hess_x != settings.n_hess_x
-        ):
+        if stability_state.iteration <= 0:
             print(" test_stability_check_py failed: State was not returned.")
             test_passed = False
 
@@ -1489,7 +1513,7 @@ class PyIntegrationTests(unittest.TestCase):
             if name not in called:
                 print(f" test_stability_check_py failed: {description} was not called.")
                 test_passed = False
-        if settings.n_hess_x <= 0:
+        if stability_state.n_hess_x <= 0:
             print(
                 " test_stability_check_py failed: Hessian linear transformation "
                 "counter was not populated."

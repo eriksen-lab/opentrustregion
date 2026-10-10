@@ -147,7 +147,7 @@ module c_interface
         logical(c_bool) :: initialized
         real(c_rp) :: conv_tol
         integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
-                         verbose, n_hess_x
+                         verbose
         character(kind=c_char) :: diag_solver(kw_len + 1)
         type(c_ptr) :: context
     end type
@@ -155,10 +155,10 @@ module c_interface
     ! derived type for solver settings
     type, bind(C) :: solver_settings_type_c
         type(c_funptr) :: precond, project, conv_check, logger
-        logical(c_bool) :: stability, line_search, initialized, max_precision_reached
+        logical(c_bool) :: stability, line_search, initialized
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
-                         jacobi_davidson_start, seed, verbose, n_update_orbs, n_hess_x
+                         jacobi_davidson_start, seed, verbose
         character(kind=c_char) :: subsystem_solver(kw_len + 1)
         type(stability_settings_type_c) :: stability_settings
         type(c_ptr) :: context
@@ -197,13 +197,13 @@ contains
         !
         ! this function exposes a Fortran-implemented solver subroutine to C
         !
-        use opentrustregion, only: solver_settings_type, solver_state_type, stderr, &
+        use opentrustregion, only: solver_settings_type, stderr, &
                                    settings_uninitialized_warning_msg, &
                                    stability_settings_uninitialized_warning_msg
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
-        type(solver_settings_type_c), intent(inout) :: settings_c
+        type(solver_settings_type_c), intent(in), optional :: settings_c
         type(c_ptr), intent(in), value :: state_c_ptr
         integer(c_ip) :: error_c
 
@@ -211,15 +211,25 @@ contains
         procedure(obj_func_f_wrapper), pointer :: obj_func
         integer(ip) :: n_param, error
         type(solver_settings_type) :: settings
+        type(solver_settings_type_c) :: local_settings_c
         type(solver_state_type), target :: state
         type(c_callbacks_type), target :: callbacks, stability_callbacks
+
+        ! work on a copy of the given settings or, without any, of the default
+        ! settings
+        if (present(settings_c)) then
+            local_settings_c = settings_c
+        else
+            local_settings_c = default_solver_settings
+        end if
 
         ! bundle the C function pointers
         call c_f_procpointer(cptr=update_orbs_c_funptr, fptr=callbacks%update_orbs)
         call c_f_procpointer(cptr=obj_func_c_funptr, fptr=callbacks%obj_func)
         call store_optional_c_callbacks( &
-            callbacks, settings_c%initialized, settings_c%precond, settings_c%project, &
-            settings_c%conv_check, settings_c%logger, settings_c%context)
+            callbacks, local_settings_c%initialized, local_settings_c%precond, &
+            local_settings_c%project, local_settings_c%conv_check, &
+            local_settings_c%logger, local_settings_c%context)
 
         ! let the bundle refer to the state and to the host's record, if one is given,
         ! so that the state is copied into it before every callback function
@@ -233,11 +243,12 @@ contains
         ! bundle starts as a copy of the solver's and only the provided ones override
         stability_callbacks = callbacks
         call store_optional_c_callbacks( &
-            stability_callbacks, &
-            settings_c%initialized .and. settings_c%stability_settings%initialized, &
-            settings_c%stability_settings%precond, &
-            settings_c%stability_settings%project, c_null_funptr, &
-            settings_c%stability_settings%logger, settings_c%stability_settings%context)
+            stability_callbacks, local_settings_c%initialized .and. &
+            local_settings_c%stability_settings%initialized, &
+            local_settings_c%stability_settings%precond, &
+            local_settings_c%stability_settings%project, c_null_funptr, &
+            local_settings_c%stability_settings%logger, &
+            local_settings_c%stability_settings%context)
         callbacks%stability => stability_callbacks
 
         ! associate procedure pointer to wrapper function
@@ -249,7 +260,7 @@ contains
 
         ! convert settings and hand the bundles to the callback wrappers as opaque
         ! context
-        settings = settings_c
+        settings = local_settings_c
         settings%context => callbacks
         settings%stability_settings%context => stability_callbacks
 
@@ -258,9 +269,9 @@ contains
         ! printed here regardless of the verbosity, through the logging function of
         ! the solver settings or on stderr since settings that were not initialized
         ! provide none
-        if (.not. settings_c%initialized) then
+        if (.not. local_settings_c%initialized) then
             write(stderr, '(A)') " "//settings_uninitialized_warning_msg
-        else if (.not. settings_c%stability_settings%initialized) then
+        else if (.not. local_settings_c%stability_settings%initialized) then
             if (associated(settings%logger)) then
                 call settings%logger( &
                     " "//stability_settings_uninitialized_warning_msg, settings%context)
@@ -271,14 +282,6 @@ contains
 
         ! call solver
         call solver(update_orbs, obj_func, n_param, error, settings, state)
-
-        ! write the output fields into the C settings object from the state
-        settings_c%max_precision_reached = &
-            logical(state%max_precision_reached, kind=c_bool)
-        settings_c%n_update_orbs = int(state%n_update_orbs, kind=c_ip)
-        settings_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
-        settings_c%stability_settings%n_hess_x = &
-            int(state%stability_state%n_hess_x, kind=c_ip)
 
         ! copy the state into the host's record once more, also after an error
         call copy_state_to_c(callbacks)
@@ -294,14 +297,14 @@ contains
         !
         ! this function exposes a Fortran-implemented stability check subroutine to C
         !
-        use opentrustregion, only: stability_settings_type, stability_state_type, &
-                                   stderr, settings_uninitialized_warning_msg
+        use opentrustregion, only: stability_settings_type, stderr, &
+                                   settings_uninitialized_warning_msg
 
         real(c_rp), intent(in), target :: h_diag_c(*)
         integer(c_ip), intent(in), value :: n_param_c
         type(c_funptr), intent(in), value :: hess_x_c_funptr
         logical(c_bool), intent(out) :: stable_c
-        type(stability_settings_type_c), intent(inout) :: settings_c
+        type(stability_settings_type_c), intent(in), optional :: settings_c
         type(c_ptr), intent(in), value :: state_c_ptr, kappa_c_ptr
         integer(c_ip) :: error_c
 
@@ -311,14 +314,24 @@ contains
         integer(ip) :: error
         procedure(hess_x_f_wrapper), pointer :: hess_x
         type(stability_settings_type) :: settings
+        type(stability_settings_type_c) :: local_settings_c
         type(stability_state_type), target :: state
         type(c_callbacks_type), target :: callbacks
+
+        ! work on a copy of the given settings or, without any, of the default
+        ! settings
+        if (present(settings_c)) then
+            local_settings_c = settings_c
+        else
+            local_settings_c = default_stability_settings
+        end if
 
         ! bundle the C function pointers
         call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
         call store_optional_c_callbacks( &
-            callbacks, settings_c%initialized, settings_c%precond, settings_c%project, &
-            c_null_funptr, settings_c%logger, settings_c%context)
+            callbacks, local_settings_c%initialized, local_settings_c%precond, &
+            local_settings_c%project, c_null_funptr, local_settings_c%logger, &
+            local_settings_c%context)
 
         ! let the bundle refer to the state and to the host's record, if one is given,
         ! so that the state is copied into it before every callback function
@@ -348,14 +361,14 @@ contains
 
         ! convert settings and hand the bundle to the callback wrappers as opaque
         ! context
-        settings = settings_c
+        settings = local_settings_c
         settings%context => callbacks
 
         ! the conversion replaces settings that were not initialized by the default
         ! settings, so the stability check cannot detect these anymore and the warning
         ! is printed here on stderr regardless of the verbosity since settings that
         ! were not initialized provide no logging function
-        if (.not. settings_c%initialized) &
+        if (.not. local_settings_c%initialized) &
             write(stderr, '(A)') " "//settings_uninitialized_warning_msg
 
         ! call stability check
@@ -370,9 +383,6 @@ contains
             call stability_check(h_diag_ptr, hess_x, stable, error, settings, state)
         end if
         if (rp /= c_rp) deallocate(h_diag_ptr)
-
-        ! write the output field into the C settings object from the state
-        settings_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
 
         ! copy the state into the host's record once more, also after an error
         call copy_state_to_c(callbacks)
@@ -867,12 +877,10 @@ contains
         !
         ! this subroutine converts solver settings from Fortran to C
         !
-        use opentrustregion, only: solver_settings_type, solver_state_type
+        use opentrustregion, only: solver_settings_type
 
         type(solver_settings_type_c), intent(out) :: settings_c
         type(solver_settings_type), intent(in) :: settings
-
-        type(solver_state_type) :: state
 
         if (settings%initialized) then
             ! callback functions cannot be converted
@@ -901,13 +909,6 @@ contains
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
 
-            ! the output fields, which the solver writes from its state, start from
-            ! the default values of the state
-            settings_c%max_precision_reached = &
-                logical(state%max_precision_reached, kind=c_bool)
-            settings_c%n_update_orbs = int(state%n_update_orbs, kind=c_ip)
-            settings_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
-
             ! convert characters
             settings_c%subsystem_solver = character_to_c(settings%subsystem_solver)
 
@@ -927,12 +928,10 @@ contains
         !
         ! this subroutine converts stability settings from Fortran to C
         !
-        use opentrustregion, only: stability_settings_type, stability_state_type
+        use opentrustregion, only: stability_settings_type
 
         type(stability_settings_type_c), intent(out) :: settings_c
         type(stability_settings_type), intent(in) :: settings
-
-        type(stability_state_type) :: state
 
         if (settings%initialized) then
             ! callback functions cannot be converted
@@ -952,10 +951,6 @@ contains
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
 
-            ! the output field, which the stability check writes from its state,
-            ! starts from the default value of the state
-            settings_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
-
             ! convert characters
             settings_c%diag_solver = character_to_c(settings%diag_solver)
 
@@ -972,8 +967,6 @@ contains
         !
         ! this subroutine converts a solver state from Fortran to C
         !
-        use opentrustregion, only: solver_state_type
-
         type(solver_state_type_c), intent(out) :: state_c
         type(solver_state_type), intent(in) :: state
 
@@ -1007,8 +1000,6 @@ contains
         !
         ! this subroutine converts a stability check state from Fortran to C
         !
-        use opentrustregion, only: stability_state_type
-
         type(stability_state_type_c), intent(out) :: state_c
         type(stability_state_type), intent(in) :: state
 
