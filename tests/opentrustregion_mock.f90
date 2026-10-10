@@ -15,8 +15,8 @@ module opentrustregion_mock
 
     logical :: test_passed
 
-    ! output values the mock solver and stability check return or write into the
-    ! settings object, so that a test can check the C wrappers hand them back
+    ! output values the mock solver and stability check return or write into the state,
+    ! so that a test can check the C wrappers hand them back
     integer(ip), parameter :: mock_error = 7, mock_n_update_orbs = 3, &
                               mock_n_hess_x = 5, mock_stability_n_hess_x = 2, &
                               mock_stability_check_n_hess_x = 4
@@ -39,11 +39,11 @@ module opentrustregion_mock
 contains
 
     subroutine mock_solver(update_orbs_funptr, obj_func_funptr, n_param, error, &
-                           settings)
+                           settings, state)
         !
         ! this subroutine is a mock routine for solver to test the C interface
         !
-        use opentrustregion, only: update_orbs_type, obj_func_type
+        use opentrustregion, only: update_orbs_type, obj_func_type, solver_state_type
         use test_reference, only: check_update_orbs_funptr, check_obj_func_funptr, &
                                   check_precond_funptr, check_project_funptr, &
                                   check_conv_check_funptr, n_param_ref => n_param
@@ -53,6 +53,7 @@ contains
         integer(ip), intent(in) :: n_param
         integer(ip), intent(out) :: error
         type(solver_settings_type), intent(inout) :: settings
+        type(solver_state_type), intent(out), target, optional :: state
 
         ! assume tests pass
         test_passed = .true.
@@ -107,22 +108,24 @@ contains
             received_stability_callbacks = callbacks
         end select
 
-        ! set output quantities and fields
+        ! set output quantities and state
         error = mock_error
-        settings%max_precision_reached = .false.
-        settings%n_update_orbs = mock_n_update_orbs
-        settings%n_hess_x = mock_n_hess_x
-        settings%stability_settings%n_hess_x = mock_stability_n_hess_x
+        if (present(state)) then
+            state%max_precision_reached = .false.
+            state%n_update_orbs = mock_n_update_orbs
+            state%n_hess_x = mock_n_hess_x
+            state%stability_state%n_hess_x = mock_stability_n_hess_x
+        end if
 
     end subroutine mock_solver
 
     subroutine mock_stability_check(h_diag, hess_x_funptr, stable, error, settings, &
-                                    kappa)
+                                    state, kappa)
         !
         ! this subroutine is a mock routine for the stability check to test the C
         ! interface
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion, only: hess_x_type, stability_state_type
         use test_reference, only: check_hess_x_funptr, check_precond_funptr, &
                                   check_project_funptr, n_param
 
@@ -131,6 +134,7 @@ contains
         logical, intent(out) :: stable
         integer(ip), intent(out) :: error
         type(stability_settings_type), intent(inout) :: settings
+        type(stability_state_type), intent(out), target, optional :: state
         real(rp), intent(out), optional :: kappa(:)
 
         ! assume tests pass
@@ -174,11 +178,11 @@ contains
             received_callbacks = callbacks
         end select
 
-        ! set output quantities and fields
+        ! set output quantities and state
         stable = mock_stable
         if (present(kappa)) kappa = 1.0_rp
         error = mock_error
-        settings%n_hess_x = mock_stability_check_n_hess_x
+        if (present(state)) state%n_hess_x = mock_stability_check_n_hess_x
 
     end subroutine mock_stability_check
 

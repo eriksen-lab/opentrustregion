@@ -173,7 +173,7 @@ contains
         !
         ! this function exposes a Fortran-implemented solver subroutine to C
         !
-        use opentrustregion, only: solver_settings_type, stderr, &
+        use opentrustregion, only: solver_settings_type, solver_state_type, stderr, &
                                    settings_uninitialized_warning_msg, &
                                    stability_settings_uninitialized_warning_msg
 
@@ -186,6 +186,7 @@ contains
         procedure(obj_func_f_wrapper), pointer :: obj_func
         integer(ip) :: n_param, error
         type(solver_settings_type) :: settings
+        type(solver_state_type) :: state
         type(c_callbacks_type), target :: callbacks, stability_callbacks
 
         ! bundle the C function pointers
@@ -237,15 +238,15 @@ contains
         end if
 
         ! call solver
-        call solver(update_orbs, obj_func, n_param, error, settings)
+        call solver(update_orbs, obj_func, n_param, error, settings, state)
 
-        ! write output fields back into the C settings object directly
+        ! write the output fields into the C settings object from the state
         settings_c%max_precision_reached = &
-            logical(settings%max_precision_reached, kind=c_bool)
-        settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
-        settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
+            logical(state%max_precision_reached, kind=c_bool)
+        settings_c%n_update_orbs = int(state%n_update_orbs, kind=c_ip)
+        settings_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
         settings_c%stability_settings%n_hess_x = &
-            int(settings%stability_settings%n_hess_x, kind=c_ip)
+            int(state%stability_state%n_hess_x, kind=c_ip)
 
         ! convert return arguments to C kind
         error_c = int(error, kind=c_ip)
@@ -258,8 +259,8 @@ contains
         !
         ! this function exposes a Fortran-implemented stability check subroutine to C
         !
-        use opentrustregion, only: stability_settings_type, stderr, &
-                                   settings_uninitialized_warning_msg
+        use opentrustregion, only: stability_settings_type, stability_state_type, &
+                                   stderr, settings_uninitialized_warning_msg
 
         real(c_rp), intent(in), target :: h_diag_c(*)
         integer(c_ip), intent(in), value :: n_param_c
@@ -275,6 +276,7 @@ contains
         integer(ip) :: error
         procedure(hess_x_f_wrapper), pointer :: hess_x
         type(stability_settings_type) :: settings
+        type(stability_state_type) :: state
         type(c_callbacks_type), target :: callbacks
 
         ! bundle the C function pointers
@@ -316,19 +318,19 @@ contains
 
         ! call stability check
         if (c_associated(kappa_c_ptr)) then
-            call stability_check(h_diag_ptr, hess_x, stable, error, settings, &
+            call stability_check(h_diag_ptr, hess_x, stable, error, settings, state, &
                                  kappa=kappa_ptr)
             if (rp /= c_rp) then
                 kappa_ptr_c = kappa_ptr
                 deallocate(kappa_ptr)
             end if
         else
-            call stability_check(h_diag_ptr, hess_x, stable, error, settings)
+            call stability_check(h_diag_ptr, hess_x, stable, error, settings, state)
         end if
         if (rp /= c_rp) deallocate(h_diag_ptr)
 
-        ! write output fields back into the C settings object directly
-        settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
+        ! write the output field into the C settings object from the state
+        settings_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
 
         ! convert return arguments to C kind
         stable_c = logical(stable, kind=c_bool)
@@ -708,7 +710,6 @@ contains
             ! convert logicals
             settings%stability = logical(settings_c%stability)
             settings%line_search = logical(settings_c%line_search)
-            settings%max_precision_reached = logical(settings_c%max_precision_reached)
 
             ! convert reals
             settings%conv_tol = real(settings_c%conv_tol, kind=rp)
@@ -725,8 +726,6 @@ contains
                 int(settings_c%jacobi_davidson_start, kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
-            settings%n_update_orbs = int(settings_c%n_update_orbs, kind=ip)
-            settings%n_hess_x = int(settings_c%n_hess_x, kind=ip)
 
             ! convert characters
             settings%subsystem_solver = character_from_c(settings_c%subsystem_solver)
@@ -783,7 +782,6 @@ contains
                 int(settings_c%jacobi_davidson_start, kind=ip)
             settings%seed = int(settings_c%seed, kind=ip)
             settings%verbose = int(settings_c%verbose, kind=ip)
-            settings%n_hess_x = int(settings_c%n_hess_x, kind=ip)
 
             ! convert characters
             settings%diag_solver = character_from_c(settings_c%diag_solver)
@@ -803,10 +801,12 @@ contains
         !
         ! this subroutine converts solver settings from Fortran to C
         !
-        use opentrustregion, only: solver_settings_type
+        use opentrustregion, only: solver_settings_type, solver_state_type
 
         type(solver_settings_type_c), intent(out) :: settings_c
         type(solver_settings_type), intent(in) :: settings
+
+        type(solver_state_type) :: state
 
         if (settings%initialized) then
             ! callback functions cannot be converted
@@ -818,8 +818,6 @@ contains
             ! convert logicals
             settings_c%stability = logical(settings%stability, kind=c_bool)
             settings_c%line_search = logical(settings%line_search, kind=c_bool)
-            settings_c%max_precision_reached = &
-                logical(settings%max_precision_reached, kind=c_bool)
 
             ! convert reals
             settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
@@ -836,8 +834,13 @@ contains
                 int(settings%jacobi_davidson_start, kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
-            settings_c%n_update_orbs = int(settings%n_update_orbs, kind=c_ip)
-            settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
+
+            ! the output fields, which the solver writes from its state, start from
+            ! the default values of the state
+            settings_c%max_precision_reached = &
+                logical(state%max_precision_reached, kind=c_bool)
+            settings_c%n_update_orbs = int(state%n_update_orbs, kind=c_ip)
+            settings_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
 
             ! convert characters
             settings_c%subsystem_solver = character_to_c(settings%subsystem_solver)
@@ -858,10 +861,12 @@ contains
         !
         ! this subroutine converts stability settings from Fortran to C
         !
-        use opentrustregion, only: stability_settings_type
+        use opentrustregion, only: stability_settings_type, stability_state_type
 
         type(stability_settings_type_c), intent(out) :: settings_c
         type(stability_settings_type), intent(in) :: settings
+
+        type(stability_state_type) :: state
 
         if (settings%initialized) then
             ! callback functions cannot be converted
@@ -880,7 +885,10 @@ contains
                 int(settings%jacobi_davidson_start, kind=c_ip)
             settings_c%seed = int(settings%seed, kind=c_ip)
             settings_c%verbose = int(settings%verbose, kind=c_ip)
-            settings_c%n_hess_x = int(settings%n_hess_x, kind=c_ip)
+
+            ! the output field, which the stability check writes from its state,
+            ! starts from the default value of the state
+            settings_c%n_hess_x = int(state%n_hess_x, kind=c_ip)
 
             ! convert characters
             settings_c%diag_solver = character_to_c(settings%diag_solver)
