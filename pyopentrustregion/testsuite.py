@@ -415,7 +415,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         interface_flag = c_bool.in_dll(lib, "test_solver_interface")
         interface_flag.value = False
         state = SolverState()
-        solver(mock_obj_func, mock_update_orbs, n_param, settings, state=state)
+        solver(mock_update_orbs, mock_obj_func, n_param, settings, state=state)
         interface_passed = interface_flag.value
 
         # check that the state is passed, which the mock fills with the reference
@@ -444,7 +444,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             try:
-                solver(mock_obj_func, mock_update_orbs, n_param, settings)
+                solver(mock_update_orbs, mock_obj_func, n_param, settings)
                 logger_error_reported = any(
                     issubclass(w.category, RuntimeWarning)
                     and isinstance(w.message.__cause__, ValueError)
@@ -466,7 +466,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         settings.logger = messages.append
         callback_error_reported = False
         try:
-            solver(raising_obj_func, mock_update_orbs, n_param, settings)
+            solver(mock_update_orbs, raising_obj_func, n_param, settings)
         except RuntimeError as e:
             callback_error_reported = isinstance(e.__cause__, ValueError)
         if not callback_error_reported:
@@ -481,7 +481,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         settings_flag = c_bool.in_dll(lib, "solver_settings_passed")
         settings_flag.value = True
         interface_flag.value = False
-        solver(mock_obj_func, mock_update_orbs, n_param)
+        solver(mock_update_orbs, mock_obj_func, n_param)
         no_settings_passed = interface_flag.value and not settings_flag.value
         if settings_flag.value:
             print(
@@ -1375,7 +1375,7 @@ class PyIntegrationTests(unittest.TestCase):
         # returns, so that its write-back is detected
         solver_state.state_c.max_precision_reached = True
 
-        solver(obj_func, update_orbs, self.n_param, settings, state=solver_state)
+        solver(update_orbs, obj_func, self.n_param, settings, state=solver_state)
         if solver_state.max_precision_reached:
             print(
                 " test_solver_py failed: Maximum precision reached flag was not "

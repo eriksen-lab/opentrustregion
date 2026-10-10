@@ -703,11 +703,11 @@ def raise_on_failure(error: int, exception: Dict[str, Exception], name: str):
 
 
 def solver(
-    obj_func: Callable[[np.ndarray], float],
     update_orbs: Callable[
         [np.ndarray, np.ndarray, np.ndarray],
         Tuple[float, Callable[[np.ndarray, np.ndarray], None]],
     ],
+    obj_func: Callable[[np.ndarray], float],
     n_param: int,
     settings: Optional[SolverSettings] = None,
     state: Optional[SolverState] = None,
