@@ -1608,10 +1608,9 @@ contains
             test_assign_solver_c_f = .false.
         end if
 
-        ! convert again with only one of the logicals other than initialized set at a
-        ! time, since the logicals cannot all differ from each other and from their
-        ! default values, so that a logical that is swapped with another or not
-        ! converted is detected
+        ! convert again with only one of the logicals set at a time, since the logicals
+        ! cannot all differ from each other and from their default values, so that a
+        ! logical that is swapped with another or not converted is detected
         do i = 1, size(logical_names)
             settings = ref_solver_settings
             settings%stability = logical_names(i) == "stability"
