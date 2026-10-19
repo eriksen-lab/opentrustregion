@@ -1811,14 +1811,20 @@ contains
         end if
 
         ! run solver with settings which the sanity check rejects and check that its
-        ! error is returned with the solver's origin
+        ! error is returned with the solver's origin before the orbitals are updated
         context%vars = near_minimum
         call settings%init(error)
         settings%n_micro = 0
         call setup_error_logging(settings, context)
-        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
+                    state)
         if (error /= error_solver + 1) then
             write(stderr, *) "test_solver failed: Did not return error of sanity check."
+            test_solver = .false.
+        end if
+        if (state%n_update_orbs /= 0) then
+            write(stderr, *) "test_solver failed: Orbitals updated before settings "// &
+                "the sanity check rejects were refused."
             test_solver = .false.
         end if
 
@@ -5660,7 +5666,6 @@ contains
             default_solver_settings, verbosity_info
 
         type(solver_settings_type) :: settings
-        real(rp) :: grad(3)
         integer(ip) :: error, i
         type(test_context_type), target :: context
 
@@ -5670,9 +5675,9 @@ contains
         ! setup settings object
         call setup_settings(settings, context)
 
-        ! check if error is incorrectly thrown for valid settings, number of parameters
-        ! and gradient size
-        call solver_sanity_check(settings, 3_ip, grad, error)
+        ! check if error is incorrectly thrown for valid settings and number of
+        ! parameters
+        call solver_sanity_check(settings, 3_ip, error)
         if (error /= 0) then
             write(stderr, *) "test_solver_sanity_check failed: Produced error for "// &
                 "valid input."
@@ -5681,7 +5686,7 @@ contains
 
         ! check if error is correctly thrown for vanishing number of parameters
         call setup_error_logging(settings, context)
-        call solver_sanity_check(settings, 0_ip, grad, error)
+        call solver_sanity_check(settings, 0_ip, error)
         if (error /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: No error returned "// &
                 "for vanishing number of parameters."
@@ -5697,7 +5702,7 @@ contains
         ! vanishing number of microiterations
         settings%n_micro = 0
         call setup_error_logging(settings, context)
-        call solver_sanity_check(settings, 3_ip, grad, error)
+        call solver_sanity_check(settings, 3_ip, error)
         if (error /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: No error returned "// &
                 "for vanishing number of microiterations."
@@ -5715,7 +5720,7 @@ contains
         settings%n_random_trial_vectors = 3
         settings%verbose = verbosity_info
         context%log_message = ""
-        call solver_sanity_check(settings, 3_ip, grad, error)
+        call solver_sanity_check(settings, 3_ip, error)
         if (settings%n_random_trial_vectors /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: Number of random "// &
                 "trial vectors not correctly set."
@@ -5732,7 +5737,7 @@ contains
         ! truncated conjugate gradient solver, which does not use them
         settings%subsystem_solver = "tcg"
         settings%n_random_trial_vectors = 3
-        call solver_sanity_check(settings, 3_ip, grad, error)
+        call solver_sanity_check(settings, 3_ip, error)
         if (settings%n_random_trial_vectors /= 3) then
             write(stderr, *) "test_solver_sanity_check failed: Number of random "// &
                 "trial vectors reduced for truncated conjugate gradient solver."
@@ -5741,24 +5746,10 @@ contains
         settings%subsystem_solver = "davidson"
         settings%n_random_trial_vectors = default_solver_settings%n_random_trial_vectors
 
-        ! check if error is correctly thrown for incorrect gradient size
-        call setup_error_logging(settings, context)
-        call solver_sanity_check(settings, 4_ip, grad, error)
-        if (error /= 1) then
-            write(stderr, *) "test_solver_sanity_check failed: No error returned "// &
-                "for incorrect gradient size."
-            test_solver_sanity_check = .false.
-        end if
-        if (len_trim(context%log_message) == 0) then
-            write(stderr, *) "test_solver_sanity_check failed: No error message "// &
-                "printed for incorrect gradient size."
-            test_solver_sanity_check = .false.
-        end if
-
         ! check if every subsystem solver option is accepted
         do i = 1, size(subsystem_solver_options)
             settings%subsystem_solver = subsystem_solver_options(i)
-            call solver_sanity_check(settings, 3_ip, grad, error)
+            call solver_sanity_check(settings, 3_ip, error)
             if (error /= 0) then
                 write(stderr, *) "test_solver_sanity_check failed: Produced error "// &
                     "for "//trim(subsystem_solver_options(i))//" subsystem solver."
@@ -5766,7 +5757,7 @@ contains
             end if
         end do
         settings%subsystem_solver = "Jacobi-Davidson"
-        call solver_sanity_check(settings, 3_ip, grad, error)
+        call solver_sanity_check(settings, 3_ip, error)
         if (error /= 0) then
             write(stderr, *) "test_solver_sanity_check failed: Produced error for "// &
                 "mixed-case subsystem solver."
@@ -5779,7 +5770,7 @@ contains
         end if
         settings%subsystem_solver = "unknown"
         call setup_error_logging(settings, context)
-        call solver_sanity_check(settings, 3_ip, grad, error)
+        call solver_sanity_check(settings, 3_ip, error)
         if (error /= 1) then
             write(stderr, *) "test_solver_sanity_check failed: No error returned "// &
                 "for unknown subsystem solver."
@@ -5798,7 +5789,7 @@ contains
         ! check if a warning is printed when a custom projection function is set
         settings%subsystem_solver = "davidson"
         settings%project => mock_project
-        call solver_sanity_check(settings, 3_ip, grad, error)
+        call solver_sanity_check(settings, 3_ip, error)
         if (index(context%log_message, " "//project_warning_msg) == 0) then
             write(stderr, *) "test_solver_sanity_check failed: Warning message not "// &
                 "correctly printed when custom projecting function is set."

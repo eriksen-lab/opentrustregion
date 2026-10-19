@@ -339,6 +339,11 @@ contains
         ! resolve the defaults that depend on other settings
         call init_defaults(local_settings)
 
+        ! perform sanity check
+        call solver_sanity_check(local_settings, n_param, error)
+        call add_error_origin(error, error_solver, local_settings)
+        if (error /= 0) return
+
         ! initialize starting trust radius
         current_state%trust_radius = local_settings%start_trust_radius
 
@@ -380,13 +385,6 @@ contains
                                             verbosity_error, .true.)
                     error = error_solver + 1
                     return
-                end if
-
-                ! perform sanity check
-                if (imacro == 1) then
-                    call solver_sanity_check(local_settings, n_param, grad, error)
-                    call add_error_origin(error, error_solver, local_settings)
-                    if (error /= 0) return
                 end if
 
                 ! calculate gradient norm
@@ -2840,13 +2838,12 @@ contains
 
     end subroutine init_defaults
 
-    subroutine solver_sanity_check(settings, n_param, grad, error)
+    subroutine solver_sanity_check(settings, n_param, error)
         !
         ! this subroutine performs a sanity check for solver input parameters
         !
         type(solver_settings_type), intent(inout) :: settings
         integer(ip), intent(in) :: n_param
-        real(rp), intent(in) :: grad(:)
         integer(ip), intent(out) :: error
 
         character(len=300) :: msg
@@ -2882,15 +2879,6 @@ contains
             write(msg, '(A, I0, A)') random_trial_vector_warning_msg//" Setting to ", &
                 settings%n_random_trial_vectors, "."
             call settings%log(msg, verbosity_warning)
-        end if
-
-        ! sanity check for gradient size
-        if (size(grad) /= n_param) then
-            call settings%log("Size of gradient array returned by subroutine "// &
-                              "update_orbs does not equal number of parameters.", &
-                              verbosity_error, .true.)
-            error = 1
-            return
         end if
 
         ! check for character options
