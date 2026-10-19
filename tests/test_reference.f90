@@ -611,9 +611,10 @@ contains
         ! this function returns the value of a field of the C solver state exported by
         ! get_reference_solver_state_values by its name, prefixed by
         ! "stability_state." for the nested state, which also describes a standalone
-        ! stability check state, a logical as 1 or 0, so that the C and Python tests
-        ! need no values of their own and compare what they read through their own
-        ! declarations with what the Fortran declaration reads
+        ! stability check state, a logical as 1 or 0 and an unknown name as a value no
+        ! field holds, so that the C and Python tests need no values of their own and
+        ! compare what they read through their own declarations with what the Fortran
+        ! declaration reads
         !
         use c_interface, only: solver_state_type_c
 
@@ -663,7 +664,8 @@ contains
         case ("stability_state.n_hess_x")
             reference_state_field = values%stability_state%n_hess_x
         case default
-            write(stderr, *) "reference_state_field: Unknown field "//name//"."
+            write(stderr, *) "reference_state_field: unknown field "//name//"."
+            reference_state_field = huge(1.0_c_rp)
         end select
 
     end function reference_state_field
