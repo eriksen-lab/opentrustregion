@@ -3900,7 +3900,7 @@ contains
 
         type(solver_settings_type) :: settings
         real(rp), allocatable :: red_space_basis(:, :)
-        real(rp) :: first_vector(n_param)
+        real(rp) :: leading_vectors(n_param, 2)
         integer(ip) :: error, i, j
         type(test_context_type), target :: context
 
@@ -3910,26 +3910,30 @@ contains
         ! setup settings object
         call setup_settings(settings, context)
 
-        ! allocate reduced space basis and set first normalized basis vector
-        allocate(red_space_basis(n_param, 3))
-        call random_number(red_space_basis(:, 1))
+        ! allocate reduced space basis and set two orthonormal leading basis vectors
+        allocate(red_space_basis(n_param, 4))
+        call random_number(red_space_basis(:, 1:2))
         red_space_basis(:, 1) = red_space_basis(:, 1) / norm2(red_space_basis(:, 1))
-        first_vector = red_space_basis(:, 1)
+        red_space_basis(:, 2) = red_space_basis(:, 2) - dot_product( &
+            red_space_basis(:, 1), red_space_basis(:, 2)) * red_space_basis(:, 1)
+        red_space_basis(:, 2) = red_space_basis(:, 2) / norm2(red_space_basis(:, 2))
+        leading_vectors = red_space_basis(:, 1:2)
 
-        ! generate two trial vectors and determine whether function returns orthonormal
-        ! trial vectors and leaves the first basis vector unchanged
+        ! generate two trial vectors in the trailing columns and determine whether
+        ! function returns orthonormal trial vectors and leaves the leading basis
+        ! vectors unchanged
         call generate_random_trial_vectors(red_space_basis, 2_ip, settings, error)
         if (error /= 0) then
             write(stderr, *) "test_generate_random_trial_vectors failed: Produced "// &
                 "error without projection."
             test_generate_random_trial_vectors = .false.
         end if
-        if (any(abs(red_space_basis(:, 1) - first_vector) > tol)) then
-            write(stderr, *) "test_generate_random_trial_vectors failed: First "// &
-                "basis vector changed without projection."
+        if (any(abs(red_space_basis(:, 1:2) - leading_vectors) > tol)) then
+            write(stderr, *) "test_generate_random_trial_vectors failed: Leading "// &
+                "basis vectors changed without projection."
             test_generate_random_trial_vectors = .false.
         end if
-        if (any(abs(norm2(red_space_basis(:, 2:), dim=1) - 1.0_rp) > tol)) then
+        if (any(abs(norm2(red_space_basis(:, 3:), dim=1) - 1.0_rp) > tol)) then
             write(stderr, *) "test_generate_random_trial_vectors failed: Generated "// &
                 "vectors are not normalized without projection."
             test_generate_random_trial_vectors = .false.
@@ -3947,14 +3951,14 @@ contains
 
         ! project the random trial vectors with a projection which removes the
         ! component along the symmetric combination of the first two unit vectors,
-        ! starting from a first basis vector without this component, and determine
-        ! whether the generated vectors do not have this component
+        ! starting from a single leading basis vector without this component, and
+        ! determine whether the three generated vectors do not have this component
         settings%project => mock_project_out_pair
         call random_number(red_space_basis(:, 1))
         red_space_basis(1:2, 1) = red_space_basis(1:2, 1) - &
                                   0.5_rp * sum(red_space_basis(1:2, 1))
         red_space_basis(:, 1) = red_space_basis(:, 1) / norm2(red_space_basis(:, 1))
-        call generate_random_trial_vectors(red_space_basis, 2_ip, settings, error)
+        call generate_random_trial_vectors(red_space_basis, 3_ip, settings, error)
         if (error /= 0) then
             write(stderr, *) "test_generate_random_trial_vectors failed: Produced "// &
                 "error with projection."
@@ -3969,7 +3973,7 @@ contains
         ! check that the error of a failing projection function is reported with its
         ! origin
         settings%project => mock_project_error
-        call generate_random_trial_vectors(red_space_basis, 2_ip, settings, error)
+        call generate_random_trial_vectors(red_space_basis, 3_ip, settings, error)
         if (error /= error_project + 1) then
             write(stderr, *) "test_generate_random_trial_vectors failed: Did not "// &
                 "report the error of a failing projection function with its origin."
@@ -3984,7 +3988,7 @@ contains
         red_space_basis(:, 1) = 0.0_rp
         red_space_basis(1, 1) = 1.0_rp
         call setup_error_logging(settings, context)
-        call generate_random_trial_vectors(red_space_basis, 2_ip, settings, error)
+        call generate_random_trial_vectors(red_space_basis, 3_ip, settings, error)
         if (error /= 1) then
             write(stderr, *) "test_generate_random_trial_vectors failed: No error "// &
                 "returned when no linearly independent vector can be generated."
