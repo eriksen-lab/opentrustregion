@@ -1712,7 +1712,7 @@ contains
         type(double_well_state_context_type), target :: state_context
         type(solver_state_type), target :: state
         type(solver_state_type) :: explicit_state
-        integer(ip) :: n_updates, i_update, i_line_search
+        integer(ip) :: n_updates, i_update
         real(rp), allocatable :: step_norms(:)
         character(len=60) :: case_name
 
@@ -2161,161 +2161,149 @@ contains
         end if
 
         ! minimize the double well function x^2 - y^2 + y^4 from (0.5, 0) with every
-        ! subsystem solver, without and with the line search, and with a state record,
-        ! which the orbital update reads during the optimization through the pointer
-        ! in its context, and without random trial vectors, so that (Jacobi-)Davidson
-        ! first converges to the saddle point at the origin, which the requested
-        ! stability check finds unstable, and then continues to a minimum, while
-        ! truncated conjugate gradient, whose initial residual is randomly perturbed,
-        ! leaves the line through the saddle point and reaches a minimum directly
+        ! subsystem solver and with a state record, which the orbital update reads
+        ! during the optimization through the pointer in its context, and without random
+        ! trial vectors, so that (Jacobi-)Davidson first converges to the saddle point
+        ! at the origin, which the requested stability check finds unstable, and then
+        ! continues to a minimum, while truncated conjugate gradient, whose initial
+        ! residual is randomly perturbed, leaves the line through the saddle point and
+        ! reaches a minimum directly
         update_orbs_funptr => state_reading_update_orbs
         obj_func_funptr => double_well_obj_func
         state_context%state => state
         do i_solver = 1, size(subsystem_solver_options)
-            do i_line_search = 0, 1
-                call settings%init(error)
-                settings%subsystem_solver = subsystem_solver_options(i_solver)
-                settings%line_search = i_line_search == 1
-                settings%stability = .true.
-                settings%n_random_trial_vectors = 0
-                settings%start_trust_radius = 0.3_rp
-                settings%context => state_context
-                case_name = trim(subsystem_solver_options(i_solver))// &
-                            " subsystem solver"
-                if (settings%line_search) &
-                    case_name = trim(case_name)//" and line search"
-                state_context%vars = [0.5_rp, 0.0_rp]
-                state_context%n_obj_func_calls = 0
-                if (allocated(state_context%seen_states)) &
-                    deallocate(state_context%seen_states, state_context%step_norms, &
-                               state_context%precond_step_norms)
-                call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, &
-                            settings, state)
-                if (error /= 0) then
-                    write(stderr, *) "test_solver failed: Produced error with "// &
-                        "state record for "//trim(case_name)//"."
+            call settings%init(error)
+            settings%subsystem_solver = subsystem_solver_options(i_solver)
+            settings%stability = .true.
+            settings%n_random_trial_vectors = 0
+            settings%start_trust_radius = 0.3_rp
+            settings%context => state_context
+            case_name = trim(subsystem_solver_options(i_solver))//" subsystem solver"
+            state_context%vars = [0.5_rp, 0.0_rp]
+            state_context%n_obj_func_calls = 0
+            if (allocated(state_context%seen_states)) &
+                deallocate(state_context%seen_states, state_context%step_norms, &
+                           state_context%precond_step_norms)
+            call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings, &
+                        state)
+            if (error /= 0) then
+                write(stderr, *) "test_solver failed: Produced error with state "// &
+                    "record for "//trim(case_name)//"."
+                test_solver = .false.
+            end if
+            if (abs(abs(state_context%vars(2)) - 1.0_rp / sqrt(2.0_rp)) > var_thres) &
+                then
+                write(stderr, *) "test_solver failed: Did not continue from the "// &
+                    "saddle point of the double well function to a minimum for "// &
+                    trim(case_name)//"."
+                test_solver = .false.
+            end if
+
+            ! check the state the solver returns, at the converged point, against the
+            ! orbital updates the orbital update recorded
+            n_updates = 0
+            if (allocated(state_context%seen_states)) &
+                n_updates = size(state_context%seen_states)
+            if (state%macro_iteration /= n_updates - 1 .or. &
+                abs(state%func - double_well_func(state_context%vars)) > tol .or. &
+                abs(state%grad_rms - norm2([ &
+                    2.0_rp * state_context%vars(1), -2.0_rp * state_context%vars(2) + &
+                    4.0_rp * state_context%vars(2)**3]) / sqrt(2.0_rp)) > tol .or. &
+                state%trust_radius <= 0.0_rp) then
+                write(stderr, *) "test_solver failed: Returned state not that of "// &
+                    "the converged point for "//trim(case_name)//"."
+                test_solver = .false.
+            end if
+            if (state%n_update_orbs /= n_updates .or. &
+                state%n_obj_func /= state_context%n_obj_func_calls) then
+                write(stderr, *) "test_solver failed: Counters in the returned "// &
+                    "state wrong for "//trim(case_name)//"."
+                test_solver = .false.
+            end if
+            if (state%max_precision_reached) then
+                write(stderr, *) "test_solver failed: Maximum precision flagged in "// &
+                    "the returned state for "//trim(case_name)//"."
+                test_solver = .false.
+            end if
+
+            ! check the state the orbital update read during the optimization: the
+            ! first update sees the starting trust radius before anything was
+            ! evaluated, every later one the previous macro iteration and the step
+            ! it is given, whose size is measured in the metric of the trust region,
+            ! the Euclidean norm for (Jacobi-)Davidson and the norm of the absolute
+            ! diagonal preconditioner of the previous point for truncated conjugate
+            ! gradient, the second one the level shift of the first step, which the
+            ! trust radius truncates for (Jacobi-)Davidson and which vanishes for
+            ! truncated conjugate gradient, the level shift never being negative or a
+            ! negative zero, and, for (Jacobi-)Davidson, one update the step along the
+            ! unstable mode, without micro iterations, level shift and residual, after
+            ! steps of the subsystem solver
+            if (n_updates < 3) then
+                write(stderr, *) "test_solver failed: Too few orbital updates to "// &
+                    "check the state during the optimization for "//trim(case_name)//"."
+                test_solver = .false.
+                cycle
+            end if
+            if (settings%subsystem_solver == "tcg") then
+                step_norms = state_context%precond_step_norms
+            else
+                step_norms = state_context%step_norms
+            end if
+            associate (seen => state_context%seen_states)
+                if (seen(1)%macro_iteration /= 0 .or. seen(1)%n_update_orbs /= 0 .or. &
+                    abs(seen(1)%trust_radius - settings%start_trust_radius) > tol .or. &
+                    seen(1)%micro_iteration /= 0 .or. abs(seen(1)%step_size) > tol) then
+                    write(stderr, *) "test_solver failed: State wrong before the "// &
+                        "starting point is evaluated for "//trim(case_name)//"."
                     test_solver = .false.
                 end if
-                if (abs(abs(state_context%vars(2)) - 1.0_rp / sqrt(2.0_rp)) > &
-                    var_thres) then
-                    write(stderr, *) "test_solver failed: Did not continue from "// &
-                        "the saddle point of the double well function to a minimum "// &
+                if (any([(seen(i_update)%macro_iteration /= i_update - 2 .or. &
+                          seen(i_update)%n_update_orbs /= i_update - 1, i_update=2, &
+                          n_updates)])) then
+                    write(stderr, *) "test_solver failed: Macro iteration or "// &
+                        "number of orbital updates in the state wrong during the "// &
+                        "optimization for "//trim(case_name)//"."
+                    test_solver = .false.
+                end if
+                if (any([(abs(seen(i_update)%step_size - step_norms(i_update)) > tol, &
+                          i_update=2, n_updates)])) then
+                    write(stderr, *) "test_solver failed: Step size in the state "// &
+                        "wrong during the optimization for "//trim(case_name)//"."
+                    test_solver = .false.
+                end if
+                if (settings%subsystem_solver == "tcg") then
+                    if (any([(abs(seen(i_update)%level_shift) > 0.0_rp, i_update=2, &
+                              n_updates)])) then
+                        write(stderr, *) "test_solver failed: Level shift in the "// &
+                            "state does not vanish for "//trim(case_name)//"."
+                        test_solver = .false.
+                    end if
+                else if (seen(2)%level_shift <= 0.0_rp) then
+                    write(stderr, *) "test_solver failed: Level shift of the step "// &
+                        "the trust radius truncates not in the state for "// &
+                        trim(case_name)//"."
+                    test_solver = .false.
+                end if
+                if (any([(sign(1.0_rp, seen(i_update)%level_shift) < 0.0_rp, &
+                          i_update=2, n_updates)])) then
+                    write(stderr, *) "test_solver failed: Negative level shift or "// &
+                        "negative zero in the state for "//trim(case_name)//"."
+                    test_solver = .false.
+                end if
+                if (settings%subsystem_solver /= "tcg" .and. .not. any([( &
+                    seen(i_update)%micro_iteration == 0 .and. &
+                    seen(i_update)%jacobi_davidson_iteration == 0 .and. &
+                    abs(seen(i_update)%level_shift) < tol .and. &
+                    abs(seen(i_update)%relative_residual) < tol .and. &
+                    seen(i_update)%step_size > 0.0_rp .and. &
+                    seen(i_update - 1)%micro_iteration > 0, i_update=3, n_updates)])) &
+                    then
+                    write(stderr, *) "test_solver failed: Step along the unstable "// &
+                        "mode after steps of the subsystem solver not in the state "// &
                         "for "//trim(case_name)//"."
                     test_solver = .false.
                 end if
-
-                ! check the state the solver returns, at the converged point, against
-                ! the orbital updates the orbital update recorded
-                n_updates = 0
-                if (allocated(state_context%seen_states)) &
-                    n_updates = size(state_context%seen_states)
-                if (state%macro_iteration /= n_updates - 1 .or. &
-                    abs(state%func - double_well_func(state_context%vars)) > tol .or. &
-                    abs(state%grad_rms - norm2([2.0_rp * state_context%vars(1), &
-                                                -2.0_rp * state_context%vars(2) + &
-                                                4.0_rp * state_context%vars(2)**3]) / &
-                        sqrt(2.0_rp)) > tol .or. state%trust_radius <= 0.0_rp) then
-                    write(stderr, *) "test_solver failed: Returned state not that "// &
-                        "of the converged point for "//trim(case_name)//"."
-                    test_solver = .false.
-                end if
-                if (state%n_update_orbs /= n_updates .or. &
-                    state%n_obj_func /= state_context%n_obj_func_calls) then
-                    write(stderr, *) "test_solver failed: Counters in the returned "// &
-                        "state wrong for "//trim(case_name)//"."
-                    test_solver = .false.
-                end if
-                if (state%max_precision_reached) then
-                    write(stderr, *) "test_solver failed: Maximum precision "// &
-                        "flagged in the returned state for "//trim(case_name)//"."
-                    test_solver = .false.
-                end if
-
-                ! check the state the orbital update read during the optimization: the
-                ! first update sees the starting trust radius before anything was
-                ! evaluated, every later one the previous macro iteration and the step
-                ! it is given, whose size is measured in the metric of the trust
-                ! region, the Euclidean norm for (Jacobi-)Davidson and the norm of the
-                ! absolute diagonal preconditioner of the previous point for truncated
-                ! conjugate gradient, and scaled by the line search, the second one the
-                ! level shift of the first step, which the trust radius truncates for
-                ! (Jacobi-)Davidson and which vanishes for truncated conjugate
-                ! gradient, the level shift never being negative or a negative zero,
-                ! and, for (Jacobi-)Davidson, one update the step along the unstable
-                ! mode, without micro iterations, level shift and residual, after steps
-                ! of the subsystem solver
-                if (n_updates < 3) then
-                    write(stderr, *) "test_solver failed: Too few orbital updates "// &
-                        "to check the state during the optimization for "// &
-                        trim(case_name)//"."
-                    test_solver = .false.
-                    cycle
-                end if
-                if (settings%subsystem_solver == "tcg") then
-                    step_norms = state_context%precond_step_norms
-                else
-                    step_norms = state_context%step_norms
-                end if
-                associate (seen => state_context%seen_states)
-                    if (seen(1)%macro_iteration /= 0 .or. &
-                        seen(1)%n_update_orbs /= 0 .or. &
-                        abs(seen(1)%trust_radius - settings%start_trust_radius) > &
-                        tol .or. seen(1)%micro_iteration /= 0 .or. &
-                        abs(seen(1)%step_size) > tol) then
-                        write(stderr, *) "test_solver failed: State wrong before "// &
-                            "the starting point is evaluated for "//trim(case_name)//"."
-                        test_solver = .false.
-                    end if
-                    if (any([(seen(i_update)%macro_iteration /= i_update - 2 .or. &
-                              seen(i_update)%n_update_orbs /= i_update - 1, &
-                              i_update=2, n_updates)])) then
-                        write(stderr, *) "test_solver failed: Macro iteration or "// &
-                            "number of orbital updates in the state wrong during "// &
-                            "the optimization for "//trim(case_name)//"."
-                        test_solver = .false.
-                    end if
-                    if (any([( &
-                        abs(seen(i_update)%step_size - step_norms(i_update)) > tol, &
-                        i_update=2, n_updates)])) then
-                        write(stderr, *) "test_solver failed: Step size in the "// &
-                            "state wrong during the optimization for "// &
-                            trim(case_name)//"."
-                        test_solver = .false.
-                    end if
-                    if (settings%subsystem_solver == "tcg") then
-                        if (any([(abs(seen(i_update)%level_shift) > 0.0_rp, &
-                                  i_update=2, n_updates)])) then
-                            write(stderr, *) "test_solver failed: Level shift in "// &
-                                "the state does not vanish for "//trim(case_name)//"."
-                            test_solver = .false.
-                        end if
-                    else if (seen(2)%level_shift <= 0.0_rp) then
-                        write(stderr, *) "test_solver failed: Level shift of the "// &
-                            "step the trust radius truncates not in the state for "// &
-                            trim(case_name)//"."
-                        test_solver = .false.
-                    end if
-                    if (any([(sign(1.0_rp, seen(i_update)%level_shift) < 0.0_rp, &
-                              i_update=2, n_updates)])) then
-                        write(stderr, *) "test_solver failed: Negative level shift "// &
-                            "or negative zero in the state for "//trim(case_name)//"."
-                        test_solver = .false.
-                    end if
-                    if (settings%subsystem_solver /= "tcg" .and. .not. any([( &
-                        seen(i_update)%micro_iteration == 0 .and. &
-                        seen(i_update)%jacobi_davidson_iteration == 0 .and. &
-                        abs(seen(i_update)%level_shift) < tol .and. &
-                        abs(seen(i_update)%relative_residual) < tol .and. &
-                        seen(i_update)%step_size > 0.0_rp .and. &
-                        seen(i_update - 1)%micro_iteration > 0, i_update=3, &
-                        n_updates)])) then
-                        write(stderr, *) "test_solver failed: Step along the "// &
-                            "unstable mode after steps of the subsystem solver not "// &
-                            "in the state for "//trim(case_name)//"."
-                        test_solver = .false.
-                    end if
-                end associate
-            end do
+            end associate
         end do
 
         ! inject faults by running the solver from the saddle point, where it performs
