@@ -371,3 +371,17 @@ jobs:
         plugins: noop
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: true
+
+  # single check for branch protection to require, so that changes to the jobs above do
+  # not require changes to the required checks; it runs always, since a required check
+  # that is skipped after a failed job counts as passed
+  ci-result:
+    name: "CI result"
+    if: always()
+    needs: [formatting, build-test-repo]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check that every job succeeded
+      run: |
+        test "${{ needs.formatting.result }}" = success
+        test "${{ needs.build-test-repo.result }}" = success
