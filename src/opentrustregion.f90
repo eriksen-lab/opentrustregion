@@ -468,6 +468,12 @@ contains
                     local_settings, current_state, solution, kappa_norm, mu, error)
                 call add_error_origin(error, error_solver, local_settings)
                 if (error /= 0) return
+
+                ! record the level shift of the step, the negated eigenvalue of the
+                ! augmented Hessian, a positive rather than a negative zero if it
+                ! vanishes, truncated conjugate gradient applies none and leaves the
+                ! default of 0
+                current_state%level_shift = merge(-mu, 0.0_rp, abs(mu) > 0.0_rp)
             else
                 ! solve trust region subproblem with truncated conjugate gradient
                 call truncated_conjugate_gradient( &
@@ -475,16 +481,6 @@ contains
                     local_settings, current_state, solution, kappa_norm, error)
                 call add_error_origin(error, error_solver, local_settings)
                 if (error /= 0) return
-            end if
-
-            ! record the level shift of the step, for (Jacobi-)Davidson the negated
-            ! eigenvalue of the augmented Hessian, a positive rather than a negative
-            ! zero if it vanishes, and none for truncated conjugate gradient
-            if (local_settings%subsystem_solver == "davidson" .or. &
-                local_settings%subsystem_solver == "jacobi-davidson") then
-                current_state%level_shift = merge(-mu, 0.0_rp, abs(mu) > 0.0_rp)
-            else
-                current_state%level_shift = 0.0_rp
             end if
 
             ! perform line search
