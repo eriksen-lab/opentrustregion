@@ -130,8 +130,8 @@ module opentrustregion_unit_tests
     ! define type for the host context of the double well function whose orbital update
     ! reads the solver state through a pointer during the optimization and records it
     ! with the size of the step it receives, in the Euclidean norm and in the norm of
-    ! the absolute Hessian diagonal of the previous point, the metric of the trust
-    ! region of truncated conjugate gradient, for which it keeps the last Hessian
+    ! the absolute diagonal preconditioner of the previous point, the metric of the
+    ! trust region of truncated conjugate gradient, for which it keeps the last Hessian
     ! diagonal
     type, extends(double_well_context_type) :: double_well_state_context_type
         type(solver_state_type), pointer :: state => null()
@@ -1116,7 +1116,7 @@ contains
         ! this subroutine describes the orbital update of the double well function,
         ! which also records the solver state it reads through the pointer in its
         ! context and the size of the step it receives in the Euclidean norm and in
-        ! the norm of the absolute Hessian diagonal of the previous point
+        ! the norm of the absolute diagonal preconditioner of the previous point
         !
         use opentrustregion, only: hess_x_type, precond_floor
 
@@ -2236,7 +2236,7 @@ contains
                 ! evaluated, every later one the previous macro iteration and the step
                 ! it is given, whose size is measured in the metric of the trust
                 ! region, the Euclidean norm for (Jacobi-)Davidson and the norm of the
-                ! absolute Hessian diagonal of the previous point for truncated
+                ! absolute diagonal preconditioner of the previous point for truncated
                 ! conjugate gradient, and scaled by the line search, the second one the
                 ! level shift of the first step, which the trust radius truncates for
                 ! (Jacobi-)Davidson and which vanishes for truncated conjugate
@@ -2968,7 +2968,7 @@ contains
         ! check the saddle point for every subsystem solver and check that the norm of
         ! the step along the unstable mode is returned in the metric of its trust
         ! region, the Euclidean norm for (Jacobi-)Davidson and the norm of the absolute
-        ! Hessian diagonal for truncated conjugate gradient
+        ! diagonal preconditioner for truncated conjugate gradient
         do i_solver = 1, size(subsystem_solver_options)
             call setup_settings(settings, context)
             settings%stability_settings%context => context
@@ -6299,9 +6299,9 @@ contains
         ! run truncated conjugate gradient with micro iterations left in the state by
         ! a previous subproblem, check whether the solution stays within the trust
         ! region and reduces the function value, whether its norm in the metric of the
-        ! absolute Hessian diagonal is returned, whether the micro iterations, one per
-        ! Hessian linear transformation, and the converged residual relative to the
-        ! initial one are in the state and whether the reported numbers of Hessian
+        ! absolute diagonal preconditioner is returned, whether the micro iterations,
+        ! one per Hessian linear transformation, and the converged residual relative to
+        ! the initial one are in the state and whether the reported numbers of Hessian
         ! linear transformations and objective function evaluations agree with the
         ! calls
         state%micro_iteration = 100
@@ -6348,8 +6348,8 @@ contains
         end if
         if (abs(solution_norm - metric_norm) > tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
-                "the solution in the metric of the absolute Hessian diagonal not "// &
-                "returned near minimum."
+                "the solution in the metric of the absolute diagonal "// &
+                "preconditioner not returned near minimum."
             test_truncated_conjugate_gradient = .false.
         end if
 
