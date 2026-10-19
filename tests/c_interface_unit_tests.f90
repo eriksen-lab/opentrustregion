@@ -827,45 +827,58 @@ contains
     logical(c_bool) function test_copy_state_to_c() bind(C)
         !
         ! this function tests the subroutine that copies the state of a call into the
-        ! host's record
+        ! host's records which were given
         !
         use opentrustregion, only: solver_state_type, stability_state_type
         use c_interface, only: c_callbacks_type, solver_state_type_c, &
                                stability_state_type_c, copy_state_to_c
         use opentrustregion_mock, only: mock_solver_state, mock_stability_state
         use test_reference, only: get_reference_solver_state_values, &
-                                  get_reference_stability_state_values, operator(/=)
+                                  get_reference_stability_state_values, &
+                                  ref_solver_state, ref_stability_state, operator(/=)
 
         type(c_callbacks_type) :: callbacks
         type(solver_state_type), target :: solver_state
         type(stability_state_type), target :: stability_state
         type(solver_state_type_c), target :: solver_state_c
         type(stability_state_type_c), target :: stability_state_c
+        integer(ip) :: i_case
+        character(len=40), parameter :: case_names(3) = &
+            [character(len=40) :: "with both records", &
+             "with only the solver's record", "with only the stability check's record"]
 
         ! assume tests pass
         test_copy_state_to_c = .true.
 
         ! copy a solver state and a stability check state whose values differ from the
         ! reference values the host's records start from, so that a field which is not
-        ! copied is detected
+        ! copied is detected, into both records, or into one, which has to leave the
+        ! other at its values
         solver_state = mock_solver_state
         stability_state = mock_stability_state
-        call get_reference_solver_state_values(solver_state_c)
-        call get_reference_stability_state_values(stability_state_c)
         callbacks%solver_state => solver_state
-        callbacks%solver_state_c => solver_state_c
         callbacks%stability_state => stability_state
-        callbacks%stability_state_c => stability_state_c
-        call copy_state_to_c(callbacks)
-        if (solver_state_c /= solver_state) then
-            write(stderr, *) "test_copy_state_to_c failed: Solver state not copied."
-            test_copy_state_to_c = .false.
-        end if
-        if (stability_state_c /= stability_state) then
-            write(stderr, *) "test_copy_state_to_c failed: Stability check state "// &
-                "not copied."
-            test_copy_state_to_c = .false.
-        end if
+        do i_case = 1, size(case_names)
+            call get_reference_solver_state_values(solver_state_c)
+            call get_reference_stability_state_values(stability_state_c)
+            callbacks%solver_state_c => null()
+            callbacks%stability_state_c => null()
+            if (i_case /= 3) callbacks%solver_state_c => solver_state_c
+            if (i_case /= 2) callbacks%stability_state_c => stability_state_c
+            call copy_state_to_c(callbacks)
+            if ((i_case /= 3 .and. solver_state_c /= solver_state) .or. &
+                (i_case == 3 .and. solver_state_c /= ref_solver_state)) then
+                write(stderr, *) "test_copy_state_to_c failed: Solver state copied "// &
+                    "wrong "//trim(case_names(i_case))//"."
+                test_copy_state_to_c = .false.
+            end if
+            if ((i_case /= 2 .and. stability_state_c /= stability_state) .or. &
+                (i_case == 2 .and. stability_state_c /= ref_stability_state)) then
+                write(stderr, *) "test_copy_state_to_c failed: Stability check "// &
+                    "state copied wrong "//trim(case_names(i_case))//"."
+                test_copy_state_to_c = .false.
+            end if
+        end do
 
     end function test_copy_state_to_c
 
