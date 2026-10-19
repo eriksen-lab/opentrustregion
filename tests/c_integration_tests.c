@@ -10,13 +10,18 @@
  * against the C header itself. These tests do, and test_settings_layout and
  * test_state_layout check that the settings and state structs have the size of the
  * bind(C) types and that every field is read back under its own name, so any drift
- * between the bind(C) types (Fortran) and the structs (C) is caught here. */
+ * between the bind(C) types (Fortran) and the structs (C) is caught here, except a
+ * field left in a struct that fits into the padding of the bind(C) type, which changes
+ * neither the size nor the offset of a named field. */
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "opentrustregion.h"
+
+#include "c_integration_tests.h"
 
 /* ------------------------------------------------------------------
  * Hartmann 6D function
@@ -280,6 +285,31 @@ static void stability_logger(const char *message, void *context) {
   ctx->stability_logger_called = 1;
 }
 
+/* Settings that are not given or were not initialized carry no host context, so the
+ * calls without them use callbacks which keep their point in a static context. */
+static hartmann_context settingless_ctx;
+
+static c_int settingless_hess_x(const c_real *x, c_real *hx, void *context) {
+  (void)context;
+  return hess_x_fun(x, hx, &settingless_ctx);
+}
+
+static c_int settingless_update_orbs(const c_real *delta_vars, c_real *func,
+                                     c_real *grad, c_real *h_diag,
+                                     hess_x_fp *hess_x_ptr, void *context) {
+  (void)context;
+  c_int error =
+      update_orbs(delta_vars, func, grad, h_diag, hess_x_ptr, &settingless_ctx);
+  *hess_x_ptr = settingless_hess_x;
+  return error;
+}
+
+static c_int settingless_obj_func(const c_real *delta_vars, c_real *func,
+                                  void *context) {
+  (void)context;
+  return obj_func(delta_vars, func, &settingless_ctx);
+}
+
 /* ------------------------------------------------------------------
  * Reference settings provided by test_reference.f90, so that these tests need no
  * values of their own: the reference value of a field by its name, prefixed by
@@ -308,6 +338,10 @@ void get_reference_solver_state_values(solver_state_type *state);
 size_t solver_state_size(void);
 size_t stability_state_size(void);
 
+/* the flush of the standard error of the Fortran runtime, which buffers what the
+ * library writes there while it is a file, provided by test_reference.f90 */
+void flush_fortran_stderr(void);
+
 /* ------------------------------------------------------------------
  * Helpers
  * ------------------------------------------------------------------ */
@@ -318,6 +352,31 @@ static bool hartmann_dimensions_match(const char *test_name) {
   fprintf(stderr, "%s failed: Hartmann 6D dimensions differ from the library's.\n",
           test_name);
   return false;
+}
+
+/* the capture of the standard error declared in c_integration_tests.h, which the
+ * integration tests of the extensions use too */
+static FILE *stderr_capture;
+static int saved_stderr;
+
+void start_stderr_capture(void) {
+  fflush(stderr);
+  flush_fortran_stderr();
+  stderr_capture = tmpfile();
+  saved_stderr = dup(STDERR_FILENO);
+  dup2(fileno(stderr_capture), STDERR_FILENO);
+}
+
+bool stop_stderr_capture(const char *warning) {
+  fflush(stderr);
+  flush_fortran_stderr();
+  dup2(saved_stderr, STDERR_FILENO);
+  close(saved_stderr);
+  char captured[1024] = {0};
+  rewind(stderr_capture);
+  size_t length = fread(captured, 1, sizeof(captured) - 1, stderr_capture);
+  fclose(stderr_capture);
+  return warning ? strstr(captured, warning) != NULL : length == 0;
 }
 
 static bool check_field(c_real value, const char *name) {
@@ -627,6 +686,38 @@ bool test_solver_c(void) {
     ok = false;
   }
 
+  /* settings or nested stability check settings that were not initialized are
+   * replaced by the default settings with a warning on the standard error, since the
+   * former provide no logger and the latter none here, while no settings stand for the
+   * default settings without a warning */
+  solver_settings_type uninitialized_settings = {0};
+  solver_settings_type nested_uninitialized_settings = solver_settings_init();
+  nested_uninitialized_settings.stability_settings = (stability_settings_type){0};
+  const solver_settings_type *case_settings[3] = {NULL, &uninitialized_settings,
+                                                  &nested_uninitialized_settings};
+  const char *case_warnings[3] = {NULL, test_settings_uninitialized_warning,
+                                  test_stability_settings_uninitialized_warning};
+  const char *case_names[3] = {"without settings",
+                               "with settings that were not initialized",
+                               "with nested settings that were not initialized"};
+  for (int i_case = 0; i_case < 3; i_case++) {
+    memset(&settingless_ctx, 0, sizeof(settingless_ctx));
+    memcpy(settingless_ctx.curr_vars, hartmann6d_near_minimum,
+           sizeof(settingless_ctx.curr_vars));
+    start_stderr_capture();
+    error = solver(settingless_update_orbs, settingless_obj_func, N_PARAM,
+                   case_settings[i_case], NULL);
+    if (!stop_stderr_capture(case_warnings[i_case])) {
+      fprintf(stderr, "test_solver_c failed: Warning on the standard error wrong %s.\n",
+              case_names[i_case]);
+      ok = false;
+    }
+    if (error != 0) {
+      fprintf(stderr, "test_solver_c failed: Produced error %s.\n", case_names[i_case]);
+      ok = false;
+    }
+  }
+
   return ok;
 }
 
@@ -761,6 +852,33 @@ bool test_stability_check_c(void) {
     fprintf(stderr, "test_stability_check_c failed: Stability incorrectly classifies "
                     "stability of saddle point when not passing direction.\n");
     ok = false;
+  }
+
+  /* settings that were not initialized are replaced by the default settings with a
+   * warning on the standard error, since they provide no logger, while no settings
+   * stand for the default settings without a warning */
+  stability_settings_type uninitialized_settings = {0};
+  const stability_settings_type *case_settings[2] = {NULL, &uninitialized_settings};
+  const char *case_warnings[2] = {NULL, test_settings_uninitialized_warning};
+  const char *case_names[2] = {"without settings",
+                               "with settings that were not initialized"};
+  memcpy(settingless_ctx.hess, ctx.hess, sizeof(settingless_ctx.hess));
+  for (int i_case = 0; i_case < 2; i_case++) {
+    start_stderr_capture();
+    error = stability_check(h_diag, settingless_hess_x, N_PARAM, &stable,
+                            case_settings[i_case], NULL, NULL);
+    if (!stop_stderr_capture(case_warnings[i_case])) {
+      fprintf(
+          stderr,
+          "test_stability_check_c failed: Warning on the standard error wrong %s.\n",
+          case_names[i_case]);
+      ok = false;
+    }
+    if (error != 0) {
+      fprintf(stderr, "test_stability_check_c failed: Produced error %s.\n",
+              case_names[i_case]);
+      ok = false;
+    }
   }
 
   return ok;

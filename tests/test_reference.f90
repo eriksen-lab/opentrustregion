@@ -6,9 +6,10 @@
 
 module test_reference
 
-    use opentrustregion, only: rp, ip, kw_len, stderr, solver_settings_type, &
-                               stability_settings_type, solver_state_type, &
-                               stability_state_type
+    use opentrustregion, only: &
+        rp, ip, kw_len, stderr, solver_settings_type, stability_settings_type, &
+        solver_state_type, stability_state_type, settings_uninitialized_warning_msg, &
+        stability_settings_uninitialized_warning_msg
     use c_interface, only: c_rp, c_ip, solver_state_type_c
     use, intrinsic :: iso_c_binding, only: c_bool, c_char, c_null_char, c_funptr, &
                                            c_null_funptr, c_f_procpointer, &
@@ -24,6 +25,23 @@ module test_reference
     ! number of parameters
     integer(ip), parameter :: n_param = 3_ip
     integer(c_ip), bind(C, name="test_n_param") :: n_param_c = n_param
+
+    ! warnings the C entry points print for settings and nested stability check
+    ! settings that were not initialized, as null-terminated strings for the C
+    ! integration tests
+    integer(ip), parameter :: &
+        settings_warning_len = len(settings_uninitialized_warning_msg) + 1, &
+        stability_settings_warning_len = &
+            len(stability_settings_uninitialized_warning_msg) + 1
+    character(kind=c_char), protected, &
+        bind(C, name="test_settings_uninitialized_warning") :: &
+        settings_uninitialized_warning_c(settings_warning_len) = transfer( &
+            settings_uninitialized_warning_msg//c_null_char, "a", settings_warning_len)
+    character(kind=c_char), protected, &
+        bind(C, name="test_stability_settings_uninitialized_warning") :: &
+        stability_settings_uninitialized_warning_c(stability_settings_warning_len) = &
+        transfer(stability_settings_uninitialized_warning_msg//c_null_char, "a", &
+                 stability_settings_warning_len)
 
     ! reference settings, every field other than the logicals has a value distinct
     ! from every other field of the same kind and from its default value, so that a
@@ -496,6 +514,17 @@ contains
         stability_state_size = c_sizeof(state_c)
 
     end function stability_state_size
+
+    subroutine flush_fortran_stderr() bind(C)
+        !
+        ! this subroutine flushes the standard error of the Fortran runtime, which
+        ! buffers what the library writes there while it is a file, so that the C
+        ! integration tests capture exactly what the calls between the start and the
+        ! end of a capture write there
+        !
+        flush(stderr)
+
+    end subroutine flush_fortran_stderr
 
     subroutine reference_field(name_c, field_value, keyword_c) bind(C)
         !
