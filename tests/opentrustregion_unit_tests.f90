@@ -160,9 +160,10 @@ module opentrustregion_unit_tests
     ! settings, which hands them no host context, so that they reach it here instead
     type(hartmann6d_context_type), target :: settingless_context
 
-    ! error code returned by mock callback functions reached without their context,
-    ! chosen so that it cannot be mistaken for an expected error code
-    integer(ip), parameter :: missing_context_error = 42
+    ! error codes returned by mock callback functions reached without their context or
+    ! with a context they should not receive, chosen so that they cannot be mistaken
+    ! for an expected error code
+    integer(ip), parameter :: missing_context_error = 42, unexpected_context_error = 43
 
 contains
 
@@ -513,6 +514,12 @@ contains
 
         class(*), pointer :: module_context
 
+        ! check that the solver handed no host context
+        if (associated(context)) then
+            error = unexpected_context_error
+            return
+        end if
+
         ! update the orbitals with the module context
         module_context => settingless_context
         call update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, &
@@ -534,6 +541,12 @@ contains
 
         class(*), pointer :: module_context
 
+        ! check that the solver or stability check handed no host context
+        if (associated(context)) then
+            error = unexpected_context_error
+            return
+        end if
+
         ! apply the Hessian with the module context
         module_context => settingless_context
         call hess_x_fun(x, hess_x, error, module_context)
@@ -552,6 +565,13 @@ contains
         real(rp) :: func
 
         class(*), pointer :: module_context
+
+        ! check that the solver handed no host context
+        if (associated(context)) then
+            func = 0.0_rp
+            error = unexpected_context_error
+            return
+        end if
 
         ! evaluate the function with the module context
         module_context => settingless_context

@@ -61,7 +61,11 @@ if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     endif()
 
 elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
-    set(CMAKE_Fortran_FLAGS_DEBUG "-g -warn all -traceback")
+    set(CMAKE_Fortran_FLAGS_DEBUG "-O0 -g -warn all -traceback")
+
+    # store .true. as 1 rather than -1 in every build type, since 1 is the only true
+    # value of the C bool that logical(c_bool) is passed to
+    add_compile_options("$<$<COMPILE_LANGUAGE:Fortran>:SHELL:-fpscomp logicals>")
 
     if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
