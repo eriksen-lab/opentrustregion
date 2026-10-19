@@ -354,8 +354,7 @@ static bool hartmann_dimensions_match(const char *test_name) {
   return false;
 }
 
-/* the capture of the standard error declared in c_integration_tests.h, which the
- * integration tests of the extensions use too */
+/* the capture of the standard error declared in c_integration_tests.h */
 static FILE *stderr_capture;
 static int saved_stderr;
 
