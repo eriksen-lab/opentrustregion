@@ -2708,15 +2708,29 @@ contains
                 "changed."
             test_stability_check = .false.
         end if
+        if (index(context%log_message, " "//settings_uninitialized_warning_msg) == 0) &
+            then
+            write(stderr, *) "test_stability_check failed: Warning not printed for "// &
+                "settings that were not initialized."
+            test_stability_check = .false.
+        end if
 
-        ! run stability check without settings, so that it uses the default settings,
-        ! and with the default settings and check that both reach exactly the same
-        ! eigenvalue and residual with the same Hessian linear transformations, the
-        ! Hessian linear transformation needs no test context, which the stability
-        ! check cannot hand to it without settings
+        ! run stability check at the saddle point, whose iterations depend on the
+        ! settings, with the default settings and without settings and check that both
+        ! reach exactly the same eigenvalue and residual with the same Hessian linear
+        ! transformations, the Hessian linear transformation reaches the Hessian
+        ! through the module context since the stability check hands it no host context
+        ! without settings
+        settingless_context%hess = context%hess
+        hess_x_funptr => settingless_hess_x
         settings = default_stability_settings
         call stability_check(h_diag, hess_x_funptr, stable, error, settings, &
                              explicit_state)
+        if (error /= 0) then
+            write(stderr, *) "test_stability_check failed: Produced error with "// &
+                "default settings."
+            test_stability_check = .false.
+        end if
         call stability_check(h_diag, hess_x_funptr, stable, error, state=state)
         if (error /= 0) then
             write(stderr, *) "test_stability_check failed: Produced error without "// &
@@ -2729,12 +2743,6 @@ contains
             abs(state%residual_rms - explicit_state%residual_rms) > 0.0_rp) then
             write(stderr, *) "test_stability_check failed: Did not use the default "// &
                 "settings without settings."
-            test_stability_check = .false.
-        end if
-        if (index(context%log_message, " "//settings_uninitialized_warning_msg) == 0) &
-            then
-            write(stderr, *) "test_stability_check failed: Warning not printed for "// &
-                "settings that were not initialized."
             test_stability_check = .false.
         end if
 
