@@ -108,18 +108,36 @@ jobs:
             integer-size: "64"
             cmargs: ""
 
-          # testsuite running with clang compilers on macos with arm processors
+          # testsuite running with llvm flang compilers on linux with 32-bit integers
+          - os: linux
+            compiler: flang
+            runs-on: ubuntu-24.04
+            build-type: test
+            python-version: "3.10"
+            integer-size: "32"
+            cmargs: ""
+
+          # testsuite running with llvm flang compilers on macos with arm processors
           - os: macos-silicon
-            compiler: clang
+            compiler: flang
             runs-on: macos-latest
             build-type: test
             python-version: "3.10"
             integer-size: "32"
             cmargs: ""
 
-          # testsuite running with clang compilers on macos with intel processors
+          # testsuite running with gnu compilers on macos with arm processors
+          - os: macos-silicon
+            compiler: gnu
+            runs-on: macos-latest
+            build-type: test
+            python-version: "3.10"
+            integer-size: "32"
+            cmargs: ""
+
+          # testsuite running with gnu compilers on macos with intel processors
           - os: macos-intel
-            compiler: clang
+            compiler: gnu
             runs-on: macos-15-intel
             build-type: test
             python-version: "3.10"
@@ -151,9 +169,24 @@ jobs:
         python-version: 3.x
 
     - name: Install Fortran compiler on MacOS
-      if: ${{ contains(matrix.os, 'macos') }}
+      if: ${{ contains(matrix.os, 'macos') && matrix.compiler != 'flang' }}
       run: |
         echo "FC=$(ls $(brew --prefix)/bin/gfortran-* | tail -1)" >> $GITHUB_ENV
+
+    - name: Install LLVM Flang on MacOS
+      if: ${{ contains(matrix.os, 'macos') && matrix.compiler == 'flang' }}
+      run: |
+        brew install flang
+        echo "FC=$(brew --prefix)/bin/flang" >> $GITHUB_ENV
+
+    - name: Install LLVM Flang on Linux
+      if: ${{ matrix.compiler == 'flang' && matrix.os == 'linux' }}
+      run: |
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/llvm.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+        sudo apt update
+        sudo apt install -y flang-21 libclang-rt-21-dev
+        echo "FC=flang-21" >> $GITHUB_ENV
 
     - name: Install GNU compilers on Linux
       if: ${{ matrix.compiler == 'gnu' && matrix.os == 'linux' }}
@@ -191,7 +224,7 @@ jobs:
         echo "CPPFLAGS=-I/opt/homebrew/opt/openblas/include" >> $GITHUB_ENV
 
     - name: Install OpenBLAS (32-bit integers) on Linux
-      if: ${{ matrix.compiler == 'gnu' && matrix.os == 'linux' && matrix.integer-size == '32' }}
+      if: ${{ (matrix.compiler == 'gnu' || matrix.compiler == 'flang') && matrix.os == 'linux' && matrix.integer-size == '32' }}
       run: |
         sudo apt install -y libopenblas-dev
 

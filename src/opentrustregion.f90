@@ -119,7 +119,7 @@ module opentrustregion
         ! objective function
         logical :: max_precision_reached = .false.
         ! state of the most recent internal stability check
-        type(stability_state_type) :: stability_state
+        type(stability_state_type) :: stability_state = stability_state_type()
     end type
 
     ! interfaces for callback functions
@@ -223,7 +223,7 @@ module opentrustregion
         integer(ip) :: n_random_trial_vectors = 1, n_macro = 150, n_micro = 50, &
                        jacobi_davidson_start = 30
         character(len=kw_len) :: subsystem_solver = "davidson"
-        type(stability_settings_type) :: stability_settings
+        type(stability_settings_type) :: stability_settings = stability_settings_type()
         procedure(conv_check_type), pointer, nopass :: conv_check => null()
     contains
         procedure :: print_results
@@ -2020,7 +2020,7 @@ contains
 
         if (present(n_micro)) then
             if (present(n_jacobi_davidson)) then
-                write(n_micro_str, '(X, I3, X, "|", X, I3, 2X)') n_jacobi_davidson, &
+                write(n_micro_str, '(1X, I3, 1X, "|", 1X, I3, 2X)') n_jacobi_davidson, &
                     n_micro - n_jacobi_davidson
             else
                 write(n_micro_str, '(7X, I3, 2X)') n_micro
@@ -2036,7 +2036,7 @@ contains
         end if
 
         if (present(kappa_norm)) then
-            write(kappa_norm_str, '(X, 1PE9.2)') kappa_norm
+            write(kappa_norm_str, '(1X, 1PE9.2)') kappa_norm
         else
             write(kappa_norm_str, '(6X, "-", 3X)')
         end if
