@@ -98,16 +98,15 @@ The layout of a statement is the best one under these rules:
 8. The format of an input/output statement (the second positional or the ``fmt``
    argument of ``read`` and ``write``, and the first item of ``print``) is written in
    single quotes, like the pieces of a split format joined to it by ``//``, and every
-   other string literal in double quotes. String literals
-   joined by ``//`` are merged into one, and a string literal is only
-   split after a blank between two words, into ``"... "// &`` and ``"..."`` on the next
-   line, where the word starting the next line contains a letter or digit, so that a
-   word of punctuation only, such as ``|`` or ``=``, stays with the word before it. A
-   literal containing two blanks in a row, such as a row of a table, is taken to be
-   aligned by hand: it is neither merged nor split, and only moved as a whole. A
-   literal that fits whole on a continuation line is kept whole like an
-   innermost bracket group under rule 4; one that has to be split anyway fills lines
-   like any other text, so it may start on the line before.
+   other string literal in double quotes. String literals joined by ``//`` are merged
+   into one, and a string literal is only split after a blank between two words, into
+   ``"... "// &`` and ``"..."`` on the next line, where the word starting the next line
+   contains a letter or digit, so that a word of punctuation only, such as ``|`` or
+   ``=``, stays with the word before it. A literal containing two blanks in a row, such
+   as a row of a table, is taken to be aligned by hand: it is neither merged nor split,
+   and only moved as a whole. A literal that fits whole on a continuation line is kept
+   whole like an innermost bracket group under rule 4; one that has to be split anyway
+   fills lines like any other text, so it may start on the line before.
 9. Keywords, the logical constants and the dotted operators are written in lower case.
    End statements, ``else if``, ``select case``, ``select type``, ``select rank`` and
    ``do while`` are written as two words separated by one blank, as in ``end if``. The

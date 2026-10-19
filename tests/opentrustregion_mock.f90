@@ -17,8 +17,9 @@ module opentrustregion_mock
     logical :: test_passed
 
     ! error code the mock solver and stability check return and states they write,
-    ! with values distinct from those of the reference states, so that a test can
-    ! check the C wrappers hand them back
+    ! whose fields hold values distinct from each other within their kind and from the
+    ! same field of the reference states, so that a test can check the C wrappers hand
+    ! them back
     integer(ip), parameter :: mock_error = 7
     type(stability_state_type), parameter :: mock_nested_state = stability_state_type( &
         iteration=7, min_eigval=-0.5_rp, residual_rms=0.25_rp, n_hess_x=2)
