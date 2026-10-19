@@ -9,6 +9,11 @@ on:
       - main
   workflow_dispatch:
 
+# a new commit to a pull request cancels the run of its previous commit
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   formatting:
     name: "Formatting • black + clang-format + f90_layout"
