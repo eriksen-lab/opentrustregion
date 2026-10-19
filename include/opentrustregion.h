@@ -176,8 +176,7 @@ typedef struct {
  * @param settings          Pointer to struct of solver settings, may be NULL to use
  *                          the default settings
  * @param state             Pointer to struct that receives the state of the
- *                          optimization, may be NULL to
- *                          skip returning it
+ *                          optimization, may be NULL to skip returning it
  * @return                  Integer error code from Fortran
  */
 c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_param,
@@ -193,8 +192,7 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  * @param settings          Pointer to struct of stability solver settings, may be
  *                          NULL to use the default settings
  * @param state             Pointer to struct that receives the state of the
- *                          stability check , may be NULL to
- *                          skip returning it
+ *                          stability check, may be NULL to skip returning it
  * @param kappa_ptr         Pointer to array that receives the orbital rotation along
  *                          the unstable mode, zero if stable, or NULL
  * @return                  Integer error code from Fortran

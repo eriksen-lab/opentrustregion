@@ -265,7 +265,7 @@ The solver keeps the state it is given up to date during the optimization, start
 - **`n_update_orbs`** (integer): Number of orbital updates (`update_orbs`).
 - **`n_obj_func`** (integer): Number of objective function evaluations (`obj_func`), including those of the line search.
 - **`n_hess_x`** (integer): Number of Hessian linear transformations (`hess_x`), those of an internal stability check added once it returns.
-- **`max_precision_reached`** (boolean): `true` once the trust-region steps can no longer change the objective function at the limit of floating-point precision, because it stopped changing or the trust radius collapsed. This ends the optimization like convergence, without an error of its own, and the returned point is the best one found; this flag lets the host program decide whether to accept it as-is, warn, or retighten and retry with a different starting point or subsystem solver.
+- **`max_precision_reached`** (boolean): `true` once the trust-region steps can no longer change the objective function at the limit of floating-point precision, because it stopped changing or the trust radius collapsed. This ends the optimization like convergence, without an error of its own, and the returned point is the best one found; this flag lets the host program decide whether to accept it as-is, warn, or retighten and retry with a different starting point or subsystem solver. It turns `false` again if the internal stability check, which runs with `stability` set, then finds the point unstable and the solver continues along the unstable mode, or if a custom `conv_check` reports convergence, which takes precedence.
 - **`stability_state`** (stability_state_type): State of the most recent internal stability check, see the [stability check's output](#output-1).
 
 ## Stability Check
@@ -432,7 +432,7 @@ The stability check can be fine-tuned using the following settings:
 The stability check keeps the state it is given up to date during its iterations, starting from the default values on every call, and leaves its final state in it when it returns, also after an error. As for the solver, a callback function can therefore read the current state. The state holds the following fields:
 
 - **`iteration`** (integer): Current iteration of the diagonalization.
-- **`min_eigval`** (real): Current estimate of the lowest Hessian eigenvalue.
+- **`min_eigval`** (real): Current estimate of the lowest Hessian eigenvalue, once the check has converged the lowest eigenvalue.
 - **`residual_rms`** (real): RMS of the residual of this estimate.
 - **`n_hess_x`** (integer): Number of Hessian linear transformations (`hess_x`).
 
