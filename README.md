@@ -128,9 +128,6 @@ type(solver_state_type) :: state
 update_orbs_funptr => update_orbs
 obj_func_funptr => obj_func
 
-! initialize settings
-call settings%init(error)
-
 ! override default settings
 settings%conv_tol = 1e-6_rp
 settings%n_macro = 100
@@ -148,7 +145,7 @@ print *, "Number of orbital updates:", state%n_update_orbs
 
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
-- Solver settings are initialized using the `init()` method of the derived type, and default settings can be overridden (here, `conv_tol` and `n_macro`).
+- A declared settings object holds the default settings, which can be overridden (here, `conv_tol` and `n_macro`); assigning `solver_settings_type()` resets an object to them.
 - `host_data` is a variable of any type declared with the `target` attribute. Every callback function receives it as its last argument, declared as `class(*), intent(in), pointer :: context`, and recovers its own type with `select type`. The `intent(in)` applies to the pointer rather than the data, so a callback function may modify `host_data` but not point `context` elsewhere. Leaving `settings%context` unset is fine; the callback functions then receive an unassociated pointer.
 - Finally, the `solver` is called with the callback functions, the settings and a state record. Both of these are optional: without settings, the default settings are used, and the state is only needed to read it.
 - After the call, `state` holds the final state of the optimization (here, the number of orbital updates `n_update_orbs`), see [Output](#output). The settings are left unchanged.
@@ -302,9 +299,6 @@ type(stability_state_type) :: state
 ! set callback function pointer to existing implementation
 hess_x_funptr => hess_x
 
-! initialize settings
-call settings%init(error)
-
 ! override default settings
 settings%conv_tol = 1e-6_rp
 settings%n_iter = 100
@@ -322,7 +316,7 @@ print *, "Number of Hessian linear transformations:", state%n_hess_x
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
-- Stability settings are initialized via the `init()` method of the derived type and can be overridden (here, `conv_tol` and `n_iter`).
+- A declared settings object holds the default settings, which can be overridden (here, `conv_tol` and `n_iter`); assigning `stability_settings_type()` resets an object to them.
 - `host_data` is a variable of any type declared with the `target` attribute. Every callback function receives it as its last argument, declared as `class(*), intent(in), pointer :: context`, and recovers its own type with `select type`. The `intent(in)` applies to the pointer rather than the data, so a callback function may modify `host_data` but not point `context` elsewhere. Leaving `settings%context` unset is fine; the callback functions then receive an unassociated pointer.
 - The `stable` logical output receives the result of the stability check.
 - The settings, the state and the descent direction `kappa` are optional: without settings, the default settings are used, and the others are only returned if provided.

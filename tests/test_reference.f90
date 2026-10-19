@@ -51,15 +51,15 @@ module test_reference
     ! stability check settings of the reference solver settings are the reference
     ! stability check settings
     type(stability_settings_type), parameter :: ref_stability_settings = &
-        stability_settings_type( &
-            precond=null(), project=null(), logger=null(), initialized=.true., &
-            conv_tol=5e-6_rp, n_random_trial_vectors=6, n_iter=60, &
-            jacobi_davidson_start=13, seed=34, verbose=2, diag_solver="jacobi-davidson")
+        stability_settings_type(precond=null(), project=null(), logger=null(), &
+                                conv_tol=5e-6_rp, n_random_trial_vectors=6, n_iter=60, &
+                                jacobi_davidson_start=13, seed=34, verbose=2, &
+                                diag_solver="jacobi-davidson")
     type(solver_settings_type), parameter :: ref_solver_settings = &
         solver_settings_type( &
             precond=null(), project=null(), conv_check=null(), logger=null(), &
-            stability=.true., line_search=.false., initialized=.true., &
-            conv_tol=2e-3_rp, start_trust_radius=0.3_rp, global_red_factor=3e-2_rp, &
+            stability=.true., line_search=.false., conv_tol=2e-3_rp, &
+            start_trust_radius=0.3_rp, global_red_factor=3e-2_rp, &
             local_red_factor=4e-3_rp, n_random_trial_vectors=5, n_macro=300, &
             n_micro=200, jacobi_davidson_start=10, seed=33, verbose=3, &
             subsystem_solver="tcg", stability_settings=ref_stability_settings)
@@ -349,7 +349,7 @@ contains
         if (len(name) == 0) then
             values_out%stability = ref_solver_settings%stability
             values_out%line_search = ref_solver_settings%line_search
-            values_out%initialized = ref_solver_settings%initialized
+            values_out%initialized = .true.
         else
             values_out%stability = name == "stability"
             values_out%line_search = name == "line_search"
@@ -399,7 +399,7 @@ contains
         values_out%context = transfer(9_c_intptr_t, c_null_ptr)
 
         ! set logical, real and integers
-        values_out%initialized = ref_stability_settings%initialized
+        values_out%initialized = .true.
         values_out%conv_tol = ref_stability_settings%conv_tol
         values_out%n_random_trial_vectors = &
             ref_stability_settings%n_random_trial_vectors
@@ -781,7 +781,6 @@ contains
         equal_solver = &
             (lhs%stability .eqv. rhs%stability) .and. &
             (lhs%line_search .eqv. rhs%line_search) .and. &
-            (lhs%initialized .eqv. rhs%initialized) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
             abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
@@ -814,7 +813,6 @@ contains
         type(stability_settings_type), intent(in) :: lhs, rhs
 
         equal_stability = &
-            (lhs%initialized .eqv. rhs%initialized) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
             lhs%n_iter == rhs%n_iter .and. &
@@ -849,8 +847,7 @@ contains
         equal_solver_c = &
             (lhs_c%stability .eqv. logical(rhs%stability, kind=c_bool)) .and. &
             (lhs_c%line_search .eqv. logical(rhs%line_search, kind=c_bool)) .and. &
-            (lhs_c%initialized .eqv. logical(rhs%initialized, kind=c_bool)) .and. &
-            abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
+            lhs_c%initialized .and. abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs_c%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
             abs(lhs_c%global_red_factor - rhs%global_red_factor) <= tol .and. &
             abs(lhs_c%local_red_factor - rhs%local_red_factor) <= tol .and. &
@@ -890,8 +887,7 @@ contains
         type(stability_settings_type), intent(in) :: rhs
 
         equal_stability_c = &
-            (lhs_c%initialized .eqv. logical(rhs%initialized, kind=c_bool)) .and. &
-            abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
+            lhs_c%initialized .and. abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
             lhs_c%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
             lhs_c%n_iter == rhs%n_iter .and. &
             lhs_c%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &

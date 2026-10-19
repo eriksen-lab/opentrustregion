@@ -268,10 +268,9 @@ contains
         settings%stability_settings%context => stability_callbacks
 
         ! the conversion replaces settings that were not initialized by the default
-        ! settings, so the solver cannot detect these anymore and the warning is
-        ! printed here regardless of the verbosity, through the logging function of
-        ! the solver settings or on stderr since settings that were not initialized
-        ! provide none
+        ! settings, so the warning is printed here regardless of the verbosity, through
+        ! the logging function of the solver settings or on stderr since settings that
+        ! were not initialized provide none
         if (.not. local_settings_c%initialized) then
             write(stderr, '(A)') " "//settings_uninitialized_warning_msg
         else if (.not. local_settings_c%stability_settings%initialized) then
@@ -368,9 +367,9 @@ contains
         settings%context => callbacks
 
         ! the conversion replaces settings that were not initialized by the default
-        ! settings, so the stability check cannot detect these anymore and the warning
-        ! is printed here on stderr regardless of the verbosity since settings that
-        ! were not initialized provide no logging function
+        ! settings, so the warning is printed here on stderr regardless of the
+        ! verbosity since settings that were not initialized provide no logging
+        ! function
         if (.not. local_settings_c%initialized) &
             write(stderr, '(A)') " "//settings_uninitialized_warning_msg
 
@@ -813,13 +812,9 @@ contains
 
             ! convert objects
             settings%stability_settings = settings_c%stability_settings
-
-            ! set settings to initialized
-            settings%initialized = .true.
         else
-            ! settings that were not initialized are set to the default values here
-            ! rather than by the solver, whose initialization would also discard the
-            ! callback bundles the C wrapper hands over as context
+            ! C settings that were not initialized hold no values and are converted
+            ! as the default settings
             settings = default_solver_settings
         end if
 
@@ -866,13 +861,9 @@ contains
 
             ! convert characters
             settings%diag_solver = character_from_c(settings_c%diag_solver)
-
-            ! set settings to initialized
-            settings%initialized = .true.
         else
-            ! settings that were not initialized are set to the default values here
-            ! rather than by the stability check, whose initialization would also
-            ! discard the callback bundle the C wrapper hands over as context
+            ! C settings that were not initialized hold no values and are converted
+            ! as the default settings
             settings = default_stability_settings
         end if
 
@@ -880,24 +871,12 @@ contains
 
     subroutine assign_solver_c_f(settings_c, settings)
         !
-        ! this subroutine converts solver settings from Fortran to C, settings that
-        ! were not initialized, which hold no values, as the default settings marked as
-        ! not initialized
+        ! this subroutine converts solver settings from Fortran to C
         !
         use opentrustregion, only: solver_settings_type
 
         type(solver_settings_type_c), intent(out) :: settings_c
         type(solver_settings_type), intent(in) :: settings
-
-        type(solver_settings_type) :: values
-
-        ! take the values of the settings, or of the default settings if they were not
-        ! initialized
-        if (settings%initialized) then
-            values = settings
-        else
-            values = default_solver_settings
-        end if
 
         ! callback functions cannot be converted
         settings_c%precond = c_null_funptr
@@ -906,58 +885,47 @@ contains
         settings_c%logger = c_null_funptr
 
         ! convert logicals
-        settings_c%stability = logical(values%stability, kind=c_bool)
-        settings_c%line_search = logical(values%line_search, kind=c_bool)
+        settings_c%stability = logical(settings%stability, kind=c_bool)
+        settings_c%line_search = logical(settings%line_search, kind=c_bool)
 
         ! convert reals
-        settings_c%conv_tol = real(values%conv_tol, kind=c_rp)
-        settings_c%start_trust_radius = real(values%start_trust_radius, kind=c_rp)
-        settings_c%global_red_factor = real(values%global_red_factor, kind=c_rp)
-        settings_c%local_red_factor = real(values%local_red_factor, kind=c_rp)
+        settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
+        settings_c%start_trust_radius = real(settings%start_trust_radius, kind=c_rp)
+        settings_c%global_red_factor = real(settings%global_red_factor, kind=c_rp)
+        settings_c%local_red_factor = real(settings%local_red_factor, kind=c_rp)
 
         ! convert integers
         settings_c%n_random_trial_vectors = &
-            int(values%n_random_trial_vectors, kind=c_ip)
-        settings_c%n_macro = int(values%n_macro, kind=c_ip)
-        settings_c%n_micro = int(values%n_micro, kind=c_ip)
-        settings_c%jacobi_davidson_start = int(values%jacobi_davidson_start, kind=c_ip)
-        settings_c%seed = int(values%seed, kind=c_ip)
-        settings_c%verbose = int(values%verbose, kind=c_ip)
+            int(settings%n_random_trial_vectors, kind=c_ip)
+        settings_c%n_macro = int(settings%n_macro, kind=c_ip)
+        settings_c%n_micro = int(settings%n_micro, kind=c_ip)
+        settings_c%jacobi_davidson_start = &
+            int(settings%jacobi_davidson_start, kind=c_ip)
+        settings_c%seed = int(settings%seed, kind=c_ip)
+        settings_c%verbose = int(settings%verbose, kind=c_ip)
 
         ! convert characters
-        settings_c%subsystem_solver = character_to_c(values%subsystem_solver)
+        settings_c%subsystem_solver = character_to_c(settings%subsystem_solver)
 
         ! convert objects
-        settings_c%stability_settings = values%stability_settings
+        settings_c%stability_settings = settings%stability_settings
 
         ! the host context cannot be converted
         settings_c%context = c_null_ptr
 
-        ! mark the settings as initialized if they were
-        settings_c%initialized = logical(settings%initialized, kind=c_bool)
+        ! Fortran settings are always initialized
+        settings_c%initialized = .true._c_bool
 
     end subroutine assign_solver_c_f
 
     subroutine assign_stability_c_f(settings_c, settings)
         !
-        ! this subroutine converts stability settings from Fortran to C, settings that
-        ! were not initialized, which hold no values, as the default settings marked as
-        ! not initialized
+        ! this subroutine converts stability settings from Fortran to C
         !
         use opentrustregion, only: stability_settings_type
 
         type(stability_settings_type_c), intent(out) :: settings_c
         type(stability_settings_type), intent(in) :: settings
-
-        type(stability_settings_type) :: values
-
-        ! take the values of the settings, or of the default settings if they were not
-        ! initialized
-        if (settings%initialized) then
-            values = settings
-        else
-            values = default_stability_settings
-        end if
 
         ! callback functions cannot be converted
         settings_c%precond = c_null_funptr
@@ -965,24 +933,25 @@ contains
         settings_c%logger = c_null_funptr
 
         ! convert reals
-        settings_c%conv_tol = real(values%conv_tol, kind=c_rp)
+        settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
 
         ! convert integers
         settings_c%n_random_trial_vectors = &
-            int(values%n_random_trial_vectors, kind=c_ip)
-        settings_c%n_iter = int(values%n_iter, kind=c_ip)
-        settings_c%jacobi_davidson_start = int(values%jacobi_davidson_start, kind=c_ip)
-        settings_c%seed = int(values%seed, kind=c_ip)
-        settings_c%verbose = int(values%verbose, kind=c_ip)
+            int(settings%n_random_trial_vectors, kind=c_ip)
+        settings_c%n_iter = int(settings%n_iter, kind=c_ip)
+        settings_c%jacobi_davidson_start = &
+            int(settings%jacobi_davidson_start, kind=c_ip)
+        settings_c%seed = int(settings%seed, kind=c_ip)
+        settings_c%verbose = int(settings%verbose, kind=c_ip)
 
         ! convert characters
-        settings_c%diag_solver = character_to_c(values%diag_solver)
+        settings_c%diag_solver = character_to_c(settings%diag_solver)
 
         ! the host context cannot be converted
         settings_c%context = c_null_ptr
 
-        ! mark the settings as initialized if they were
-        settings_c%initialized = logical(settings%initialized, kind=c_bool)
+        ! Fortran settings are always initialized
+        settings_c%initialized = .true._c_bool
 
     end subroutine assign_stability_c_f
 

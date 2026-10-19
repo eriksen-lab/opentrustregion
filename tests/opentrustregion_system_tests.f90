@@ -420,7 +420,7 @@ contains
             ! subsystem solver option or a logical setting, the Jacobi-Davidson method
             ! is started immediately since the Davidson method converges before
             ! switching on a problem of this size
-            call solver_settings%init(error)
+            solver_settings = solver_settings_type()
             solver_settings%context => context
             select case (option)
             case ("default")
@@ -464,7 +464,7 @@ contains
             end if
 
             ! check that the localized orbitals are a minimum
-            call stability_settings%init(error)
+            stability_settings = stability_settings_type()
             stability_settings%context => context
             call stability_check(h_diag, hess_x_funptr, stable, error, &
                                  stability_settings)
@@ -529,7 +529,7 @@ contains
             ! initialize settings and select the diagonalization solver, the
             ! Jacobi-Davidson method is started immediately since the Davidson method
             ! converges before switching on a problem of this size
-            call settings%init(error)
+            settings = stability_settings_type()
             settings%context => context
             if (diag_solver /= "default") settings%diag_solver = diag_solver
             if (diag_solver == "jacobi-davidson") settings%jacobi_davidson_start = 0

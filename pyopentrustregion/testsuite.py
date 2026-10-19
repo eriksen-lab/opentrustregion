@@ -125,8 +125,6 @@ fortran_tests = {
         "gram_schmidt",
         "init_defaults",
         "init_rng",
-        "init_solver_settings",
-        "init_stability_settings",
         "jacobi_davidson_correction",
         "level_shifted_davidson",
         "level_shifted_diag_precond",
