@@ -257,9 +257,9 @@ The solver keeps the state it is given up to date during the optimization, start
 - **`func`** (real): Objective function value at the current point.
 - **`grad_rms`** (real): RMS gradient at the current point.
 - **`trust_radius`** (real): Current trust radius.
-- **`micro_iteration`** (integer): Number of micro iterations spent on the trust-region subproblem being solved or, until the next one starts, on the last one, including those of rejected steps.
+- **`micro_iteration`** (integer): Number of micro iterations spent on the trust-region subproblem being solved or, until the next one starts, on the last one, including those of rejected steps, and 0 after a step along an unstable mode.
 - **`jacobi_davidson_iteration`** (integer): Number of these micro iterations that were Jacobi-Davidson iterations.
-- **`relative_residual`** (real): Euclidean norm of the residual of the trust-region subproblem being solved, relative to that of the gradient for the Davidson-family subsystem solvers and to that of the initial residual, the gradient with a small random perturbation, for `"tcg"`, whose residual is that of its last iterate inside the trust region.
+- **`relative_residual`** (real): Euclidean norm of the residual of the trust-region subproblem being solved, relative to that of the gradient for the Davidson-family subsystem solvers and to that of the initial residual, the gradient with a small random perturbation, for `"tcg"`, whose residual is that of its last iterate inside the trust region, and 0 after a step along an unstable mode.
 - **`level_shift`** (real): Level shift of the last step, which the Davidson-family subsystem solvers apply to the Hessian to keep a step within the trust region, 0 for a Newton step inside the trust region, for a step along an unstable mode and for `"tcg"`.
 - **`step_size`** (real): Size of the last step in the norm of the trust region, after the line search if one is performed.
 - **`n_update_orbs`** (integer): Number of orbital updates (`update_orbs`).
