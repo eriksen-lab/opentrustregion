@@ -1430,7 +1430,7 @@ contains
 
         call random_seed(size=n)
         allocate(seed_arr(n))
-        seed_arr = int(seed, kind=4)
+        seed_arr = int(seed, kind=kind(seed_arr))
         call random_seed(put=seed_arr)
         deallocate(seed_arr)
 
