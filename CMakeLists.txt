@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.24)
 project(OpenTrustRegion VERSION 3.0.0 LANGUAGES Fortran C)
 
 # get commands
@@ -91,8 +91,8 @@ elseif(CMAKE_Fortran_COMPILER_ID MATCHES "LLVMFlang")
     endif()
 
 elseif(NOT CMAKE_Fortran_COMPILER_ID)
-    # CMake sets no flags for a compiler it does not recognize, such as LLVM Flang
-    # before CMake 3.24, so the library would be built without optimization
+    # CMake sets no flags for a compiler it does not recognize, so the library would
+    # be built without optimization
     message(WARNING "Fortran compiler ${CMAKE_Fortran_COMPILER} not recognized by "
                     "CMake ${CMAKE_VERSION}, so no optimization flags are set; pass "
                     "them through CMAKE_Fortran_FLAGS or use a newer CMake")

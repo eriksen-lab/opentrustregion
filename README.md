@@ -16,6 +16,8 @@ The following paper documents the theory and implementation of the methodology i
 
 ## Installation
 
+The library needs a Fortran 2008 compiler, a C compiler, CMake 3.24 or newer and BLAS and LAPACK. It is tested with gfortran 10 and newer, Intel ifx and LLVM Flang 21 and newer, and against OpenBLAS, the reference BLAS and LAPACK, Intel MKL and Apple Accelerate.
+
 ### Fortran or C Usage
 To build the library for Fortran or C:
 

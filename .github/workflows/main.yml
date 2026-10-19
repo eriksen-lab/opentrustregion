@@ -42,118 +42,132 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # test for pip installation
-          - os: linux
-            compiler: gnu
-            runs-on: ubuntu-latest
-            build-type: install
-            scenario: installed
-            python-version: "3.10"
-            integer-size: "32"
-            cmargs: ""
-
           # test for editable pip installation
           - os: linux
+            arch: x86_64
             compiler: gnu
+            blas: openblas
             runs-on: ubuntu-latest
             build-type: install
             scenario: editable
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-          # test for cmake installation
+          # test for cmake installation and find_package consumption
           - os: linux
+            arch: x86_64
             compiler: gnu
+            blas: openblas
             runs-on: ubuntu-latest
             build-type: install
             scenario: dev-build
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-          # testsuite running with gnu compilers on linux with 32-bit integers
+          # testsuite on arm processors under linux
           - os: linux
+            arch: arm64
             compiler: gnu
-            runs-on: ubuntu-latest
+            blas: openblas
+            runs-on: ubuntu-24.04-arm
             build-type: test
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-          # testsuite running with intel compilers on linux with 32-bit integers
+          # testsuite with the oldest supported gnu compiler
           - os: linux
-            compiler: intel
-            runs-on: ubuntu-latest
+            arch: x86_64
+            compiler: gnu
+            compiler-version: "10"
+            blas: openblas
+            runs-on: ubuntu-22.04
             build-type: test
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-          # testsuite running with gnu compilers on linux with 64-bit integers
+          # testsuite with 64-bit integers against the reference BLAS and LAPACK
           - os: linux
+            arch: x86_64
             compiler: gnu
+            blas: netlib
             runs-on: ubuntu-latest
             build-type: test
             python-version: "3.10"
             integer-size: "64"
-            cmargs: ""
 
-          # testsuite running with intel compilers on linux with 64-bit integers
+          # testsuite with intel compilers and MKL
           - os: linux
+            arch: x86_64
             compiler: intel
+            blas: mkl
+            runs-on: ubuntu-latest
+            build-type: test
+            python-version: "3.10"
+            integer-size: "32"
+
+          # testsuite with intel compilers and MKL with 64-bit integers
+          - os: linux
+            arch: x86_64
+            compiler: intel
+            blas: mkl
             runs-on: ubuntu-latest
             build-type: test
             python-version: "3.10"
             integer-size: "64"
-            cmargs: ""
 
-          # testsuite running with llvm flang compilers on linux with 32-bit integers
+          # testsuite with llvm flang compilers under linux
           - os: linux
+            arch: x86_64
             compiler: flang
+            compiler-version: "21"
+            blas: openblas
             runs-on: ubuntu-24.04
             build-type: test
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-          # testsuite running with llvm flang compilers on macos with arm processors
-          - os: macos-silicon
+          # testsuite with llvm flang compilers under macos
+          - os: macos
+            arch: arm64
             compiler: flang
+            blas: openblas
             runs-on: macos-latest
             build-type: test
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-          # testsuite running with gnu compilers on macos with arm processors
-          - os: macos-silicon
+          # testsuite against Apple's Accelerate
+          - os: macos
+            arch: arm64
             compiler: gnu
+            blas: accelerate
             runs-on: macos-latest
             build-type: test
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-          # testsuite running with gnu compilers on macos with intel processors
-          - os: macos-intel
+          # testsuite on intel processors under macos
+          - os: macos
+            arch: x86_64
             compiler: gnu
+            blas: openblas
             runs-on: macos-15-intel
             build-type: test
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-          # test coverage
+          # test coverage, which also runs the testsuite with gnu compilers under linux on
+          # x86 processors
           - os: linux
+            arch: x86_64
             compiler: gnu
+            blas: openblas
             runs-on: ubuntu-latest
             build-type: coverage
             python-version: "3.10"
             integer-size: "32"
-            cmargs: ""
 
-    name: "Repo • 🐍 ${{ matrix.python-version }} • OS ${{ matrix.os }} • Compiler ${{ matrix.compiler }} • Build Type ${{ matrix.build-type }} • ${{ matrix.integer-size }}-bit integers"
+    name: "Repo • 🐍 ${{ matrix.python-version }} • OS ${{ matrix.os }} ${{ matrix.arch }} • Compiler ${{ matrix.compiler }}${{ matrix.compiler-version && format(' {0}', matrix.compiler-version) || '' }} • BLAS ${{ matrix.blas }} • Build Type ${{ matrix.build-type }}${{ matrix.scenario && format(' ({0})', matrix.scenario) || '' }} • ${{ matrix.integer-size }}-bit integers"
     runs-on: ${{ matrix.runs-on }}
     defaults:
       run:
@@ -168,13 +182,13 @@ jobs:
       with:
         python-version: 3.x
 
-    - name: Install Fortran compiler on MacOS
-      if: ${{ contains(matrix.os, 'macos') && matrix.compiler != 'flang' }}
+    - name: Install GNU compilers on MacOS
+      if: ${{ matrix.os == 'macos' && matrix.compiler == 'gnu' }}
       run: |
         echo "FC=$(ls $(brew --prefix)/bin/gfortran-* | tail -1)" >> $GITHUB_ENV
 
     - name: Install LLVM Flang on MacOS
-      if: ${{ contains(matrix.os, 'macos') && matrix.compiler == 'flang' }}
+      if: ${{ matrix.os == 'macos' && matrix.compiler == 'flang' }}
       run: |
         brew install flang
         echo "FC=$(brew --prefix)/bin/flang" >> $GITHUB_ENV
@@ -183,16 +197,17 @@ jobs:
       if: ${{ matrix.compiler == 'flang' && matrix.os == 'linux' }}
       run: |
         wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor | sudo tee /usr/share/keyrings/llvm.gpg > /dev/null
-        echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+        echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ matrix.compiler-version }} main" | sudo tee /etc/apt/sources.list.d/llvm.list
         sudo apt update
-        sudo apt install -y flang-21 libclang-rt-21-dev
-        echo "FC=flang-21" >> $GITHUB_ENV
+        sudo apt install -y flang-${{ matrix.compiler-version }} libclang-rt-${{ matrix.compiler-version }}-dev
+        echo "FC=flang-${{ matrix.compiler-version }}" >> $GITHUB_ENV
 
     - name: Install GNU compilers on Linux
       if: ${{ matrix.compiler == 'gnu' && matrix.os == 'linux' }}
       run: |
         sudo apt update
-        sudo apt install -y gcc gfortran
+        sudo apt install -y gcc ${{ matrix.compiler-version && format('gfortran-{0}', matrix.compiler-version) || 'gfortran' }}
+        echo "FC=${{ matrix.compiler-version && format('gfortran-{0}', matrix.compiler-version) || 'gfortran' }}" >> $GITHUB_ENV
 
     - name: Add Intel oneAPI repository
       if: ${{ matrix.compiler == 'intel' }}
@@ -206,7 +221,7 @@ jobs:
       run: sudo apt install -y intel-oneapi-compiler-fortran
 
     - name: Install Intel oneAPI MKL
-      if: ${{ matrix.compiler == 'intel' }}
+      if: ${{ matrix.blas == 'mkl' }}
       run: sudo apt install -y intel-oneapi-mkl
 
     - name: Setup Intel oneAPI Environment
@@ -216,22 +231,22 @@ jobs:
         printenv >> $GITHUB_ENV
 
     - name: Install OpenBLAS on MacOS
-      if: ${{ contains(matrix.os, 'macos') }}
+      if: ${{ matrix.os == 'macos' && matrix.blas == 'openblas' }}
       run: |
         brew install openblas
         echo "PKG_CONFIG_PATH=/usr/local/opt/openblas/lib/pkgconfig" >> $GITHUB_ENV
         echo "LDFLAGS=-L/opt/homebrew/opt/openblas/lib" >> $GITHUB_ENV
         echo "CPPFLAGS=-I/opt/homebrew/opt/openblas/include" >> $GITHUB_ENV
 
-    - name: Install OpenBLAS (32-bit integers) on Linux
-      if: ${{ (matrix.compiler == 'gnu' || matrix.compiler == 'flang') && matrix.os == 'linux' && matrix.integer-size == '32' }}
+    - name: Install OpenBLAS on Linux
+      if: ${{ matrix.os == 'linux' && matrix.blas == 'openblas' }}
       run: |
-        sudo apt install -y libopenblas-dev
+        sudo apt install -y libopenblas${{ matrix.integer-size == '64' && '64' || '' }}-dev
 
-    - name: Install OpenBLAS (64-bit integers) on Linux
-      if: ${{ matrix.compiler == 'gnu' && matrix.os == 'linux' && matrix.integer-size == '64' }}
+    - name: Install reference BLAS and LAPACK on Linux
+      if: ${{ matrix.os == 'linux' && matrix.blas == 'netlib' }}
       run: |
-        sudo apt install -y libopenblas64-dev
+        sudo apt install -y libblas${{ matrix.integer-size == '64' && '64' || '' }}-dev liblapack${{ matrix.integer-size == '64' && '64' || '' }}-dev
 
     - name: Create and Activate Python Virtual Environment
       run: |
@@ -239,19 +254,17 @@ jobs:
         source venv/bin/activate
         python -m pip install --upgrade pip
 
-    - name: Build & Install OpenTrustRegion (32-bit integers)
-      if: ${{ matrix.integer-size == '32' && (matrix.build-type == 'test' || (matrix.build-type == 'install' && matrix.scenario == 'installed'))}}
-      run: CMAKE_FLAGS="-DINTEGER_SIZE=4" pip install ${{github.workspace}}
-
-    - name: Build & Install OpenTrustRegion (64-bit integers)
-      if: ${{ matrix.integer-size == '64' && (matrix.build-type == 'test' || (matrix.build-type == 'install' && matrix.scenario == 'installed'))}}
-      run: CMAKE_FLAGS="-DINTEGER_SIZE=8" pip install ${{github.workspace}}
-
+    # the reference BLAS and Accelerate are selected explicitly, OpenBLAS and MKL are
+    # the libraries the autodetection finds
     - name: Build & Install OpenTrustRegion
+      if: ${{ matrix.build-type == 'test' }}
+      run: CMAKE_FLAGS="-DINTEGER_SIZE=${{ matrix.integer-size == '64' && '8' || '4' }} ${{ matrix.blas == 'netlib' && '-DBLA_VENDOR=Generic' || matrix.blas == 'accelerate' && '-DBLA_VENDOR=Apple' || '' }}" pip install ${{github.workspace}}
+
+    - name: Build & Install OpenTrustRegion (editable)
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'editable' }}
       run: pip install -e ${{github.workspace}}
 
-    - name: Build & Install OpenTrustRegion
+    - name: Build & Install OpenTrustRegion (cmake)
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: |
         set -e
@@ -265,7 +278,7 @@ jobs:
         cd $GITHUB_WORKSPACE
 
     - name: Testing pip installation
-      if: ${{ matrix.build-type == 'install' && (matrix.scenario == 'installed' || matrix.scenario == 'editable') }}
+      if: ${{ matrix.build-type == 'install' && matrix.scenario == 'editable' }}
       run: python -c "import pyopentrustregion.testsuite"
 
     - name: Testing dev installation
