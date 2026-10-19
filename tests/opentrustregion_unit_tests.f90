@@ -901,34 +901,6 @@ contains
 
     end subroutine identity_project
 
-    subroutine stationary_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
-                                      error, context)
-        !
-        ! this subroutine describes an orbital update at the minimum of a quadratic
-        ! function with identity Hessian which needs no test context, since the
-        ! gradient vanishes for every displacement passed to it here
-        !
-        use opentrustregion, only: hess_x_type
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: delta_vars(:)
-        real(rp), intent(out) :: func
-        real(rp), intent(out), target :: grad(:), h_diag(:)
-        procedure(hess_x_type), intent(inout), pointer :: hess_x_funptr
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        error = 0
-        func = 0.5_rp * dot_product(delta_vars, delta_vars)
-        grad = 0.0_rp
-        h_diag = 1.0_rp
-        hess_x_funptr => identity_hess_x
-
-    end subroutine stationary_update_orbs
-
     function constant_obj_func(delta_vars, error, context) result(func)
         !
         ! this function describes an objective function evaluation that does not depend
