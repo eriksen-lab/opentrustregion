@@ -698,21 +698,33 @@ contains
 
     function faulty_conv_check(error, context) result(converged)
         !
-        ! this function describes a convergence check which never reports convergence
-        ! and into which a fault can be injected
+        ! this function describes a convergence check of the Hartmann 6D function which
+        ! reports convergence once the RMS gradient at the current variables drops
+        ! below the default convergence threshold, since it replaces the gradient
+        ! criterion, and into which a fault can be injected
         !
+        use opentrustregion, only: default_solver_settings
         use test_reference, only: check_host_context
 
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
         logical :: converged
 
+        class(hartmann6d_context_type), pointer :: state
+        real(rp) :: grad(n_param)
+
         ! check host context
         call check_host_context(context)
 
-        ! report no convergence and inject fault
+        ! get Hartmann 6D state
         converged = .false.
-        error = 0
+        state => resolve_hartmann6d_context(context, error)
+        if (error /= 0) return
+
+        ! check the gradient and inject fault
+        call hartmann6d_gradient(state%vars, grad)
+        converged = norm2(grad) / sqrt(real(n_param, kind=rp)) < &
+                    default_solver_settings%conv_tol
         if (inject_fault(context, fault_conv_check)) error = 1
 
     end function faulty_conv_check
@@ -1848,6 +1860,27 @@ contains
         if (any(abs(context%vars - near_minimum) > tol)) then
             write(stderr, *) "test_solver failed: Solver did not stop when "// &
                 "convergence check passed."
+            test_solver = .false.
+        end if
+
+        ! run solver with a convergence threshold which the RMS gradient already
+        ! satisfies and a convergence check of the gradient with the default threshold,
+        ! which replaces the criterion on the RMS gradient, so that the solver does not
+        ! stop at the first check but continues to the minimum
+        context%vars = near_minimum
+        settings = solver_settings_type()
+        settings%context => context
+        settings%conv_tol = 1.0_rp
+        settings%conv_check => faulty_conv_check
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error when convergence "// &
+                "check replaces gradient criterion."
+            test_solver = .false.
+        end if
+        if (any(abs(context%vars - minimum1) > var_thres)) then
+            write(stderr, *) "test_solver failed: Solver stopped by gradient "// &
+                "criterion which convergence check replaces."
             test_solver = .false.
         end if
 

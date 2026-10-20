@@ -383,10 +383,9 @@ contains
                 call add_error_origin(error, error_conv_check, local_settings)
                 if (error /= 0) return
             else
-                conv_check_passed = .false.
+                conv_check_passed = grad_rms < local_settings%conv_tol
             end if
-            if (grad_rms < local_settings%conv_tol .or. &
-                current_state%max_precision_reached .or. conv_check_passed) then
+            if (conv_check_passed .or. current_state%max_precision_reached) then
                 ! always perform stability check if starting at stationary point and
                 ! continue along the unstable mode if the stationary point is unstable
                 if (local_settings%stability .or. imacro == 1) then
@@ -404,8 +403,7 @@ contains
                         cycle
                     end if
                 end if
-                ! a passed custom convergence check takes precedence over maximum
-                ! precision
+                ! convergence takes precedence over maximum precision
                 if (conv_check_passed) current_state%max_precision_reached = .false.
                 macro_converged = .true.
                 exit

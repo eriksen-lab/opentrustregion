@@ -237,13 +237,18 @@ static c_int inner_hess_x(const c_real *x, c_real *hx, void *context) {
 }
 
 /* Convergence check that runs a whole stability check from inside the running solve,
- * with its own settings object; only nest once, and never report convergence, so the
- * outer solve is unaffected. */
+ * with its own settings object; only nest once, and report convergence by the gradient
+ * criterion with the default threshold it replaces, so the outer solve is
+ * unaffected. */
 static c_int conv_check_nested(c_bool *converged, void *context) {
   hartmann_context *ctx = context;
   if (!ctx)
     return 1;
-  *converged = false;
+  c_real grad[N_PARAM], norm_squared = 0.0;
+  hartmann_grad(ctx->curr_vars, grad);
+  for (int i = 0; i < N_PARAM; i++)
+    norm_squared += grad[i] * grad[i];
+  *converged = sqrt(norm_squared / N_PARAM) < 1e-5;
   if (!ctx->nested_check_ran) {
     c_real h_diag[N_PARAM];
     c_bool stable = false;
