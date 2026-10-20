@@ -67,6 +67,7 @@ module opentrustregion
             "algorithm will continue by moving along eigenvector direction "// &
             "corresponding to negative eigenvalue.", &
         unstable_warning_msg = "Solution not stable. Lowest eigenvalue: ", &
+        minres_max_iter_warning_msg = "MINRES: The iteration limit was reached.", &
         function_unchanged_warning_msg = &
             "Function value barely changed. Convergence criterion is not fulfilled "// &
             "but calculation should be converged up to floating point precision.", &
@@ -1880,10 +1881,8 @@ contains
                 exit
             ! check if maximum number of iterations has been reached
             else if (iteration == max_iterations) then
-                call settings%log("MINRES: The iteration limit was reached.", &
-                                  verbosity_error, .true.)
-                error = 1
-                return
+                call settings%log(minres_max_iter_warning_msg, verbosity_warning)
+                exit
             ! these tests ensure convergence is still achieved when r_tol approaches
             ! machine precision
             else if (1.0_rp + rel_residual <= 1.0_rp) then
@@ -2793,6 +2792,14 @@ contains
 
         ! initialize error flag
         error = 0
+
+        ! check that number of parameters is positive
+        if (n_param < 1) then
+            call settings%log("Number of parameters should be larger than 0.", &
+                              verbosity_error, .true.)
+            error = 1
+            return
+        end if
 
         ! convert strings to lowercase
         settings%diag_solver = string_to_lowercase(settings%diag_solver)

@@ -4418,7 +4418,8 @@ contains
         !
         ! this function tests the minimum residual method subroutine
         !
-        use opentrustregion, only: solver_settings_type, hess_x_type, minres
+        use opentrustregion, only: solver_settings_type, hess_x_type, minres, &
+                                   verbosity_warning, minres_max_iter_warning_msg
 
         type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
@@ -4562,18 +4563,20 @@ contains
             test_minres = .false.
         end if
 
-        ! allow only a single iteration and check that an error is returned and an
-        ! error message is printed when the iteration limit is reached
+        ! allow only a single iteration and check that the approximate solution is
+        ! returned without an error and a warning is printed when the iteration limit
+        ! is reached
         call setup_error_logging(settings, context)
+        settings%verbose = verbosity_warning
         call minres(-rhs, hess_x_funptr, solution, mu, minres_tol, vector, &
                     hess_vector, settings, n_hess_x, error, max_iter=1_ip)
-        if (error /= 1) then
-            write(stderr, *) "test_minres failed: No error returned when iteration "// &
+        if (error /= 0) then
+            write(stderr, *) "test_minres failed: Produced error when iteration "// &
                 "limit is reached."
             test_minres = .false.
         end if
-        if (len_trim(context%log_message) == 0) then
-            write(stderr, *) "test_minres failed: No error message printed when "// &
+        if (index(context%log_message, " "//minres_max_iter_warning_msg) == 0) then
+            write(stderr, *) "test_minres failed: No warning printed when "// &
                 "iteration limit is reached."
             test_minres = .false.
         end if
@@ -5569,6 +5572,21 @@ contains
         if (len_trim(context%log_message) == 0) then
             write(stderr, *) "test_stability_sanity_check failed: No error message "// &
                 "printed for unknown diagonalization solver."
+            test_stability_sanity_check = .false.
+        end if
+
+        ! check if error is correctly thrown for vanishing number of parameters
+        settings%diag_solver = "davidson"
+        call setup_error_logging(settings, context)
+        call stability_sanity_check(settings, 0_ip, error)
+        if (error /= 1) then
+            write(stderr, *) "test_stability_sanity_check failed: No error "// &
+                "returned for vanishing number of parameters."
+            test_stability_sanity_check = .false.
+        end if
+        if (len_trim(context%log_message) == 0) then
+            write(stderr, *) "test_stability_sanity_check failed: No error message "// &
+                "printed for vanishing number of parameters."
             test_stability_sanity_check = .false.
         end if
 
