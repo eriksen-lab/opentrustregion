@@ -332,34 +332,6 @@ contains
 
     end subroutine hess_x_fun_asymmetric
 
-    subroutine hess_x_fun_failing(x, hess_x, error, context)
-        !
-        ! this subroutine describes a Hessian linear transformation which always fails
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: x(:)
-        real(rp), intent(out), target :: hess_x(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        class(hartmann6d_context_type), pointer :: state
-
-        ! check host context
-        call check_host_context(context)
-
-        ! get Hartmann 6D state
-        state => resolve_hartmann6d_context(context, error)
-        if (error /= 0) return
-
-        ! count call
-        state%n_hess_x_calls = state%n_hess_x_calls + 1
-
-        error = 1
-        hess_x = x
-
-    end subroutine hess_x_fun_failing
-
     function obj_func(delta_vars, error, context) result(func)
         !
         ! this function describes the objective function evaluation for the Hartmann 6D
@@ -1369,28 +1341,6 @@ contains
 
     end subroutine mock_precond_next_unit_vector
 
-    subroutine mock_precond_error(residual, mu, precond_residual, error, context)
-        !
-        ! this subroutine is a test subroutine for a preconditioner subroutine which
-        ! produces an error
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: residual(:)
-        real(rp), intent(in) :: mu
-        real(rp), intent(out), target :: precond_residual(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        precond_residual = mu * residual
-
-        error = 1
-
-    end subroutine mock_precond_error
-
     subroutine mock_project(vector, error, context)
         !
         ! this subroutine is a test subroutine for the projection subroutine
@@ -1409,26 +1359,6 @@ contains
         error = 0
 
     end subroutine mock_project
-
-    subroutine mock_project_error(vector, error, context)
-        !
-        ! this subroutine is a test subroutine for a projection subroutine which
-        ! produces an error
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(inout), target :: vector(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        vector = 2 * vector
-
-        error = 1
-
-    end subroutine mock_project_error
 
     subroutine mock_project_out_pair(vector, error, context)
         !
@@ -3661,6 +3591,7 @@ contains
                     grad_small(2), h_diag_small(2)
         integer(ip) :: error
         type(test_context_type), target :: context
+        type(hartmann6d_fault_context_type), target :: fault_context
 
         ! assume tests pass
         test_generate_trial_vectors = .true.
@@ -3840,8 +3771,11 @@ contains
         deallocate(red_space_basis)
 
         ! check that the function result is allocated even when the projection function
-        ! produces an error before the reduced space basis is constructed
-        settings%project => mock_project_error
+        ! fails at its first call, before the reduced space basis is constructed
+        settings%context => fault_context
+        settings%project => faulty_project
+        fault_context%fault_callback = fault_project
+        fault_context%fault_call = 1
         red_space_basis = &
             generate_trial_vectors(grad, grad_norm, h_diag, settings, error)
         if (error /= error_project + 1) then
@@ -3889,6 +3823,7 @@ contains
         real(rp) :: leading_vectors(n_param, 2)
         integer(ip) :: error, i, j
         type(test_context_type), target :: context
+        type(hartmann6d_fault_context_type), target :: fault_context
 
         ! assume tests pass
         test_generate_random_trial_vectors = .true.
@@ -3956,9 +3891,12 @@ contains
             test_generate_random_trial_vectors = .false.
         end if
 
-        ! check that the error of a failing projection function is reported with its
-        ! origin
-        settings%project => mock_project_error
+        ! check that the error of a projection function which fails at its first call
+        ! is reported with its origin
+        settings%context => fault_context
+        settings%project => faulty_project
+        fault_context%fault_callback = fault_project
+        fault_context%fault_call = 1
         call generate_random_trial_vectors(red_space_basis, 3_ip, settings, error)
         if (error /= error_project + 1) then
             write(stderr, *) "test_generate_random_trial_vectors failed: Did not "// &
@@ -4267,8 +4205,9 @@ contains
 
         real(rp) :: vector(3), h_diag(3), precond_vector(3)
         type(solver_settings_type) :: settings
-        integer(ip) :: error
+        integer(ip) :: error, i_case
         type(test_context_type), target :: context
+        type(hartmann6d_fault_context_type), target :: fault_context
 
         ! assume tests pass
         test_abs_diag_precond = .true.
@@ -4325,26 +4264,28 @@ contains
             test_abs_diag_precond = .false.
         end if
 
-        ! check that the error of a failing custom preconditioner is reported with its
-        ! origin
-        settings%precond => mock_precond_error
-        call abs_diag_precond(vector, h_diag, precond_vector, settings, error)
-        if (error /= error_precond + 1) then
-            write(stderr, *) "test_abs_diag_precond failed: Did not report the "// &
-                "error of a failing preconditioner with its origin."
-            test_abs_diag_precond = .false.
-        end if
-
-        ! check that the error of a failing custom projection function is reported
-        ! with its origin
-        settings%precond => null()
-        settings%project => mock_project_error
-        call abs_diag_precond(vector, h_diag, precond_vector, settings, error)
-        if (error /= error_project + 1) then
-            write(stderr, *) "test_abs_diag_precond failed: Did not report the "// &
-                "error of a failing projection function with its origin."
-            test_abs_diag_precond = .false.
-        end if
+        ! check that the errors of a failing custom preconditioner and of a failing
+        ! projection of the default preconditioner are reported with their origins
+        call setup_settings(settings, fault_context)
+        do i_case = 1, 2
+            if (i_case == 1) then
+                settings%precond => faulty_precond
+            else
+                settings%precond => null()
+                settings%project => faulty_project
+            end if
+            fault_context%n_callback_calls = 0
+            fault_context%fault_callback = &
+                merge(fault_precond, fault_project, i_case == 1)
+            fault_context%fault_call = 1
+            call abs_diag_precond(vector, h_diag, precond_vector, settings, error)
+            if (error /= merge(error_precond, error_project, i_case == 1) + 1) then
+                write(stderr, *) "test_abs_diag_precond failed: Error of failing "// &
+                    trim(fault_callback_names(fault_context%fault_callback))// &
+                    " not reported with its origin."
+                test_abs_diag_precond = .false.
+            end if
+        end do
 
     end function test_abs_diag_precond
 
@@ -5670,6 +5611,7 @@ contains
         type(solver_settings_type) :: settings
         type(solver_state_type), target :: state
         type(hartmann6d_context_type), target :: context
+        type(hartmann6d_fault_context_type), target :: fault_context
         type(quadratic_context_type), target :: quadratic_context
 
         ! assume tests pass
@@ -5818,39 +5760,40 @@ contains
             test_level_shifted_davidson = .false.
         end if
 
-        ! run level-shifted Davidson with a Hessian linear transformation which fails
-        ! and check that the failing call is still counted
-        hess_x_funptr => hess_x_fun_failing
-        state%trust_radius = 0.4_rp
-        state%n_hess_x = 0
-        context%n_hess_x_calls = 0
-        call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
-                                    obj_func_funptr, hess_x_funptr, settings, state, &
-                                    solution, solution_norm, mu, error)
-        if (error /= error_hess_x + 1) then
-            write(stderr, *) "test_level_shifted_davidson failed: Did not report "// &
-                "the error of a failing Hessian linear transformation with its origin."
-            test_level_shifted_davidson = .false.
-        end if
-        if (.not. check_call_counts(context, "level_shifted_davidson", &
-                                    "for failing Hessian linear transformation", &
-                                    n_hess_x=state%n_hess_x)) &
-            test_level_shifted_davidson = .false.
-
-        ! run level-shifted Davidson with an objective function which fails and check
-        ! that its error is reported with its origin
+        ! run level-shifted Davidson with a Hessian linear transformation and with an
+        ! objective function which fail at their first call and check that their
+        ! errors are reported with their origins and that a failing Hessian linear
+        ! transformation is counted
+        call setup_settings(settings, fault_context)
+        fault_context%vars = context%vars
+        fault_context%hess = context%hess
+        obj_func_funptr => faulty_obj_func
+        hess_x_funptr => faulty_hess_x
+        do i_case = 1, 2
+            fault_context%fault_callback = &
+                merge(fault_hess_x, fault_obj_func, i_case == 1)
+            fault_context%fault_call = 1
+            fault_context%n_callback_calls = 0
+            fault_context%n_hess_x_calls = 0
+            state%trust_radius = 0.4_rp
+            state%n_hess_x = 0
+            call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
+                                        obj_func_funptr, hess_x_funptr, settings, &
+                                        state, solution, solution_norm, mu, error)
+            if (error /= merge(error_hess_x, error_obj_func, i_case == 1) + 1) then
+                write(stderr, *) "test_level_shifted_davidson failed: Error of "// &
+                    "failing "// &
+                    trim(fault_callback_names(fault_context%fault_callback))// &
+                    " not reported with its origin."
+                test_level_shifted_davidson = .false.
+            end if
+            if (.not. check_call_counts( &
+                fault_context, "level_shifted_davidson", "for failing "// &
+                trim(fault_callback_names(fault_context%fault_callback)), &
+                n_hess_x=state%n_hess_x)) test_level_shifted_davidson = .false.
+        end do
         call setup_settings(settings, context)
         hess_x_funptr => hess_x_fun
-        obj_func_funptr => obj_func_failing
-        state%trust_radius = 0.4_rp
-        call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
-                                    obj_func_funptr, hess_x_funptr, settings, state, &
-                                    solution, solution_norm, mu, error)
-        if (error /= error_obj_func + 1) then
-            write(stderr, *) "test_level_shifted_davidson failed: Did not report "// &
-                "the error of a failing objective function with its origin."
-            test_level_shifted_davidson = .false.
-        end if
 
         ! run level-shifted Davidson with an objective function which always exceeds
         ! the current one, so that every step is rejected and the trust radius shrinks
@@ -6024,7 +5967,7 @@ contains
 
         real(rp) :: func, ratio, solution_norm, metric_norm
         real(rp), dimension(n_param) :: grad, h_diag, solution
-        integer(ip) :: i, error
+        integer(ip) :: i, i_case, error
         procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
         type(solver_settings_type) :: settings
@@ -6192,39 +6135,41 @@ contains
             test_truncated_conjugate_gradient = .false.
         end if
 
-        ! run truncated conjugate gradient with a Hessian linear transformation which
-        ! fails and check that the failing call is still counted
-        hess_x_funptr => hess_x_fun_failing
-        state%trust_radius = 0.4_rp
-        state%n_hess_x = 0
-        context%n_hess_x_calls = 0
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
-        if (error /= error_hess_x + 1) then
-            write(stderr, *) "test_truncated_conjugate_gradient failed: Did not "// &
-                "report the error of a failing Hessian linear transformation with "// &
-                "its origin."
-            test_truncated_conjugate_gradient = .false.
-        end if
-        if (.not. check_call_counts(context, "truncated_conjugate_gradient", &
-                                    "for failing Hessian linear transformation", &
-                                    n_hess_x=state%n_hess_x)) &
-            test_truncated_conjugate_gradient = .false.
-
-        ! run truncated conjugate gradient with an objective function which fails and
-        ! check that its error is reported with its origin
-        state%trust_radius = 0.4_rp
-        obj_func_funptr => obj_func_failing
+        ! run truncated conjugate gradient with a Hessian linear transformation and with
+        ! an objective function which fail at their first call and check that their
+        ! errors are reported with their origins and that a failing Hessian linear
+        ! transformation is counted
+        settings%context => fault_context
+        fault_context%vars = context%vars
+        fault_context%hess = context%hess
+        obj_func_funptr => faulty_obj_func
+        hess_x_funptr => faulty_hess_x
+        do i_case = 1, 2
+            fault_context%fault_callback = &
+                merge(fault_hess_x, fault_obj_func, i_case == 1)
+            fault_context%fault_call = 1
+            fault_context%n_callback_calls = 0
+            fault_context%n_hess_x_calls = 0
+            state%trust_radius = 0.4_rp
+            state%n_hess_x = 0
+            call truncated_conjugate_gradient( &
+                func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+                state, solution, solution_norm, error)
+            if (error /= merge(error_hess_x, error_obj_func, i_case == 1) + 1) then
+                write(stderr, *) "test_truncated_conjugate_gradient failed: Error "// &
+                    "of failing "// &
+                    trim(fault_callback_names(fault_context%fault_callback))// &
+                    " not reported with its origin."
+                test_truncated_conjugate_gradient = .false.
+            end if
+            if (.not. check_call_counts( &
+                fault_context, "truncated_conjugate_gradient", "for failing "// &
+                trim(fault_callback_names(fault_context%fault_callback)), &
+                n_hess_x=state%n_hess_x)) test_truncated_conjugate_gradient = .false.
+        end do
+        fault_context%fault_callback = 0
+        settings%context => context
         hess_x_funptr => hess_x_fun
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
-        if (error /= error_obj_func + 1) then
-            write(stderr, *) "test_truncated_conjugate_gradient failed: Did not "// &
-                "report the error of a failing objective function with its origin."
-            test_truncated_conjugate_gradient = .false.
-        end if
 
         ! evaluate an objective function which does not change with the step and
         ! check that the calculation is reported as converged up to floating point
