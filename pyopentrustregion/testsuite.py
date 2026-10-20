@@ -1354,7 +1354,10 @@ class PyIntegrationTests(unittest.TestCase):
             # report convergence by the gradient criterion with the default threshold
             # it replaces, so the solve is unaffected
             state["called"].add("conv_check")
-            return np.sqrt(np.mean(self._grad(state["curr"]) ** 2)) < 1e-5
+            return (
+                np.sqrt(np.mean(self._grad(state["curr"]) ** 2))
+                < SolverSettings().conv_tol
+            )
 
         settings = SolverSettings()
         settings.precond = recording_precond("precond")

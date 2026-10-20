@@ -248,7 +248,7 @@ static c_int conv_check_nested(c_bool *converged, void *context) {
   hartmann_grad(ctx->curr_vars, grad);
   for (int i = 0; i < N_PARAM; i++)
     norm_squared += grad[i] * grad[i];
-  *converged = sqrt(norm_squared / N_PARAM) < 1e-5;
+  *converged = sqrt(norm_squared / N_PARAM) < solver_settings_init().conv_tol;
   if (!ctx->nested_check_ran) {
     c_real h_diag[N_PARAM];
     c_bool stable = false;

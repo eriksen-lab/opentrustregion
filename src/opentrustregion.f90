@@ -119,7 +119,7 @@ module opentrustregion
         ! transformations, the latter including those of the internal stability checks
         integer(ip) :: n_update_orbs = 0, n_obj_func = 0, n_hess_x = 0
         ! whether the trust-region steps could no longer resolve a change of the
-        ! objective function
+        ! objective function or the gradient vanishes exactly
         logical :: max_precision_reached = .false.
         ! state of the most recent internal stability check
         type(stability_state_type) :: stability_state = stability_state_type()
@@ -348,6 +348,11 @@ contains
                 ! calculate RMS gradient
                 grad_rms = grad_norm / sqrt(real(n_param, kind=rp))
 
+                ! an exactly vanishing gradient, which a symmetric problem can reach,
+                ! leaves the subsystem solvers no subproblem they can solve, so the
+                ! point is taken as one at maximum precision
+                if (grad_norm <= 0.0_rp) current_state%max_precision_reached = .true.
+
                 ! update the state with the current point, whose row is printed below
                 current_state%macro_iteration = imacro - 1
                 current_state%func = func
@@ -386,9 +391,11 @@ contains
                 conv_check_passed = grad_rms < local_settings%conv_tol
             end if
             if (conv_check_passed .or. current_state%max_precision_reached) then
-                ! always perform stability check if starting at stationary point and
-                ! continue along the unstable mode if the stationary point is unstable
-                if (local_settings%stability .or. imacro == 1) then
+                ! always perform stability check if starting at stationary point or at
+                ! an exactly vanishing gradient and continue along the unstable mode if
+                ! the stationary point is unstable
+                if (local_settings%stability .or. imacro == 1 .or. &
+                    grad_norm <= 0.0_rp) then
                     call check_stationary_point(func, h_diag, hess_x_funptr, obj_func, &
                                                 imacro, local_settings, current_state, &
                                                 stable, kappa, kappa_norm, error)
