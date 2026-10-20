@@ -2259,6 +2259,29 @@ contains
             test_solver = .false.
         end if
 
+        ! start at the minimum of the quadratic model 1/2 |x|^2 at the origin, where
+        ! the gradient vanishes exactly, with a vanishing convergence threshold, which
+        ! the gradient can therefore not pass, and check that the solver stops there
+        ! without an error and flags that maximum precision was reached, since the
+        ! stability check finds the point stable
+        call setup_settings(settings, half_step_context)
+        settings%conv_tol = 0.0_rp
+        half_step_context%vars = 0.0_rp
+        update_orbs_funptr => half_step_update_orbs
+        obj_func_funptr => half_step_obj_func
+        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings, state)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error at a stable point "// &
+                "with an exactly vanishing gradient."
+            test_solver = .false.
+        end if
+        if (.not. state%max_precision_reached) then
+            write(stderr, *) "test_solver failed: Maximum precision not flagged at "// &
+                "a stable point with an exactly vanishing gradient which can not "// &
+                "pass the convergence check."
+            test_solver = .false.
+        end if
+
         ! inject faults by running the solver from the saddle point, where it performs
         ! the internal stability check and the line search along the unstable mode,
         ! with a stability check at convergence, a line search and every optional

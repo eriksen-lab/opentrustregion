@@ -119,7 +119,8 @@ module opentrustregion
         ! transformations, the latter including those of the internal stability checks
         integer(ip) :: n_update_orbs = 0, n_obj_func = 0, n_hess_x = 0
         ! whether the trust-region steps could no longer resolve a change of the
-        ! objective function or the gradient vanishes exactly
+        ! objective function or the gradient vanishes exactly, unless the convergence
+        ! check passes
         logical :: max_precision_reached = .false.
         ! state of the most recent internal stability check
         type(stability_state_type) :: stability_state = stability_state_type()
