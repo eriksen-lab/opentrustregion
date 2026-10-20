@@ -186,11 +186,6 @@ fortran_tests = {
     ],
 }
 
-# define return type of Fortran functions
-for tests in fortran_tests.values():
-    for test in tests:
-        getattr(lib, f"test_{test}").restype = c_bool
-
 # define signatures of the Fortran functions providing the reference settings
 lib.reference_field.restype = None
 lib.get_reference_solver_values.argtypes = [
@@ -249,7 +244,9 @@ def add_tests(cls):
 
     def create_test(func_name):
         def test(self):
-            result = getattr(lib, func_name)()
+            func = getattr(lib, func_name)
+            func.restype = c_bool
+            result = func()
             if result:
                 print(f" {func_name} PASSED")
             self.assertTrue(result, f"{func_name} failed")

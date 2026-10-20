@@ -688,44 +688,38 @@ contains
 
     subroutine faulty_precond(residual, mu, precond_residual, error, context)
         !
-        ! this subroutine describes an identity preconditioner into which a fault can be
-        ! injected
+        ! this subroutine describes the identity preconditioner into which a fault can
+        ! be injected
         !
-        use test_reference, only: check_host_context
-
         real(rp), intent(in), target :: residual(:)
         real(rp), intent(in) :: mu
         real(rp), intent(out), target :: precond_residual(:)
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        ! check host context
-        call check_host_context(context)
+        ! apply preconditioner
+        call identity_precond(residual, mu, precond_residual, error, context)
+        if (error /= 0) return
 
-        ! apply preconditioner and inject fault
-        precond_residual = residual + 0.0_rp * mu
-        error = 0
+        ! inject fault
         if (inject_fault(context, fault_precond)) error = 1
 
     end subroutine faulty_precond
 
     subroutine faulty_project(vector, error, context)
         !
-        ! this subroutine describes an identity projection into which a fault can be
+        ! this subroutine describes the identity projection into which a fault can be
         ! injected
         !
-        use test_reference, only: check_host_context
-
         real(rp), intent(inout), target :: vector(:)
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        ! check host context
-        call check_host_context(context)
+        ! apply projection
+        call identity_project(vector, error, context)
+        if (error /= 0) return
 
-        ! keep vector and inject fault
-        vector = vector + 0.0_rp
-        error = 0
+        ! inject fault
         if (inject_fault(context, fault_project)) error = 1
 
     end subroutine faulty_project
@@ -4173,8 +4167,9 @@ contains
 
         real(rp) :: vector(3), mu, h_diag(3), precond_vector(3)
         type(solver_settings_type) :: settings
-        integer(ip) :: error
+        integer(ip) :: error, i_case
         type(test_context_type), target :: context
+        type(hartmann6d_fault_context_type), target :: fault_context
 
         ! assume tests pass
         test_level_shifted_diag_precond = .true.
@@ -4235,28 +4230,30 @@ contains
             test_level_shifted_diag_precond = .false.
         end if
 
-        ! check that the error of a failing custom preconditioner is reported with its
-        ! origin
-        settings%precond => mock_precond_error
-        call level_shifted_diag_precond(vector, mu, h_diag, precond_vector, settings, &
-                                        error)
-        if (error /= error_precond + 1) then
-            write(stderr, *) "test_level_shifted_diag_precond failed: Did not "// &
-                "report the error of a failing preconditioner with its origin."
-            test_level_shifted_diag_precond = .false.
-        end if
-
-        ! check that the error of a failing custom projection function is reported
-        ! with its origin
-        settings%precond => null()
-        settings%project => mock_project_error
-        call level_shifted_diag_precond(vector, mu, h_diag, precond_vector, settings, &
-                                        error)
-        if (error /= error_project + 1) then
-            write(stderr, *) "test_level_shifted_diag_precond failed: Did not "// &
-                "report the error of a failing projection function with its origin."
-            test_level_shifted_diag_precond = .false.
-        end if
+        ! check that the errors of a failing custom preconditioner and of a failing
+        ! projection of the default preconditioner are reported with their origins
+        call setup_settings(settings, fault_context)
+        do i_case = 1, 2
+            if (i_case == 1) then
+                settings%precond => faulty_precond
+            else
+                settings%precond => null()
+                settings%project => faulty_project
+            end if
+            fault_context%n_callback_calls = 0
+            fault_context%fault_callback = &
+                merge(fault_precond, fault_project, i_case == 1)
+            fault_context%fault_call = 1
+            call level_shifted_diag_precond(vector, mu, h_diag, precond_vector, &
+                                            settings, error)
+            if (error /= merge(error_precond, error_project, i_case == 1) + 1) then
+                write(stderr, *) "test_level_shifted_diag_precond failed: Error of "// &
+                    "failing "// &
+                    trim(fault_callback_names(fault_context%fault_callback))// &
+                    " not reported with its origin."
+                test_level_shifted_diag_precond = .false.
+            end if
+        end do
 
     end function test_level_shifted_diag_precond
 
@@ -4400,6 +4397,7 @@ contains
         real(rp) :: eigval
         integer(ip) :: error, n_hess_x
         type(hartmann6d_context_type), target :: context
+        type(hartmann6d_fault_context_type), target :: fault_context
 
         ! assume tests pass
         test_jacobi_davidson_correction = .true.
@@ -4451,10 +4449,14 @@ contains
             test_jacobi_davidson_correction = .false.
 
         ! calculate Jacobi-Davidson correction with a Hessian linear transformation
-        ! which fails and check that the failing call is still counted
-        hess_x_funptr => hess_x_fun_failing
+        ! which fails and check that its error is reported with its origin and that
+        ! the failing call is still counted
+        fault_context%hess = context%hess
+        settings%context => fault_context
+        hess_x_funptr => faulty_hess_x
+        fault_context%fault_callback = fault_hess_x
+        fault_context%fault_call = 1
         n_hess_x = 0
-        context%n_hess_x_calls = 0
         call jacobi_davidson_correction(hess_x_funptr, vector, solution, eigval, &
                                         corr_vector, hess_vector, settings, n_hess_x, &
                                         error)
@@ -4464,7 +4466,7 @@ contains
                 "its origin."
             test_jacobi_davidson_correction = .false.
         end if
-        if (.not. check_call_counts(context, "jacobi_davidson_correction", &
+        if (.not. check_call_counts(fault_context, "jacobi_davidson_correction", &
                                     "for failing Hessian linear transformation", &
                                     n_hess_x=n_hess_x)) &
             test_jacobi_davidson_correction = .false.
@@ -5040,13 +5042,19 @@ contains
             test_add_trial_vector = .false.
         end if
 
-        ! add trial vector with a Hessian linear transformation which fails and check
-        ! that its error is returned with its origin and the failing call is counted
+        ! add trial vector with a Hessian linear transformation which fails at its
+        ! first call and check that its error is returned with its origin and the
+        ! failing call is counted
         red_space_basis = initial_basis
         h_basis = matmul(context%hess, initial_basis)
         call random_number(residual)
-        hess_x_funptr => hess_x_fun_failing
-        context%n_hess_x_calls = 0
+        fault_context%hess = context%hess
+        settings%context => fault_context
+        hess_x_funptr => faulty_hess_x
+        fault_context%fault_callback = fault_hess_x
+        fault_context%fault_call = 1
+        fault_context%n_callback_calls = 0
+        fault_context%n_hess_x_calls = 0
         n_hess_x = 0
         call add_trial_vector(residual, 0.0_rp, h_diag, 0_ip, solution, 0.0_rp, &
                               hess_x_funptr, red_space_basis, h_basis, settings, &
@@ -5056,7 +5064,7 @@ contains
                 "error of a failing Hessian linear transformation with its origin."
             test_add_trial_vector = .false.
         end if
-        if (.not. check_call_counts(context, "add_trial_vector", &
+        if (.not. check_call_counts(fault_context, "add_trial_vector", &
                                     "for failing Hessian linear transformation", &
                                     n_hess_x=n_hess_x)) test_add_trial_vector = .false.
 

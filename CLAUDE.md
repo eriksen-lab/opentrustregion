@@ -114,7 +114,7 @@ A `logical(c_bool) function test_<routine>() bind(C)` is only reachable once wir
 1. The source file in the CMake test source list (`OPENTRUSTREGION_TESTS`).
 2. The `fortran_tests["opentrustregion_unit_tests"]` (or `"c_interface_unit_tests"`) name list in `pyopentrustregion/testsuite.py`, alphabetically ordered, without the `test_` prefix — the `@add_tests` decorator on the corresponding `unittest.TestCase` turns each name into a `test_<name>` method.
 
-A name in the Python list with no matching Fortran symbol fails at import with `AttributeError: dlsym(...): symbol not found`.
+A name in the Python list with no matching Fortran symbol fails as that test with `AttributeError: dlsym(...): symbol not found` when it runs.
 
 System tests and C integration tests are wired the same way: their source files are in the same CMake list, and their names go into `fortran_tests["opentrustregion_system_tests"]` and `fortran_tests["c_integration_tests"]`.
 
