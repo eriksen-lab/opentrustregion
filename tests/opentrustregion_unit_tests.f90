@@ -5269,22 +5269,26 @@ contains
 
         ! cases with the objective function value, the actual and the predicted
         ! function change and whether maximum precision is reached, which requires that
-        ! neither change can be resolved relative to the objective function value
-        character(len=*), parameter :: precision_case_names(6) = &
-            [character(len=54) :: "vanishing function changes", &
-             "changes below the resolution of a large function value", &
-             "changes above the resolution of a small function value", "vanishing "// &
-             "changes of a vanishing function value", "only the predicted change "// &
-             "below the resolution", "only the actual change below the resolution"]
+        ! the predicted change can not be resolved relative to the larger of the
+        ! objective function values before and after the step and that the actual
+        ! change can not be resolved either or the step is rejected
+        character(len=*), parameter :: precision_case_names(8) = [ &
+            character(len=65) :: "vanishing function changes", &
+            "changes below the resolution of a large function value", &
+            "changes above the resolution of a small function value", &
+            "vanishing changes of a vanishing function value", "accepted step with "// &
+            "only the predicted change below the resolution", "rejected step with "// &
+            "only the predicted change below the resolution", "rejected step from "// &
+            "a vanishing function value", "only the actual change below the resolution"]
         real(rp), parameter :: &
-            precision_case_funcs(6) = &
-                [-1.0_rp, -2000.0_rp, -1.0_rp, 0.0_rp, -1.0_rp, -1.0_rp], &
-            precision_case_actual(6) = &
-                [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-3_rp, 1e-20_rp], &
-            precision_case_predicted(6) = &
-                [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-20_rp, 1e-3_rp]
-        logical, parameter :: precision_case_reached(6) = &
-            [.true., .true., .false., .true., .false., .false.]
+            precision_case_funcs(8) = [-1.0_rp, -2000.0_rp, -1.0_rp, 0.0_rp, -1.0_rp, &
+                                       -1.0_rp, 0.0_rp, -1.0_rp], &
+            precision_case_actual(8) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-3_rp, &
+                                        1e-3_rp, 1e-3_rp, 1e-20_rp], &
+            precision_case_predicted(8) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, &
+                                           1e-20_rp, -1e-20_rp, -1e-20_rp, 1e-3_rp]
+        logical, parameter :: precision_case_reached(8) = &
+            [.true., .true., .false., .true., .false., .true., .true., .false.]
 
         logical :: accept_step
         real(rp) :: solution(3)
@@ -5924,19 +5928,19 @@ contains
         hess_x_funptr => hess_x_fun
 
         ! run level-shifted Davidson with an objective function which exceeds the
-        ! current one by less than can be resolved, so that every step is rejected and
-        ! the trust radius shrinks until the predicted change can not be resolved
-        ! either and maximum precision is reached, and check that it stops without
-        ! error and reports this and that the micro iterations of all rejected steps
-        ! are counted, every step evaluates the objective function after at least one
-        ! micro iteration
+        ! current one, as when the objective function and the orbital update disagree,
+        ! so that every step is rejected and the trust radius shrinks until the
+        ! predicted change can not be resolved and maximum precision is reached, and
+        ! check that it stops without error and reports this and that the micro
+        ! iterations of all rejected steps are counted, every step evaluates the
+        ! objective function after at least one micro iteration
         obj_func_funptr => constant_obj_func
         state%trust_radius = 0.4_rp
         state%max_precision_reached = .false.
         state%n_obj_func = 0
-        call level_shifted_davidson(nearest(1.0_rp, -1.0_rp), grad, grad_norm, h_diag, &
-                                    n_param, obj_func_funptr, hess_x_funptr, settings, &
-                                    state, solution, solution_norm, mu, error)
+        call level_shifted_davidson(0.0_rp, grad, grad_norm, h_diag, n_param, &
+                                    obj_func_funptr, hess_x_funptr, settings, state, &
+                                    solution, solution_norm, mu, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "when every step is rejected."
@@ -6351,6 +6355,29 @@ contains
                   " "//function_unchanged_warning_msg) == 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Warning "// &
                 "not printed when function value does not change."
+            test_truncated_conjugate_gradient = .false.
+        end if
+
+        ! run truncated conjugate gradient on the quadratic model with an objective
+        ! function which exceeds the current one, as when the objective function and
+        ! the orbital update disagree, so that every step is rejected and the trust
+        ! radius shrinks until the predicted change can not be resolved, and check
+        ! that the subproblem stops without error at maximum precision and returns no
+        ! norm for the step that is not taken
+        quadratic_context%grad = spread(0.1_rp, 1, n_param)
+        state%trust_radius = 0.4_rp
+        call truncated_conjugate_gradient( &
+            0.5_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+            hess_x_funptr, settings, state, solution, solution_norm, error)
+        if (error /= 0 .or. .not. state%max_precision_reached) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Maximum "// &
+                "precision not reached without error when every step is rejected."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (abs(solution_norm) > 0.0_rp) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
+                "the solution not vanishing for a step that is not taken when "// &
+                "every step is rejected."
             test_truncated_conjugate_gradient = .false.
         end if
         hess_x_funptr => hess_x_fun

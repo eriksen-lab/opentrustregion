@@ -116,8 +116,9 @@ module opentrustregion
         ! number of orbital updates, objective function evaluations and Hessian linear
         ! transformations, the latter including those of the internal stability checks
         integer(ip) :: n_update_orbs = 0, n_obj_func = 0, n_hess_x = 0
-        ! whether neither the actual nor the predicted function change of the last
-        ! trust-region step could be resolved
+        ! whether the predicted function change of the last trust-region step could
+        ! not be resolved while its actual change could not be resolved either or the
+        ! step was rejected
         logical :: max_precision_reached = .false.
         ! state of the most recent internal stability check
         type(stability_state_type) :: stability_state = stability_state_type()
@@ -2663,8 +2664,11 @@ contains
         state%max_precision_reached = .false.
 
         ! check if function value has not decreased up to floating point precision, in
-        ! which case the step is not taken
-        func_resolution = func_resolution_safety_factor * abs(func) * epsilon(1.0_rp)
+        ! which case the step is not taken, relative to the larger of the function
+        ! values before and after the step, so that the resolution does not vanish at a
+        ! vanishing function value which the step changes
+        func_resolution = func_resolution_safety_factor * &
+                          max(abs(func), abs(func + actual_func_diff)) * epsilon(1.0_rp)
         if (abs(actual_func_diff) <= func_resolution .and. &
             abs(pred_func_diff) <= func_resolution) then
             call settings%log(function_unchanged_warning_msg, verbosity_warning)
@@ -2680,6 +2684,16 @@ contains
         ! value has not decreased or if individual orbitals change too much
         if (.not. micro_converged .or. ratio < 0.0_rp .or. &
             any(abs(solution) > pi / 4)) then
+            ! a rejected step whose predicted function change can not be resolved can
+            ! not be improved by a smaller trust radius, as when the objective function
+            ! and the orbital update disagree by more than the resolution, so the step
+            ! is not taken and maximum precision is reached
+            if (abs(pred_func_diff) <= func_resolution) then
+                call settings%log(function_unchanged_warning_msg, verbosity_warning)
+                state%max_precision_reached = .true.
+                accept_trust_region_step = .false.
+                return
+            end if
             state%trust_radius = trust_radius_shrink_factor * state%trust_radius
             accept_trust_region_step = .false.
         ! check if step is too long
