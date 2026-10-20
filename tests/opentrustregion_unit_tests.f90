@@ -5761,9 +5761,9 @@ contains
         end if
 
         ! run level-shifted Davidson with a Hessian linear transformation and with an
-        ! objective function which fail at their first call and check that their
-        ! errors are reported with their origins and that a failing Hessian linear
-        ! transformation is counted
+        ! objective function which fail at their first call and check that their errors
+        ! are reported with their origins and that a failing Hessian linear
+        ! transformation or objective function is counted
         call setup_settings(settings, fault_context)
         fault_context%vars = context%vars
         fault_context%hess = context%hess
@@ -5775,8 +5775,10 @@ contains
             fault_context%fault_call = 1
             fault_context%n_callback_calls = 0
             fault_context%n_hess_x_calls = 0
+            fault_context%n_obj_func_calls = 0
             state%trust_radius = 0.4_rp
             state%n_hess_x = 0
+            state%n_obj_func = 0
             call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                         obj_func_funptr, hess_x_funptr, settings, &
                                         state, solution, solution_norm, mu, error)
@@ -5790,7 +5792,8 @@ contains
             if (.not. check_call_counts( &
                 fault_context, "level_shifted_davidson", "for failing "// &
                 trim(fault_callback_names(fault_context%fault_callback)), &
-                n_hess_x=state%n_hess_x)) test_level_shifted_davidson = .false.
+                n_hess_x=state%n_hess_x, n_obj_func=state%n_obj_func)) &
+                test_level_shifted_davidson = .false.
         end do
         call setup_settings(settings, context)
         hess_x_funptr => hess_x_fun
@@ -6135,10 +6138,10 @@ contains
             test_truncated_conjugate_gradient = .false.
         end if
 
-        ! run truncated conjugate gradient with a Hessian linear transformation and with
-        ! an objective function which fail at their first call and check that their
-        ! errors are reported with their origins and that a failing Hessian linear
-        ! transformation is counted
+        ! run truncated conjugate gradient with a Hessian linear transformation and
+        ! with an objective function which fail at their first call and check that
+        ! their errors are reported with their origins and that a failing Hessian
+        ! linear transformation or objective function is counted
         settings%context => fault_context
         fault_context%vars = context%vars
         fault_context%hess = context%hess
@@ -6150,8 +6153,10 @@ contains
             fault_context%fault_call = 1
             fault_context%n_callback_calls = 0
             fault_context%n_hess_x_calls = 0
+            fault_context%n_obj_func_calls = 0
             state%trust_radius = 0.4_rp
             state%n_hess_x = 0
+            state%n_obj_func = 0
             call truncated_conjugate_gradient( &
                 func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
                 state, solution, solution_norm, error)
@@ -6165,7 +6170,8 @@ contains
             if (.not. check_call_counts( &
                 fault_context, "truncated_conjugate_gradient", "for failing "// &
                 trim(fault_callback_names(fault_context%fault_callback)), &
-                n_hess_x=state%n_hess_x)) test_truncated_conjugate_gradient = .false.
+                n_hess_x=state%n_hess_x, n_obj_func=state%n_obj_func)) &
+                test_truncated_conjugate_gradient = .false.
         end do
         fault_context%fault_callback = 0
         settings%context => context
