@@ -74,9 +74,11 @@ The layout of a statement is the best one under these rules:
    every row fits, where a row holds as many items as the extent filled first: the
    first extent of the shape, or the one ``order`` names first. The shape is resolved
    from integer literals, from integer named constants and, for ``shape(a)``, from the
-   extents of ``a``, as declared in the same file, as long as every declaration of the
-   name agrees. When the shape cannot be resolved or the rows do not fit, the
-   constructor follows the normal rules.
+   extents of ``a``, as declared in the procedure the statement is in, in the
+   procedures around it or in the module, the innermost declaration first, or else
+   anywhere in the same file as long as every declaration of the name agrees. When the
+   shape cannot be resolved or the rows do not fit, the constructor follows the normal
+   rules.
 7. Binary ``+``, ``-``, ``*`` and ``/``, the comparisons (``==``, ``/=``, ``<``,
    ``<=``, ``>``, ``>=`` and their dotted forms) and ``.and.``, ``.or.``, ``.eqv.`` and
    ``.neqv.`` have a blank on either side, ``**``, ``//`` and ``%`` have none, and
@@ -123,8 +125,11 @@ The layout of a statement is the best one under these rules:
 10. A comment line between two statements starts at the column of the statement after
     it, so that a comment before ``else``, ``case`` or ``end`` starts where that
     statement does. Comment lines inside a continued statement move with it. A comment
-    has one blank between its ``!`` and its text, unless it starts with ``!!`` or is a
-    directive such as ``!$omp``, and a comment after code is preceded by two blanks.
+    has at least one blank between its ``!`` and its text, unless it starts with ``!!``
+    or is a directive such as ``!$omp``; further blanks are kept, since they indent
+    formulas, lists and code within a comment. A comment after code is preceded by two
+    blanks. A comment line is held to the column limit like code but never rewrapped,
+    so an overlong one is reworded by hand.
 11. No line ends in blanks, no file starts or ends with a blank line, no two blank lines
     follow each other, and a file ends with one newline. A subroutine or function is
     followed by one blank line, unless it is the last one in an interface block, and
@@ -187,10 +192,12 @@ def code_part(line: str) -> str:
 
 def comment_text(comment: str) -> str:
     """
-    this function returns a comment starting with ! with one blank between the ! and its
-    text, leaving directives such as !$omp and comments starting with !! as they are
+    this function returns a comment starting with ! with at least one blank between the
+    ! and its text, keeping further blanks, which indent formulas, lists and code within
+    a comment, and leaving directives such as !$omp and comments starting with !! as
+    they are
     """
-    return re.sub(r"^!(?![!$])\s*(?=\S)", "! ", comment.rstrip())
+    return re.sub(r"^!(?=[^!$\s])", "! ", comment.rstrip())
 
 
 def is_code(line: str) -> bool:
@@ -1109,6 +1116,45 @@ def file_context(codes: List[str]) -> Context:
     return context
 
 
+def scoped_contexts(codes: List[str]) -> List[Context]:
+    """
+    this function returns for every statement of a file the values of the integer named
+    constants and the extents of the arrays it sees: those declared in the procedure it
+    is in and in the procedures around it, the innermost first, then those declared in
+    the module and then those declared anywhere in the file, as long as every
+    declaration there agrees
+    """
+    # the procedures around every statement, the innermost last, and the statements
+    # every procedure (or the module, None) declares directly
+    chains, own, stack = [], {}, []
+    for n, code in enumerate(codes):
+        role = block_role(code)
+        if role == "open":
+            stack.append((n, PROCEDURE.match(code.strip().lower()) is not None))
+        chain = tuple(i for i, procedure in stack if procedure)
+        chains.append(chain)
+        own.setdefault(chain[-1] if chain else None, []).append(code)
+        if role == "close" and stack:
+            stack.pop()
+
+    # the declarations seen in every scope override those of the scopes around it
+    tables = {scope: file_context(scope_codes) for scope, scope_codes in own.items()}
+    tables.setdefault(None, Context())
+    cache: Dict[tuple, Context] = {}
+
+    def seen(chain: tuple) -> Context:
+        if chain not in cache:
+            outer = seen(chain[:-1]) if chain else file_context(codes)
+            inner = tables[chain[-1]] if chain else tables[None]
+            cache[chain] = Context(
+                {**outer.constants, **inner.constants},
+                {**outer.extents, **inner.extents},
+            )
+        return cache[chain]
+
+    return [seen(chain) for chain in chains]
+
+
 def structure(code: str, text: str, context: Context) -> Structure:
     """
     this function finds the anchors and break candidates of a joined statement
@@ -1773,7 +1819,7 @@ def analyse(
     codes = [joined.code for joined in joins]
     bases = expected_indents(codes)
     ends, one, none = block_rules(lines, stmts, codes)
-    context = file_context(codes)
+    contexts = scoped_contexts(codes)
 
     # no line ends in blanks, no file starts or ends with a blank line, no two blank
     # lines follow each other, and the file ends with a newline; what follows the final
@@ -1829,6 +1875,9 @@ def analyse(
             if indent_of(line) == column:
                 message = "comment text not spaced as rule 10 says"
             issues.append(Issue(i, "comment", message, comment, [want]))
+        if len(want) > LIMIT and in_scope(comment, touched):
+            message = f"{len(want)} columns, comment not rewrapped, shorten by hand"
+            issues.append(Issue(i, "overlong", message, comment))
 
     for n, (stmt, base) in enumerate(zip(stmts, bases)):
         if not in_scope(stmt, touched):
@@ -1852,7 +1901,7 @@ def analyse(
             # keep the breaks and the comments, only fix where the lines start and how
             # they are spaced
             normal = normalize(joined)
-            s = structure(normal.code, normal.text, context)
+            s = structure(normal.code, normal.text, contexts[n])
             want = Layout(normal, base, s).render(normal.breaks)
             current = [line.rstrip() for line in lines[stmt.first : stmt.last + 1]]
             replacement = list(current)
@@ -1875,7 +1924,7 @@ def analyse(
                 issues.append(Issue(stmt.first, kind, message, stmt, replacement))
             continue
         current = [lines[i].rstrip() for i in range(stmt.first, stmt.last + 1)]
-        best = best_layout(joined, base, context)
+        best = best_layout(joined, base, contexts[n])
         if best is None:
             for i in stmt.code:
                 if len(lines[i].rstrip()) > LIMIT:
