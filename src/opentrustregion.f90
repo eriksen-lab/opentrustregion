@@ -1093,14 +1093,15 @@ contains
         integer(ip), intent(out) :: error
 
         integer(ip) :: n_param, n_red, iter, min_idx
-        real(rp) :: current_norm, upper_mu, lower_mu, middle_mu, sign_factor
+        real(rp) :: current_norm, upper_mu, lower_mu, middle_mu, sign_factor, &
+                    eigvec_overlap
         logical :: singular_start
         logical, allocatable :: non_degenerate_mask(:)
         real(rp), parameter :: orthogonality_thres = 1e-12_rp, &
                                positive_definite_shift = 1e-8_rp, &
                                alpha_conv_factor = 1e-12_rp
         external :: dgemv
-        real(rp), external :: dnrm2
+        real(rp), external :: dnrm2, ddot
 
         ! initialize error flag
         error = 0
@@ -1114,11 +1115,13 @@ contains
         ! initialize singularity flag
         singular_start = .false.
 
-        ! determine maximum level shift
+        ! determine maximum level shift, a vanishing lowest eigenvalue is treated like
+        ! a negative one since the level-shifted Hessian is singular at a vanishing
+        ! level shift
         min_idx = minloc(red_space_hess_eigvals%re, dim=1)
         non_degenerate_mask = abs(red_space_hess_eigvals - &
                                   red_space_hess_eigvals(min_idx)) > numerical_zero
-        if (red_space_hess_eigvals(min_idx)%re < 0.0_rp) then
+        if (red_space_hess_eigvals(min_idx)%re < numerical_zero) then
             ! check if the (possibly degenerate) eigenspace of the lowest eigenvalue
             ! has a gradient component or if the minimum eigenvalue has a significant
             ! imaginary part since both cases lead to no pole in the solution norm at
@@ -1162,10 +1165,16 @@ contains
                         sign_factor = 1.0_rp
                     end if
 
-                    ! fill the rest of the trust radius with the lowest eigenvector
-                    red_space_solution = red_space_solution + sign_factor * &
-                                         sqrt(trust_radius**2 - current_norm**2) * &
-                                         red_space_hess_right_eigvecs(:, min_idx)
+                    ! fill the rest of the trust radius with the lowest eigenvector,
+                    ! along which the step already has a component unless the
+                    ! gradient is orthogonal to its eigenspace, by moving along it to
+                    ! the trust region boundary
+                    eigvec_overlap = sign_factor * ddot( &
+                        n_red, red_space_solution, 1_ip, &
+                        red_space_hess_right_eigvecs(:, min_idx), 1_ip)
+                    red_space_solution = red_space_solution + sign_factor * ( &
+                        sqrt(eigvec_overlap**2 + trust_radius**2 - current_norm**2) - &
+                        eigvec_overlap) * red_space_hess_right_eigvecs(:, min_idx)
 
                     ! construct full space solution
                     call dgemv("N", n_param, n_red, 1.0_rp, red_space_basis, n_param, &
@@ -1206,9 +1215,12 @@ contains
                 if (error /= 0) return
             end do
 
-            ! perform direct bisection on the shift parameter mu
+            ! perform direct bisection on the shift parameter mu, which is resolved
+            ! relative to itself or, where it converges to zero and the bracket cannot
+            ! shrink relative to it, absolutely
             iter = 0
-            do while (abs(lower_mu - upper_mu) > alpha_conv_factor * abs(lower_mu))
+            do while (abs(lower_mu - upper_mu) > &
+                      alpha_conv_factor * max(abs(lower_mu), numerical_zero))
                 middle_mu = 0.5_rp * (upper_mu + lower_mu)
                 call get_level_shifted_step(middle_mu, .false.)
                 if (error /= 0) return
@@ -1728,12 +1740,15 @@ contains
         ! scale left eigenvectors such that biorthonormality is fulfilled; dgeev stores
         ! the eigenvectors of a complex conjugate pair as the real and imaginary parts
         ! of one complex eigenvector in two consecutive columns, which are scaled
-        ! together
+        ! together; the scaling stops at an eigenvalue whose left and right
+        ! eigenvectors are orthogonal
         i = 1
         do while (i <= n)
             if (eigvals(i)%im == 0.0_rp) then
-                left_eigvecs(:, i) = left_eigvecs(:, i) / ddot( &
-                    n, left_eigvecs(:, i), 1_ip, right_eigvecs(:, i), 1_ip)
+                overlap_re = ddot(n, left_eigvecs(:, i), 1_ip, right_eigvecs(:, i), &
+                                  1_ip)
+                if (abs(overlap_re) <= numerical_zero) exit
+                left_eigvecs(:, i) = left_eigvecs(:, i) / overlap_re
                 i = i + 1
             else
                 ! scale u = l_i + i l_(i+1) such that its overlap u^H v with
@@ -1745,6 +1760,7 @@ contains
                     ddot(n, left_eigvecs(:, i), 1_ip, right_eigvecs(:, i + 1), 1_ip) - &
                     ddot(n, left_eigvecs(:, i + 1), 1_ip, right_eigvecs(:, i), 1_ip)
                 overlap_sq = overlap_re**2 + overlap_im**2
+                if (sqrt(overlap_sq) <= numerical_zero) exit
                 left_re = left_eigvecs(:, i)
                 left_eigvecs(:, i) = (overlap_re * left_re - &
                                       overlap_im * left_eigvecs(:, i + 1)) / overlap_sq
@@ -1753,6 +1769,16 @@ contains
                 i = i + 2
             end if
         end do
+
+        ! left and right eigenvectors are orthogonal for an eigenvalue of a defective
+        ! matrix, whose eigenvectors do not span the space, so that they cannot be
+        ! scaled to biorthonormality
+        if (i <= n) then
+            call settings%log("Eigendecomposition failed: Left and right "// &
+                              "eigenvectors are orthogonal for defective matrix.", &
+                              verbosity_error, .true.)
+            error = 1
+        end if
 
     end subroutine general_mat_diag
 

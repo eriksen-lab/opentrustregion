@@ -1937,6 +1937,7 @@ contains
         real(rp), parameter :: var_thres = 1e-6_rp
         integer(ip) :: error, i_solver, i_case, callback, i_call, &
                        n_calls(n_fault_callbacks)
+        logical :: grad_noise
         integer(ip), parameter :: fault_origins(n_fault_callbacks) = &
             [error_update_orbs, error_obj_func, error_hess_x, error_precond, &
              error_project, error_conv_check]
@@ -2629,40 +2630,47 @@ contains
         ! with a stability check at convergence, a line search and every optional
         ! callback function, once without a fault to count the calls of every callback
         ! function and then letting every one of these calls fail in turn, for every
-        ! subsystem solver, and check that the error is reported with the origin of the
-        ! failing callback function and that the reported counters still agree with the
-        ! calls
+        ! subsystem solver and for the Davidson-family subsystem solvers also with a
+        ! perturbed gradient, whose perturbation is projected, and check that the error
+        ! is reported with the origin of the failing callback function and that the
+        ! reported counters still agree with the calls
         do i_solver = 1, size(subsystem_solver_options)
-            call run_with_fault(0_ip, 0_ip)
-            if (error /= 0) then
-                write(stderr, *) "test_solver failed: Produced error without fault "// &
-                    "with "//trim(subsystem_solver_options(i_solver))// &
-                    " subsystem solver."
-                test_solver = .false.
-                cycle
-            end if
-            n_calls = fault_context%n_callback_calls
-            do callback = 1, n_fault_callbacks
-                do i_call = 1, n_calls(callback)
-                    call run_with_fault(callback, i_call)
-                    write(call_number, '(I0)') i_call
-                    if (error /= fault_origins(callback) + 1) then
-                        write(stderr, *) "test_solver failed: Error of failing "// &
-                            trim(fault_callback_names(callback))//" at call "// &
-                            trim(call_number)//" not reported with its origin with "// &
-                            trim(subsystem_solver_options(i_solver))// &
-                            " subsystem solver."
-                        test_solver = .false.
-                    end if
-                    if (.not. check_call_counts( &
-                        fault_context, "solver", &
-                        "for failing "//trim(fault_callback_names(callback))// &
-                        " at call "//trim(call_number)//" with "// &
-                        trim(subsystem_solver_options(i_solver))//" subsystem solver", &
-                        n_hess_x=state%n_hess_x, n_update_orbs=state%n_update_orbs, &
-                        n_obj_func=state%n_obj_func)) then
-                        test_solver = .false.
-                    end if
+            do i_case = 1, 2
+                grad_noise = i_case == 2
+                if (grad_noise .and. &
+                    index(subsystem_solver_options(i_solver), "davidson") == 0) cycle
+                case_name = trim(subsystem_solver_options(i_solver))// &
+                            " subsystem solver"
+                if (grad_noise) case_name = trim(case_name)//" and perturbed gradient"
+                call run_with_fault(0_ip, 0_ip)
+                if (error /= 0) then
+                    write(stderr, *) "test_solver failed: Produced error without "// &
+                        "fault with "//trim(case_name)//"."
+                    test_solver = .false.
+                    cycle
+                end if
+                n_calls = fault_context%n_callback_calls
+                do callback = 1, n_fault_callbacks
+                    do i_call = 1, n_calls(callback)
+                        call run_with_fault(callback, i_call)
+                        write(call_number, '(I0)') i_call
+                        if (error /= fault_origins(callback) + 1) then
+                            write(stderr, *) "test_solver failed: Error of failing "// &
+                                trim(fault_callback_names(callback))//" at call "// &
+                                trim(call_number)//" not reported with its origin "// &
+                                "with "//trim(case_name)//"."
+                            test_solver = .false.
+                        end if
+                        if (.not. check_call_counts( &
+                            fault_context, "solver", &
+                            "for failing "//trim(fault_callback_names(callback))// &
+                            " at call "//trim(call_number)//" with "//trim(case_name), &
+                            n_hess_x=state%n_hess_x, &
+                            n_update_orbs=state%n_update_orbs, &
+                            n_obj_func=state%n_obj_func)) then
+                            test_solver = .false.
+                        end if
+                    end do
                 end do
             end do
         end do
@@ -2672,8 +2680,8 @@ contains
         subroutine run_with_fault(fault_callback, fault_call)
             !
             ! this subroutine runs the solver from the saddle point with the subsystem
-            ! solver of the current case and lets the given call of the given callback
-            ! function fail
+            ! solver and the gradient perturbation of the current case and lets the
+            ! given call of the given callback function fail
             !
             integer(ip), intent(in) :: fault_callback, fault_call
 
@@ -2696,6 +2704,7 @@ contains
             settings%jacobi_davidson_start = 0
             settings%line_search = .true.
             settings%stability = .true.
+            settings%grad_noise = grad_noise
             settings%precond => faulty_precond
             settings%project => faulty_project
             settings%conv_check => faulty_conv_check
@@ -3410,7 +3419,7 @@ contains
                     red_space_solution(n_trial), trust_radius, mu, &
                     grad_coupled_component, newton_solution(n_param), &
                     newton_red_space_solution(n_trial)
-        integer(ip) :: error
+        integer(ip) :: error, i
         type(test_context_type), target :: context
 
         ! assume tests pass
@@ -3452,6 +3461,85 @@ contains
         if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
             write(stderr, *) "test_bisection_ah failed: Full space solution not "// &
                 "correct for symmetric Hessian."
+            test_bisection_ah = .false.
+        end if
+        if (mu >= minval(red_space_hess_eigvals)) then
+            write(stderr, *) "test_bisection_ah failed: Level shift not below "// &
+                "lowest reduced space Hessian eigenvalue."
+            test_bisection_ah = .false.
+        end if
+
+        ! set up a reduced space Hessian in an orthonormal basis with a negative
+        ! eigenvalue whose eigenvector lies along the gradient and which is large
+        ! compared to the gradient, so that the step at the starting alpha is longer
+        ! than the trust radius and alpha has to be increased repeatedly to bracket the
+        ! trust radius
+        red_space_basis = 0.0_rp
+        red_space_hess = 0.0_rp
+        do i = 1, n_trial
+            red_space_basis(i, i) = 1.0_rp
+        end do
+        red_space_hess(1, 1) = -10.0_rp
+        red_space_hess(2, 2) = 2.0_rp
+        red_space_hess(3, 3) = 3.0_rp
+        grad_norm = 0.1_rp
+        grad = 0.0_rp
+        grad(1) = grad_norm
+        trust_radius = 0.5_rp
+        call ref_symm_mat_diag(red_space_hess, red_space_hess_eigvals, &
+                               red_space_hess_right_eigvecs)
+        red_space_hess_left_eigvecs = red_space_hess_right_eigvecs
+
+        ! perform bisection and check whether the solution respects the trust radius
+        ! and satisfies the level-shifted Newton equation with a level shift below the
+        ! lowest eigenvalue
+        call bisection_ah(red_space_hess, grad_norm, red_space_basis, &
+                          red_space_hess_eigvals, red_space_hess_right_eigvecs, &
+                          red_space_hess_left_eigvecs, trust_radius, solution, &
+                          red_space_solution, mu, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_bisection_ah failed: Produced error when alpha "// &
+                "has to be increased."
+            test_bisection_ah = .false.
+        end if
+        if (abs(norm2(solution) - trust_radius) > tol) then
+            write(stderr, *) "test_bisection_ah failed: Solution does not respect "// &
+                "trust radius when alpha has to be increased."
+            test_bisection_ah = .false.
+        end if
+        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad) > tol) then
+            write(stderr, *) "test_bisection_ah failed: Step does not satisfy "// &
+                "level-shifted Newton equation when alpha has to be increased."
+            test_bisection_ah = .false.
+        end if
+        if (mu >= minval(red_space_hess_eigvals)) then
+            write(stderr, *) "test_bisection_ah failed: Level shift not below "// &
+                "lowest reduced space Hessian eigenvalue when alpha has to be "// &
+                "increased."
+            test_bisection_ah = .false.
+        end if
+
+        ! let the gradient vanish, so that the lowest augmented Hessian eigenvector, the
+        ! eigenvector of the negative lowest reduced space Hessian eigenvalue, which
+        ! lies along the gradient direction, so that it is not the hard case, has no
+        ! level-shift component, and check that an error is returned and an error
+        ! message is printed
+        grad_norm = 0.0_rp
+        call setup_error_logging(settings, context)
+        call bisection_ah(red_space_hess, grad_norm, red_space_basis, &
+                          red_space_hess_eigvals, red_space_hess_right_eigvecs, &
+                          red_space_hess_left_eigvecs, trust_radius, solution, &
+                          red_space_solution, mu, settings, error)
+        if (error /= 1) then
+            write(stderr, *) "test_bisection_ah failed: No error returned when "// &
+                "lowest augmented Hessian eigenvector has no level-shift component."
+            test_bisection_ah = .false.
+        end if
+        if (len_trim(context%log_message) == 0) then
+            write(stderr, *) "test_bisection_ah failed: No error message printed "// &
+                "when lowest augmented Hessian eigenvector has no level-shift "// &
+                "component."
             test_bisection_ah = .false.
         end if
 
@@ -3645,13 +3733,17 @@ contains
             [character(len=68) :: "symmetric Hessian", &
              "asymmetric Hessian with right eigenvector along gradient direction", &
              "asymmetric Hessian with right eigenvector against gradient direction"]
+        character(len=*), parameter :: newton_case_names(2) = &
+            [character(len=38) :: "at the trust radius", &
+             "exceeding the trust radius by one ulp"]
         type(solver_settings_type) :: settings
         real(rp) :: red_space_basis(n_param, n_trial), grad(n_param), grad_norm, &
                     red_space_hess(n_trial, n_trial), &
                     red_space_hess_left_eigvecs(n_trial, n_trial), &
                     red_space_hess_right_eigvecs(n_trial, n_trial), solution(n_param), &
                     red_space_solution(n_trial), trust_radius, mu, &
-                    grad_coupled_component, expected_red_space_solution(n_trial)
+                    grad_coupled_component, expected_red_space_solution(n_trial), &
+                    eigvec_overlap, rotation(n_trial, n_trial)
         complex(rp) :: red_space_hess_eigvals(n_trial)
         integer(ip) :: error, i_case
         logical :: positive_definite
@@ -3824,6 +3916,42 @@ contains
             test_bisection_mu = .false.
         end if
 
+        ! rotate the eigenvector of the lowest eigenvalue of the symmetric hard case
+        ! slightly towards the gradient direction, so that the solution norm has a pole
+        ! at the lowest eigenvalue but the step at a level shift just below it, which
+        ! already has a component along this eigenvector, lies within the trust radius,
+        ! and check that the rest of the trust radius is filled along this eigenvector
+        ! against the gradient with the level shift equal to the lowest eigenvalue
+        eigvec_overlap = 1e-9_rp
+        rotation = reshape([sqrt(1.0_rp - eigvec_overlap**2), -eigvec_overlap, 0.0_rp, &
+                            eigvec_overlap, sqrt(1.0_rp - eigvec_overlap**2), 0.0_rp, &
+                            0.0_rp, 0.0_rp, 1.0_rp], [n_trial, n_trial])
+        red_space_hess = matmul(matmul(rotation, red_space_hess), transpose(rotation))
+        trust_radius = 0.6_rp
+        call diagonalize(.true.)
+        call bisection_mu(red_space_hess, grad_norm, red_space_basis, &
+                          red_space_hess_eigvals, red_space_hess_right_eigvecs, &
+                          red_space_hess_left_eigvecs, trust_radius, solution, &
+                          red_space_solution, mu, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_bisection_mu failed: Produced error for lowest "// &
+                "eigenvector nearly orthogonal to gradient direction."
+            test_bisection_mu = .false.
+        end if
+        if (abs(norm2(solution) - trust_radius) > tol) then
+            write(stderr, *) "test_bisection_mu failed: Solution does not respect "// &
+                "trust radius for lowest eigenvector nearly orthogonal to gradient "// &
+                "direction."
+            test_bisection_mu = .false.
+        end if
+        if (abs(mu + 2.0_rp) > tol .or. &
+            dot_product(red_space_solution, rotation(:, 2)) >= 0.0_rp) then
+            write(stderr, *) "test_bisection_mu failed: Level shift not equal to "// &
+                "lowest eigenvalue or step not against gradient along lowest "// &
+                "eigenvector nearly orthogonal to gradient direction."
+            test_bisection_mu = .false.
+        end if
+
         ! set up hard case with degenerate lowest eigenvalues
         call setup_hard_case([5.0_rp, -2.0_rp, -2.0_rp], red_space_basis, grad_norm, &
                              red_space_hess)
@@ -3877,28 +4005,69 @@ contains
             test_bisection_mu = .false.
         end if
 
-        ! let the Newton step of a positive-definite Hessian reach the trust radius
-        ! exactly and check that it is taken without a level shift, since a bisection
-        ! towards a vanishing level shift could not converge
+        ! let the Newton step of a positive-definite Hessian with a small lowest
+        ! eigenvalue reach the trust radius exactly or exceed it by the smallest
+        ! representable amount and check that it is taken without a level shift,
+        ! directly in the first case, since a bisection towards a vanishing level shift
+        ! could not converge, and in the second case after a bisection which resolves
+        ! the vanishing level shift absolutely, since the bracket cannot shrink
+        ! relative to it within the bisection iterations
         red_space_hess = 0.0_rp
-        red_space_hess(1, 1) = 2.0_rp
+        red_space_hess(1, 1) = 1e-3_rp
         red_space_hess(2, 2) = 3.0_rp
         red_space_hess(3, 3) = 4.0_rp
-        trust_radius = grad_norm / red_space_hess(1, 1)
+        call diagonalize(.true.)
+        do i_case = 1, 2
+            trust_radius = grad_norm / red_space_hess(1, 1)
+            if (i_case == 2) trust_radius = nearest(trust_radius, -1.0_rp)
+            call bisection_mu(red_space_hess, grad_norm, red_space_basis, &
+                              red_space_hess_eigvals, red_space_hess_right_eigvecs, &
+                              red_space_hess_left_eigvecs, trust_radius, solution, &
+                              red_space_solution, mu, settings, error)
+            if (error /= 0) then
+                write(stderr, *) "test_bisection_mu failed: Produced error for "// &
+                    "Newton step "//trim(newton_case_names(i_case))//"."
+                test_bisection_mu = .false.
+            end if
+            if (abs(mu) > tol .or. &
+                any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > &
+                    tol * trust_radius)) then
+                write(stderr, *) "test_bisection_mu failed: Newton step "// &
+                    trim(newton_case_names(i_case))//" not taken without a level shift."
+                test_bisection_mu = .false.
+            end if
+        end do
+
+        ! let the lowest eigenvalue of a positive semidefinite Hessian vanish with an
+        ! eigenvector that has a component along the gradient direction, so that the
+        ! level-shifted Hessian is singular at a vanishing level shift, at which the
+        ! solution norm has a pole, and check that the solution is the level-shifted
+        ! Newton step on the trust region boundary with a negative level shift
+        red_space_hess = 0.0_rp
+        red_space_hess(1:2, 1:2) = 1.0_rp
+        red_space_hess(3, 3) = 3.0_rp
+        trust_radius = 0.5_rp
         call diagonalize(.true.)
         call bisection_mu(red_space_hess, grad_norm, red_space_basis, &
                           red_space_hess_eigvals, red_space_hess_right_eigvecs, &
                           red_space_hess_left_eigvecs, trust_radius, solution, &
                           red_space_solution, mu, settings, error)
         if (error /= 0) then
-            write(stderr, *) "test_bisection_mu failed: Produced error for Newton "// &
-                "step at the trust radius."
+            write(stderr, *) "test_bisection_mu failed: Produced error for "// &
+                "vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
-        if (abs(mu) > tol .or. &
-            any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > tol)) then
-            write(stderr, *) "test_bisection_mu failed: Newton step at the trust "// &
-                "radius not taken without a level shift."
+        if (abs(norm2(solution) - trust_radius) > tol .or. &
+            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad) > tol) then
+            write(stderr, *) "test_bisection_mu failed: Solution for vanishing "// &
+                "lowest eigenvalue not level-shifted Newton step on trust region "// &
+                "boundary."
+            test_bisection_mu = .false.
+        end if
+        if (mu >= 0.0_rp) then
+            write(stderr, *) "test_bisection_mu failed: Level shift not negative "// &
+                "for vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
 
@@ -4406,9 +4575,14 @@ contains
                     rotation(2, 2), rotation_right_eigvecs(2, 2), &
                     rotation_left_eigvecs(2, 2)
         complex(rp) :: eigvals(n_param), rotation_eigvals(2), right_eigvec(2), &
-                       left_eigvec(2)
-        integer(ip) :: error, i
+                       left_eigvec(2), defective_eigvals(4)
+        real(rp) :: defective_matrix(4, 4), defective_right_eigvecs(4, 4), &
+                    defective_left_eigvecs(4, 4)
+        integer(ip) :: error, i, i_case
         type(test_context_type), target :: context
+        character(len=*), parameter :: defective_case_names(2) = &
+            [character(len=29) :: "defective real eigenvalue", &
+             "defective complex eigenvalues"]
 
         ! assume tests pass
         test_general_mat_diag = .true.
@@ -4503,6 +4677,38 @@ contains
                 "eigenvector for complex eigenvalue."
             test_general_mat_diag = .false.
         end if
+
+        ! diagonalize matrices with a Jordan block of a real eigenvalue and of the
+        ! scaled rotation, whose left and right eigenvectors of the defective
+        ! eigenvalues are orthogonal and cannot be scaled to biorthonormality, and
+        ! check that an error is returned and an error message is printed
+        do i_case = 1, 2
+            defective_matrix = 0.0_rp
+            if (i_case == 1) then
+                defective_matrix(1, 2) = 1.0_rp
+                defective_matrix(3, 3) = 1.0_rp
+                defective_matrix(4, 4) = 2.0_rp
+            else
+                defective_matrix(1:2, 1:2) = reshape([0.6_rp, 0.8_rp, &
+                                                      -0.8_rp, 0.6_rp], [2, 2])
+                defective_matrix(3:4, 3:4) = defective_matrix(1:2, 1:2)
+                defective_matrix(1:2, 3:4) = identity_matrix(2_ip)
+            end if
+            call setup_error_logging(settings, context)
+            call general_mat_diag(defective_matrix, defective_eigvals, &
+                                  defective_right_eigvecs, defective_left_eigvecs, &
+                                  settings, error)
+            if (error /= 1) then
+                write(stderr, *) "test_general_mat_diag failed: No error returned "// &
+                    "for "//trim(defective_case_names(i_case))//"."
+                test_general_mat_diag = .false.
+            end if
+            if (len_trim(context%log_message) == 0) then
+                write(stderr, *) "test_general_mat_diag failed: No error message "// &
+                    "printed for "//trim(defective_case_names(i_case))//"."
+                test_general_mat_diag = .false.
+            end if
+        end do
 
     end function test_general_mat_diag
 
