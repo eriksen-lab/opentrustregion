@@ -2659,16 +2659,14 @@ contains
 
         real(rp), parameter :: func_resolution_safety_factor = 10.0_rp
         real(rp) :: ratio, func_resolution
+        logical :: finite_changes
 
         ! default to maximum precision not yet reached
         state%max_precision_reached = .false.
 
         ! check if function value has not decreased up to floating point precision, in
-        ! which case the step is not taken, relative to the larger of the function
-        ! values before and after the step, so that the resolution does not vanish at a
-        ! vanishing function value which the step changes
-        func_resolution = func_resolution_safety_factor * &
-                          max(abs(func), abs(func + actual_func_diff)) * epsilon(1.0_rp)
+        ! which case the step is not taken
+        func_resolution = func_resolution_safety_factor * abs(func) * epsilon(1.0_rp)
         if (abs(actual_func_diff) <= func_resolution .and. &
             abs(pred_func_diff) <= func_resolution) then
             call settings%log(function_unchanged_warning_msg, verbosity_warning)
@@ -2681,8 +2679,12 @@ contains
         ratio = actual_func_diff / pred_func_diff
 
         ! decrease trust radius if micro iterations are unable to converge, if function
-        ! value has not decreased or if individual orbitals change too much
-        if (.not. micro_converged .or. ratio < 0.0_rp .or. &
+        ! value has not decreased, if the function changes are not finite, as for an
+        ! objective function which overflows at the step, or if individual orbitals
+        ! change too much
+        finite_changes = abs(actual_func_diff) <= huge(1.0_rp) .and. &
+                         abs(pred_func_diff) <= huge(1.0_rp)
+        if (.not. micro_converged .or. ratio < 0.0_rp .or. .not. finite_changes .or. &
             any(abs(solution) > pi / 4)) then
             ! a rejected step whose predicted function change can not be resolved can
             ! not be improved by a smaller trust radius, as when the objective function
