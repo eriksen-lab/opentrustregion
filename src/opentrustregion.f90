@@ -70,12 +70,10 @@ module opentrustregion
         minres_max_iter_warning_msg = "MINRES: The iteration limit was reached. "// &
                                       "The approximate solution of the last "// &
                                       "iteration is used.", &
-        function_unchanged_warning_msg = &
-            "Function value barely changed. Convergence criterion is not fulfilled "// &
-            "but calculation should be converged up to floating point precision.", &
-        trust_radius_too_small_warning_msg = &
-            "Trust radius too small. Convergence criterion is not fulfilled but "// &
-            "calculation should be converged up to floating point precision.", &
+        function_unchanged_warning_msg = "No further improvement of cost function "// &
+                                         "possible. Convergence criterion is not "// &
+                                         "fulfilled but calculation should be "// &
+                                         "converged up to floating point precision.", &
         random_trial_vector_warning_msg = "Number of random trial vectors should "// &
                                           "be smaller than half the number of "// &
                                           "parameters.", &
@@ -118,8 +116,9 @@ module opentrustregion
         ! number of orbital updates, objective function evaluations and Hessian linear
         ! transformations, the latter including those of the internal stability checks
         integer(ip) :: n_update_orbs = 0, n_obj_func = 0, n_hess_x = 0
-        ! whether the trust-region steps could no longer resolve a change of the
-        ! objective function or the gradient vanishes exactly, unless the convergence
+        ! whether the predicted function change of the last trust-region step could
+        ! not be resolved while its actual change could not be resolved either or the
+        ! step was rejected, or the gradient vanishes exactly, unless the convergence
         ! check passes
         logical :: max_precision_reached = .false.
         ! state of the most recent internal stability check
@@ -2166,7 +2165,7 @@ contains
                                  red_space_hess_eigvals(:), red_space_hess_eigvecs(:, :)
         integer(ip) :: n_trial, i, imicro, initial_imicro, min_idx, jacobi_davidson_iter
         logical :: accept_step, micro_converged, newton
-        real(rp) :: residual_norm, red_factor, initial_residual_norm, new_func, ratio
+        real(rp) :: residual_norm, red_factor, initial_residual_norm, new_func
         real(rp), parameter :: &
             newton_eigval_thresh = -1e-5_rp, level_shift_local_thres = 1e-12_rp, &
             solution_overlap_thresh = 0.5_rp, residual_norm_floor = 1e-12_rp, &
@@ -2362,13 +2361,14 @@ contains
             call add_error_origin(error, error_obj_func, settings)
             if (error /= 0) return
 
-            ! calculate ratio of evaluated function and predicted function
-            ratio = (new_func - func) / &
-                    ddot(n_param, solution, 1_ip, grad + 0.5_rp * h_solution, 1_ip)
-
-            ! decide whether to accept step and modify trust radius
-            accept_step = accept_trust_region_step(solution, ratio, micro_converged, &
-                                                   settings, state)
+            ! decide whether to accept step and modify trust radius; the Davidson
+            ! trust region is always Euclidean, so this norm must be computed here
+            ! explicitly rather than reused from solution_norm, which is only set
+            ! once after this loop exits
+            accept_step = accept_trust_region_step( &
+                solution, dnrm2(n_param, solution, 1_ip), func, new_func - func, &
+                ddot(n_param, solution, 1_ip, grad + 0.5_rp * h_solution, 1_ip), &
+                micro_converged, settings, state)
             if (state%max_precision_reached) exit
         end do
 
@@ -2400,7 +2400,7 @@ contains
         logical :: accept_step, micro_converged
         real(rp) :: model_func, initial_residual_norm, curvature, step_size, &
                     solution_dot, solution_direction_dot, direction_dot, step_length, &
-                    model_func_new, new_func, ratio
+                    model_func_new, new_func
         real(rp), allocatable :: h_solution(:), residual(:), precond_residual(:), &
                                  direction(:), hess_direction(:), precond_solution(:), &
                                  precond_direction(:), solution_new(:), &
@@ -2568,99 +2568,80 @@ contains
         call add_error_origin(error, error_obj_func, settings)
         if (error /= 0) return
 
-        if (abs(new_func - func) / max(abs(new_func), abs(func)) > numerical_zero) then
-            ! calculate ratio of evaluated function and predicted function
-            ratio = (new_func - func) / &
-                    ddot(n_param, solution, 1_ip, grad + 0.5_rp * h_solution, 1_ip)
-
-            ! reduce trust region until step is accepted
-            do while (.true.)
-                ! decide whether to accept step and modify trust radius
-                accept_step = accept_trust_region_step(solution, ratio, &
-                                                       micro_converged, settings, state)
-                if (accept_step .or. state%max_precision_reached) exit
-
-                ! check if step exceeds new trust region boundary
-                call abs_diag_precond(solution, h_diag, precond_solution, settings, &
-                                      error)
-                if (error /= 0) return
-
-                if (ddot(n_param, solution, 1_ip, precond_solution, 1_ip) > &
-                    state%trust_radius**2) then
-                    ! find step that exceeds trust region boundary
-                    do i = 1, size(solutions, 2)
-                        call abs_diag_precond(solutions(:, i), h_diag, &
-                                              precond_solution, settings, error)
-                        if (error /= 0) return
-
-                        if (ddot(n_param, solutions(:, i), 1_ip, precond_solution, &
-                                 1_ip) > state%trust_radius**2) then
-                            ! get previous step
-                            solution = solutions(:, i - 1)
-                            h_solution = h_solutions(:, i - 1)
-
-                            ! get direction
-                            direction = solutions(:, i) - solutions(:, i - 1)
-                            hess_direction = h_solutions(:, i) - h_solutions(:, i - 1)
-
-                            ! precondition current solution and direction
-                            call abs_diag_precond(solution, h_diag, precond_solution, &
-                                                  settings, error)
-                            if (error /= 0) return
-                            call abs_diag_precond(direction, h_diag, &
-                                                  precond_direction, settings, error)
-                            if (error /= 0) return
-
-                            ! calculate dot products
-                            solution_dot = &
-                                ddot(n_param, solution, 1_ip, precond_solution, 1_ip)
-                            solution_direction_dot = &
-                                ddot(n_param, solution, 1_ip, precond_direction, 1_ip)
-                            direction_dot = &
-                                ddot(n_param, direction, 1_ip, precond_direction, 1_ip)
-
-                            ! solve quadratic equation
-                            step_size = (-solution_direction_dot + sqrt( &
-                                solution_direction_dot**2 + direction_dot * &
-                                (state%trust_radius**2 - solution_dot))) / direction_dot
-
-                            ! get step to boundary
-                            solution = solution + step_size * direction
-                            h_solution = h_solution + step_size * hess_direction
-
-                            ! evaluate function at predicted point
-                            new_func = obj_func(solution, error, settings%context)
-                            state%n_obj_func = state%n_obj_func + 1
-                            call add_error_origin(error, error_obj_func, settings)
-                            if (error /= 0) return
-
-                            ! calculate ratio of evaluated function and predicted
-                            ! function
-                            ratio = (new_func - func) / &
-                                    ddot(n_param, solution, 1_ip, &
-                                         grad + 0.5_rp * h_solution, 1_ip)
-
-                            ! exit to retry whether step is accepted
-                            micro_converged = .true.
-                            exit
-                        end if
-                    end do
-                end if
-            end do
-        else
-            call settings%log(function_unchanged_warning_msg, verbosity_warning)
-            state%max_precision_reached = .true.
-        end if
-
-        ! get norm of orbital rotation in the metric of the absolute diagonal
-        ! preconditioner, which is only needed for a step that is taken
-        if (state%max_precision_reached) then
-            solution_norm = 0.0_rp
-        else
+        ! reduce trust region until step is accepted
+        do while (.true.)
+            ! get norm of the step in the metric of the absolute diagonal
+            ! preconditioner, which defines the trust region
             call abs_diag_precond(solution, h_diag, precond_solution, settings, error)
             if (error /= 0) return
             solution_norm = sqrt(ddot(n_param, solution, 1_ip, precond_solution, 1_ip))
-        end if
+
+            ! decide whether to accept step and modify trust radius
+            accept_step = accept_trust_region_step( &
+                solution, solution_norm, func, new_func - func, &
+                ddot(n_param, solution, 1_ip, grad + 0.5_rp * h_solution, 1_ip), &
+                micro_converged, settings, state)
+            if (accept_step .or. state%max_precision_reached) exit
+
+            ! check if step exceeds new trust region boundary
+            if (solution_norm > state%trust_radius) then
+                ! find step that exceeds trust region boundary
+                do i = 1, size(solutions, 2)
+                    call abs_diag_precond(solutions(:, i), h_diag, precond_solution, &
+                                          settings, error)
+                    if (error /= 0) return
+
+                    if (ddot(n_param, solutions(:, i), 1_ip, precond_solution, 1_ip) > &
+                        state%trust_radius**2) then
+                        ! get previous step
+                        solution = solutions(:, i - 1)
+                        h_solution = h_solutions(:, i - 1)
+
+                        ! get direction
+                        direction = solutions(:, i) - solutions(:, i - 1)
+                        hess_direction = h_solutions(:, i) - h_solutions(:, i - 1)
+
+                        ! precondition current solution and direction
+                        call abs_diag_precond(solution, h_diag, precond_solution, &
+                                              settings, error)
+                        if (error /= 0) return
+                        call abs_diag_precond(direction, h_diag, precond_direction, &
+                                              settings, error)
+                        if (error /= 0) return
+
+                        ! calculate dot products
+                        solution_dot = &
+                            ddot(n_param, solution, 1_ip, precond_solution, 1_ip)
+                        solution_direction_dot = &
+                            ddot(n_param, solution, 1_ip, precond_direction, 1_ip)
+                        direction_dot = &
+                            ddot(n_param, direction, 1_ip, precond_direction, 1_ip)
+
+                        ! solve quadratic equation
+                        step_size = (-solution_direction_dot + sqrt( &
+                            solution_direction_dot**2 + direction_dot * &
+                            (state%trust_radius**2 - solution_dot))) / direction_dot
+
+                        ! get step to boundary
+                        solution = solution + step_size * direction
+                        h_solution = h_solution + step_size * hess_direction
+
+                        ! evaluate function at predicted point
+                        new_func = obj_func(solution, error, settings%context)
+                        state%n_obj_func = state%n_obj_func + 1
+                        call add_error_origin(error, error_obj_func, settings)
+                        if (error /= 0) return
+
+                        ! exit to retry whether step is accepted
+                        micro_converged = .true.
+                        exit
+                    end if
+                end do
+            end if
+        end do
+
+        ! a step that is not taken has no norm
+        if (state%max_precision_reached) solution_norm = 0.0_rp
 
         ! deallocate arrays
         deallocate(h_solution, solutions, h_solutions, direction, hess_direction, &
@@ -2668,32 +2649,61 @@ contains
 
     end subroutine truncated_conjugate_gradient
 
-    logical function accept_trust_region_step(solution, ratio, micro_converged, &
-                                              settings, state)
+    logical function accept_trust_region_step(solution, solution_norm, func, &
+                                              actual_func_diff, pred_func_diff, &
+                                              micro_converged, settings, state)
         !
         ! this function checks whether the trust region step is accepted and modifies
         ! the trust radius in the state accordingly, where it also flags whether the
-        ! trust radius became too small to resolve a change of the objective function
+        ! function changes could not be resolved anymore
         !
-        real(rp), intent(in) :: solution(:), ratio
+        real(rp), intent(in) :: solution(:), solution_norm, func, actual_func_diff, &
+                                pred_func_diff
         logical, intent(in) :: micro_converged
         type(solver_settings_type), intent(in) :: settings
         type(solver_state_type), intent(inout), target :: state
 
+        real(rp), parameter :: func_resolution_safety_factor = 10.0_rp
+        real(rp) :: ratio, func_resolution
+        logical :: finite_changes
+
         ! default to maximum precision not yet reached
         state%max_precision_reached = .false.
 
-        ! decrease trust radius if micro iterations are unable to converge, if function
-        ! value has not decreased or if individual orbitals change too much
-        if (.not. micro_converged .or. ratio < 0.0_rp .or. &
-            any(abs(solution) > pi / 4)) then
-            state%trust_radius = trust_radius_shrink_factor * state%trust_radius
+        ! check if function value has not decreased up to floating point precision, in
+        ! which case the step is not taken
+        func_resolution = func_resolution_safety_factor * abs(func) * epsilon(1.0_rp)
+        if (abs(actual_func_diff) <= func_resolution .and. &
+            abs(pred_func_diff) <= func_resolution) then
+            call settings%log(function_unchanged_warning_msg, verbosity_warning)
+            state%max_precision_reached = .true.
             accept_trust_region_step = .false.
-            if (state%trust_radius < numerical_zero) then
-                call settings%log(trust_radius_too_small_warning_msg, verbosity_warning)
+            return
+        end if
+
+        ! calculate ratio of evaluated function and predicted function
+        ratio = actual_func_diff / pred_func_diff
+
+        ! decrease trust radius if micro iterations are unable to converge, if function
+        ! value has not decreased, if the function changes are not finite, as for an
+        ! objective function which overflows at the step, or if individual orbitals
+        ! change too much
+        finite_changes = abs(actual_func_diff) <= huge(1.0_rp) .and. &
+                         abs(pred_func_diff) <= huge(1.0_rp)
+        if (.not. micro_converged .or. ratio < 0.0_rp .or. .not. finite_changes .or. &
+            any(abs(solution) > pi / 4)) then
+            ! a rejected step whose predicted function change can not be resolved can
+            ! not be improved by a smaller trust radius, as when the objective function
+            ! and the orbital update disagree by more than the resolution, so the step
+            ! is not taken and maximum precision is reached
+            if (abs(pred_func_diff) <= func_resolution) then
+                call settings%log(function_unchanged_warning_msg, verbosity_warning)
                 state%max_precision_reached = .true.
+                accept_trust_region_step = .false.
                 return
             end if
+            state%trust_radius = trust_radius_shrink_factor * state%trust_radius
+            accept_trust_region_step = .false.
         ! check if step is too long
         else if (ratio < trust_radius_shrink_ratio) then
             state%trust_radius = trust_radius_shrink_factor * state%trust_radius
@@ -2703,7 +2713,8 @@ contains
             accept_trust_region_step = .true.
         ! check if step is potentially too short
         else
-            state%trust_radius = trust_radius_expand_factor * state%trust_radius
+            if (solution_norm >= 0.99_rp * state%trust_radius) &
+                state%trust_radius = trust_radius_expand_factor * state%trust_radius
             accept_trust_region_step = .true.
         end if
 

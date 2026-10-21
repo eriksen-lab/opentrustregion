@@ -1585,25 +1585,30 @@ contains
 
     end subroutine ref_symm_mat_diag
 
-    function ref_step_trust_radius(trust_radius, ratio)
+    function ref_step_trust_radius(trust_radius, ratio, step_norm)
         !
         ! this function recovers the trust radius an accepted step was computed for
-        ! from the trust radius and the ratio of actual to predicted function change of
-        ! the step
+        ! from the trust radius, the ratio of actual to predicted function change of
+        ! the step and its norm, since a high ratio only expands the trust radius for a
+        ! step which nearly reaches it, taking it as expanded where the norm of the
+        ! step lies within both the expanded and the unchanged trust radius
         !
         use opentrustregion, only: &
             trust_radius_shrink_ratio, trust_radius_expand_ratio, &
             trust_radius_shrink_factor, trust_radius_expand_factor
 
-        real(rp), intent(in) :: trust_radius, ratio
+        real(rp), intent(in) :: trust_radius, ratio, step_norm
         real(rp) :: ref_step_trust_radius
 
         if (ratio < trust_radius_shrink_ratio) then
             ref_step_trust_radius = trust_radius / trust_radius_shrink_factor
-        else if (ratio < trust_radius_expand_ratio) then
-            ref_step_trust_radius = trust_radius
-        else
+        else if ( &
+            ratio >= trust_radius_expand_ratio .and. &
+            step_norm >= 0.99_rp * trust_radius / trust_radius_expand_factor .and. &
+            step_norm <= trust_radius / trust_radius_expand_factor + tol) then
             ref_step_trust_radius = trust_radius / trust_radius_expand_factor
+        else
+            ref_step_trust_radius = trust_radius
         end if
 
     end function ref_step_trust_radius
@@ -5350,34 +5355,79 @@ contains
         !
         use opentrustregion, only: &
             solver_settings_type, accept_trust_region_step, trust_radius_shrink_ratio, &
-            trust_radius_too_small_warning_msg, trust_radius_expand_ratio, &
-            trust_radius_shrink_factor, trust_radius_expand_factor
+            trust_radius_expand_ratio, trust_radius_shrink_factor, &
+            trust_radius_expand_factor, function_unchanged_warning_msg
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_positive_inf, &
+                                                 ieee_quiet_nan
 
         ! cases with the reason for accepting or rejecting the step, the size of the
-        ! first rotation, the ratio of actual to predicted reduction, whether the
-        ! micro iterations converged, and the expected acceptance and trust radius
-        character(len=*), parameter :: case_names(6) = &
-            [character(len=35) :: "micro iterations have not converged", &
-             "ratio is negative", "individual rotations are too large", &
-             "ratio is too small", "ratio is acceptable", "ratio is too large"]
+        ! first rotation, the norm of the step, the ratio of actual to predicted
+        ! function change, whether the micro iterations converged, and the expected
+        ! acceptance and trust radius, for a starting trust radius of one
+        character(len=*), parameter :: case_names(7) = &
+            [character(len=47) :: "micro iterations have not converged", "ratio is "// &
+             "negative", "individual rotations are too large", "ratio is too small", &
+             "ratio is acceptable", "ratio is too large at the trust region boundary", &
+             "ratio is too large within the trust region"]
         real(rp), parameter :: &
-            case_rotations(6) = [0.3_rp, 0.3_rp, 1.0_rp, 0.3_rp, 0.3_rp, 0.3_rp], &
-            case_ratios(6) = [ &
-                1.0_rp, -1.0_rp, 1.0_rp, 0.9_rp * trust_radius_shrink_ratio, &
-                0.5_rp * (trust_radius_shrink_ratio + trust_radius_expand_ratio), &
-                1.1_rp * trust_radius_expand_ratio], &
-            case_trust_radii(6) = [ &
+            case_rotations(7) = &
+                [0.3_rp, 0.3_rp, 1.0_rp, 0.3_rp, 0.3_rp, 0.3_rp, 0.3_rp], &
+            case_step_norms(7) = &
+                [0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 1.0_rp, 0.5_rp], &
+            case_ratios(7) = [ &
+                1.0_rp, -1.0_rp, 1.0_rp, 0.9_rp * trust_radius_shrink_ratio, 0.5_rp * &
+                (trust_radius_shrink_ratio + trust_radius_expand_ratio), 1.1_rp * &
+                trust_radius_expand_ratio, 1.1_rp * trust_radius_expand_ratio], &
+            case_trust_radii(7) = [ &
                 trust_radius_shrink_factor, trust_radius_shrink_factor, &
                 trust_radius_shrink_factor, trust_radius_shrink_factor, 1.0_rp, &
-                trust_radius_expand_factor]
+                trust_radius_expand_factor, 1.0_rp]
         logical, parameter :: &
-            case_converged(6) = [.false., .true., .true., .true., .true., .true.], &
-            case_accepted(6) = [.false., .false., .false., .true., .true., .true.]
+            case_converged(7) = &
+                [.false., .true., .true., .true., .true., .true., .true.], &
+            case_accepted(7) = &
+                [.false., .false., .false., .true., .true., .true., .true.]
+
+        ! cases with the objective function value, the actual and the predicted
+        ! function change, whether the micro iterations converged and whether maximum
+        ! precision is reached, which requires that the predicted change can not be
+        ! resolved relative to the objective function value and that the actual change
+        ! can not be resolved either or the step is rejected
+        character(len=*), parameter :: precision_case_names(9) = &
+            [character(len=68) :: "vanishing function changes", &
+             "changes below the resolution of a large function value", &
+             "changes above the resolution of a small function value", "vanishing "// &
+             "changes of a vanishing function value", "accepted step with only the "// &
+             "predicted change below the resolution", "rejected step with only the "// &
+             "predicted change below the resolution", "unconverged step with only "// &
+             "the predicted change below the resolution", "rejected step with a "// &
+             "huge function increase", "only the actual change below the resolution"]
+        real(rp), parameter :: &
+            precision_case_funcs(9) = [-1.0_rp, -2000.0_rp, -1.0_rp, 0.0_rp, -1.0_rp, &
+                                       -1.0_rp, -1.0_rp, -1.0_rp, -1.0_rp], &
+            precision_case_actual(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-3_rp, &
+                                        1e-3_rp, -1e-3_rp, 1e10_rp, 1e-20_rp], &
+            precision_case_predicted(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, &
+                                           1e-20_rp, -1e-20_rp, -1e-20_rp, -1e-6_rp, &
+                                           1e-3_rp]
+        logical, parameter :: &
+            precision_case_converged(9) = [.true., .true., .true., .true., .true., &
+                                           .true., .false., .true., .true.], &
+            precision_case_reached(9) = [.true., .true., .false., .true., .false., &
+                                         .true., .true., .false., .false.]
+
+        ! cases of an actual or predicted function change which is not finite, as for
+        ! an objective function or a Hessian linear transformation which overflows at
+        ! the step
+        character(len=*), parameter :: non_finite_case_names(3) = &
+            [character(len=23) :: "overflowing function", "function not a number", &
+             "overflowing prediction"]
+        real(rp) :: non_finite_actual(3), non_finite_predicted(3)
 
         logical :: accept_step
         real(rp) :: solution(3)
+        type(solver_state_type) :: state
         type(solver_settings_type) :: settings
-        type(solver_state_type), target :: state
         type(test_context_type), target :: context
         integer(ip) :: i
 
@@ -5389,15 +5439,15 @@ contains
 
         solution = [0.3_rp, 0.3_rp, 0.3_rp]
 
-        ! check for every case whether the step is accepted and the trust radius in the
-        ! state is reduced, kept or expanded, without maximum precision being reported
-        ! as reached in the state, the flag starts set so that a flag which is not
-        ! cleared is detected
+        ! check for every case whether the step is accepted and the trust radius is
+        ! reduced, kept or expanded, without maximum precision being reported as
+        ! reached, the flag starts set so that a flag which is not cleared is detected
         do i = 1, size(case_names)
             state%trust_radius = 1.0_rp
-            solution(1) = case_rotations(i)
             state%max_precision_reached = .true.
-            accept_step = accept_trust_region_step(solution, case_ratios(i), &
+            solution(1) = case_rotations(i)
+            accept_step = accept_trust_region_step(solution, case_step_norms(i), &
+                                                   -1.0_rp, case_ratios(i), 1.0_rp, &
                                                    case_converged(i), settings, state)
             if (accept_step .neqv. case_accepted(i)) then
                 write(stderr, *) "test_accept_trust_region_step failed: Step "// &
@@ -5416,28 +5466,74 @@ contains
             end if
         end do
 
-        ! check if step is rejected and maximum precision is reported as reached if the
-        ! reduced trust radius falls below numerical zero
-        state%trust_radius = 1e-14_rp
-        context%log_message = ""
-        accept_step = &
-            accept_trust_region_step(solution, -1.0_rp, .true., settings, state)
-        if (accept_step) then
-            write(stderr, *) "test_accept_trust_region_step failed: Step accepted "// &
-                "when trust radius becomes too small."
-            test_accept_trust_region_step = .false.
-        end if
-        if (.not. state%max_precision_reached) then
-            write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
-                "precision not reached when trust radius becomes too small."
-            test_accept_trust_region_step = .false.
-        end if
-        if (index(context%log_message, " "//trust_radius_too_small_warning_msg) == 0) &
-            then
-            write(stderr, *) "test_accept_trust_region_step failed: Warning not "// &
-                "printed when trust radius becomes too small."
-            test_accept_trust_region_step = .false.
-        end if
+        ! check for every case of a function change which is not finite, with changes
+        ! of the same sign which would otherwise accept the step, that the step is
+        ! rejected and the trust radius reduced without maximum precision being
+        ! reported
+        non_finite_actual = [ieee_value(1.0_rp, ieee_positive_inf), &
+                             ieee_value(1.0_rp, ieee_quiet_nan), 1.0_rp]
+        non_finite_predicted = [1.0_rp, 1.0_rp, ieee_value(1.0_rp, ieee_positive_inf)]
+        do i = 1, size(non_finite_case_names)
+            state%trust_radius = 1.0_rp
+            accept_step = accept_trust_region_step( &
+                solution, 0.5_rp, -1.0_rp, non_finite_actual(i), &
+                non_finite_predicted(i), .true., settings, state)
+            if (accept_step) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "accepted for "//trim(non_finite_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (abs(state%trust_radius - trust_radius_shrink_factor) > tol) then
+                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
+                    "radius not reduced for "//trim(non_finite_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (state%max_precision_reached) then
+                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
+                    "precision reported as reached for "// &
+                    trim(non_finite_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+        end do
+
+        ! check for every case whether maximum precision is reported as reached and,
+        ! if so, whether the step is rejected with the trust radius left unchanged and
+        ! a warning printed
+        solution(1) = 0.3_rp
+        do i = 1, size(precision_case_names)
+            state%trust_radius = 1.0_rp
+            context%log_message = ""
+            accept_step = accept_trust_region_step( &
+                solution, 0.5_rp, precision_case_funcs(i), precision_case_actual(i), &
+                precision_case_predicted(i), precision_case_converged(i), settings, &
+                state)
+            if (state%max_precision_reached .neqv. precision_case_reached(i)) then
+                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
+                    "precision detected incorrectly for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (.not. precision_case_reached(i)) cycle
+            if (accept_step) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "accepted at maximum precision for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (abs(state%trust_radius - 1.0_rp) > tol) then
+                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
+                    "radius changed at maximum precision for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (index(context%log_message, " "//function_unchanged_warning_msg) == 0) &
+                then
+                write(stderr, *) "test_accept_trust_region_step failed: No warning "// &
+                    "printed at maximum precision for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+        end do
 
     end function test_accept_trust_region_step
 
@@ -5772,7 +5868,9 @@ contains
         ! this function tests the level-shifted Davidson subroutine
         !
         use opentrustregion, only: obj_func_type, hess_x_type, solver_settings_type, &
-                                   level_shifted_davidson, error_hess_x, error_obj_func
+                                   level_shifted_davidson, error_hess_x, &
+                                   error_obj_func, trust_radius_expand_ratio, &
+                                   trust_radius_expand_factor
 
         real(rp) :: func, grad_norm, mu, ratio, input_trust_radius, &
                     overflow_residual_tol, solution_norm
@@ -5845,8 +5943,8 @@ contains
         end if
         ratio = (hartmann6d_func(context%vars + solution) - func) / &
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
-        if (norm2(solution) > ref_step_trust_radius(state%trust_radius, ratio) + tol) &
-            then
+        if (norm2(solution) > ref_step_trust_radius(state%trust_radius, ratio, &
+                                                    norm2(solution)) + tol) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not stay within trust region near minimum."
             test_level_shifted_davidson = .false.
@@ -5867,6 +5965,40 @@ contains
                                     n_hess_x=state%n_hess_x, &
                                     n_obj_func=state%n_obj_func)) &
             test_level_shifted_davidson = .false.
+
+        ! run level-shifted Davidson near the minimum with a trust radius shorter than
+        ! the Newton step, so that the step reaches the trust region boundary, where
+        ! the quadratic model predicts the function change well, and check that the
+        ! trust radius is expanded
+        state%trust_radius = 1e-3_rp
+        call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
+                                    obj_func_funptr, hess_x_funptr, settings, state, &
+                                    solution, solution_norm, mu, error)
+        ratio = (hartmann6d_func(context%vars + solution) - func) / &
+                dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
+        if (error /= 0) then
+            write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
+                "near minimum with trust radius shorter than Newton step."
+            test_level_shifted_davidson = .false.
+        end if
+        if (abs(norm2(solution) - 1e-3_rp) > tol) then
+            write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
+                "not lie at trust region boundary near minimum with trust radius "// &
+                "shorter than Newton step."
+            test_level_shifted_davidson = .false.
+        end if
+        if (ratio < trust_radius_expand_ratio) then
+            write(stderr, *) "test_level_shifted_davidson failed: Step at trust "// &
+                "region boundary near minimum not predicted well enough to expand "// &
+                "the trust radius."
+            test_level_shifted_davidson = .false.
+        end if
+        if (abs(state%trust_radius - trust_radius_expand_factor * 1e-3_rp) > tol) then
+            write(stderr, *) "test_level_shifted_davidson failed: Trust radius not "// &
+                "expanded for a well predicted step at the trust region boundary "// &
+                "near minimum."
+            test_level_shifted_davidson = .false.
+        end if
 
         ! start near saddle point
         context%vars = near_saddle_point
@@ -5901,8 +6033,8 @@ contains
         end if
         ratio = (hartmann6d_func(context%vars + solution) - func) / &
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
-        if (abs(norm2(solution) - ref_step_trust_radius(state%trust_radius, ratio)) > &
-            tol) then
+        if (abs(norm2(solution) - ref_step_trust_radius(state%trust_radius, ratio, &
+                                                        norm2(solution))) > tol) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not lie at trust region boundary near saddle point."
             test_level_shifted_davidson = .false.
@@ -5977,17 +6109,18 @@ contains
         call setup_settings(settings, context)
         hess_x_funptr => hess_x_fun
 
-        ! run level-shifted Davidson with an objective function which always exceeds
-        ! the current one, so that every step is rejected and the trust radius shrinks
-        ! until maximum precision is reached, and check that it stops without error
-        ! and reports this and that the micro iterations of all rejected steps are
-        ! counted, every step evaluates the objective function after at least one
-        ! micro iteration
+        ! run level-shifted Davidson with an objective function which exceeds the
+        ! current one, as when the objective function and the orbital update disagree,
+        ! so that every step is rejected and the trust radius shrinks until the
+        ! predicted change can not be resolved and maximum precision is reached, and
+        ! check that it stops without error and reports this and that the micro
+        ! iterations of all rejected steps are counted, every step evaluates the
+        ! objective function after at least one micro iteration
         obj_func_funptr => constant_obj_func
         state%trust_radius = 0.4_rp
         state%max_precision_reached = .false.
         state%n_obj_func = 0
-        call level_shifted_davidson(0.0_rp, grad, grad_norm, h_diag, n_param, &
+        call level_shifted_davidson(0.5_rp, grad, grad_norm, h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, state, &
                                     solution, solution_norm, mu, error)
         if (error /= 0) then
@@ -6156,6 +6289,7 @@ contains
         type(solver_state_type), target :: state
         type(hartmann6d_context_type), target :: context
         type(hartmann6d_fault_context_type), target :: fault_context
+        type(quadratic_context_type), target :: quadratic_context
 
         ! assume tests pass
         test_truncated_conjugate_gradient = .true.
@@ -6220,7 +6354,8 @@ contains
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
-        if (metric_norm > ref_step_trust_radius(state%trust_radius, ratio) + tol) then
+        if (metric_norm > &
+            ref_step_trust_radius(state%trust_radius, ratio, metric_norm) + tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not stay within trust region near minimum."
             test_truncated_conjugate_gradient = .false.
@@ -6252,6 +6387,26 @@ contains
         end if
         settings%precond => null()
 
+        ! run truncated conjugate gradient with a trust radius twice as long as the
+        ! first solution in the metric of the trust region but shorter than its
+        ! Euclidean norm, so that the step stays inside the trust region, and check
+        ! that the trust radius is not expanded for this step although the quadratic
+        ! model is accurate
+        state%trust_radius = 2.0_rp * metric_norm
+        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
+                                          obj_func_funptr, hess_x_funptr, settings, &
+                                          state, solution, solution_norm, error)
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error for a step inside the trust region."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (abs(state%trust_radius - 2.0_rp * metric_norm) > tol) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Trust "// &
+                "radius expanded for a step inside the trust region."
+            test_truncated_conjugate_gradient = .false.
+        end if
+
         ! run truncated conjugate gradient with a trust radius half as long as the
         ! first solution, so that the step reaches the trust region boundary although
         ! the curvature is positive, and check whether the solution lies at the trust
@@ -6275,8 +6430,8 @@ contains
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
-        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio)) > tol) &
-            then
+        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio, &
+                                                    metric_norm)) > tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not lie at trust region boundary near minimum with trust "// &
                 "radius shorter than step."
@@ -6310,8 +6465,8 @@ contains
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
-        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio)) > tol) &
-            then
+        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio, &
+                                                    metric_norm)) > tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not lie at trust region boundary near saddle point."
             test_truncated_conjugate_gradient = .false.
@@ -6353,27 +6508,30 @@ contains
                 test_truncated_conjugate_gradient = .false.
         end do
         fault_context%fault_callback = 0
-        settings%context => context
-        hess_x_funptr => hess_x_fun
 
-        ! evaluate an objective function which does not change with the step and
-        ! check that the calculation is reported as converged up to floating point
-        ! precision and that a warning is printed
-        func = 1.0_rp
-        state%trust_radius = 0.4_rp
+        ! run truncated conjugate gradient on a quadratic model with a gradient too
+        ! small for its step to change the objective function, which does not change
+        ! at all, so that the first step reaches maximum precision, and check that the
+        ! subproblem stops without error, reports this with a warning and returns no
+        ! norm for the step that is not taken
+        call setup_settings(settings, quadratic_context)
+        quadratic_context%hess = identity_matrix(n_param)
+        quadratic_context%grad = spread(1e-9_rp, 1, n_param)
+        h_diag = 1.0_rp
         obj_func_funptr => constant_obj_func
-        context%log_message = ""
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        hess_x_funptr => quadratic_hess_x
+        state%trust_radius = 0.4_rp
+        call truncated_conjugate_gradient( &
+            1.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+            hess_x_funptr, settings, state, solution, solution_norm, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
-                "error when function value does not change."
+                "error when the objective function does not change."
             test_truncated_conjugate_gradient = .false.
         end if
         if (.not. state%max_precision_reached) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Maximum "// &
-                "precision not reached when function value does not change."
+                "precision not reached when the objective function does not change."
             test_truncated_conjugate_gradient = .false.
         end if
         if (abs(solution_norm) > 0.0_rp) then
@@ -6382,11 +6540,41 @@ contains
                 "function value does not change."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (index(context%log_message, " "//function_unchanged_warning_msg) == 0) then
+        if (index(quadratic_context%log_message, &
+                  " "//function_unchanged_warning_msg) == 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Warning "// &
                 "not printed when function value does not change."
             test_truncated_conjugate_gradient = .false.
         end if
+
+        ! run truncated conjugate gradient on the quadratic model with an objective
+        ! function which exceeds the current one, as when the objective function and
+        ! the orbital update disagree, so that every step is rejected and the trust
+        ! radius shrinks until the predicted change can not be resolved, and check
+        ! that the subproblem stops without error at maximum precision and returns no
+        ! norm for the step that is not taken
+        quadratic_context%grad = spread(0.1_rp, 1, n_param)
+        state%trust_radius = 0.4_rp
+        call truncated_conjugate_gradient( &
+            0.5_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+            hess_x_funptr, settings, state, solution, solution_norm, error)
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error when every step is rejected."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (.not. state%max_precision_reached) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Maximum "// &
+                "precision not reached when every step is rejected."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (abs(solution_norm) > 0.0_rp) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
+                "the solution not vanishing for a step that is not taken when "// &
+                "every step is rejected."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        hess_x_funptr => hess_x_fun
 
         ! start near the minimum with a trust radius far beyond the step, so that the
         ! step ends inside the trust region, and let the objective function reject this
@@ -6435,8 +6623,8 @@ contains
                 "rejected."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio)) > tol) &
-            then
+        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio, &
+                                                    metric_norm)) > tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Cut back "// &
                 "step does not lie at trust region boundary when step inside trust "// &
                 "region is rejected."
