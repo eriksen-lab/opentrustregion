@@ -113,8 +113,8 @@ module opentrustregion
         ! micro iteration of the subproblem being solved and how many of these were
         ! Jacobi-Davidson iterations
         integer(ip) :: micro_iteration = 0, jacobi_davidson_iteration = 0
-        ! residual of the subproblem relative to the gradient it is solved for both in
-        ! the norm of the stopping test of the micro iterations
+        ! Euclidean norm of the residual of the subproblem relative to that of the
+        ! gradient it is solved for, as in the stopping test of the micro iterations
         real(rp) :: relative_residual = 0.0_rp
         ! level shift and size of the last step in the trust-region metric
         real(rp) :: level_shift = 0.0_rp, step_size = 0.0_rp
@@ -441,9 +441,7 @@ contains
 
                 ! remember the region the subproblem was solved in, which sets the size
                 ! of the gradient perturbation of the next one, and record the level
-                ! shift of the step, the negated eigenvalue of the augmented Hessian, a
-                ! positive rather than a negative zero if it vanishes, truncated
-                ! conjugate gradient applies none and leaves the default of 0
+                ! shift of the step
                 local_region = abs(mu) < level_shift_local_thres
                 current_state%level_shift = merge(-mu, 0.0_rp, abs(mu) > 0.0_rp)
             else if (local_settings%subsystem_solver == "tcg") then
@@ -1744,13 +1742,7 @@ contains
         ! eigenvectors are orthogonal
         i = 1
         do while (i <= n)
-            if (eigvals(i)%im == 0.0_rp) then
-                overlap_re = ddot(n, left_eigvecs(:, i), 1_ip, right_eigvecs(:, i), &
-                                  1_ip)
-                if (abs(overlap_re) <= numerical_zero) exit
-                left_eigvecs(:, i) = left_eigvecs(:, i) / overlap_re
-                i = i + 1
-            else
+            if (abs(eigvals(i)%im) > 0.0_rp) then
                 ! scale u = l_i + i l_(i+1) such that its overlap u^H v with
                 ! v = r_i + i r_(i+1) is one
                 overlap_re = &
@@ -1767,6 +1759,12 @@ contains
                 left_eigvecs(:, i + 1) = (overlap_im * left_re + overlap_re * &
                                           left_eigvecs(:, i + 1)) / overlap_sq
                 i = i + 2
+            else
+                overlap_re = ddot(n, left_eigvecs(:, i), 1_ip, right_eigvecs(:, i), &
+                                  1_ip)
+                if (abs(overlap_re) <= numerical_zero) exit
+                left_eigvecs(:, i) = left_eigvecs(:, i) / overlap_re
+                i = i + 1
             end if
         end do
 
@@ -2710,7 +2708,7 @@ contains
             if (error /= 0) return
         end do
 
-        ! construct augmented Hessian in reduced space
+        ! construct reduced space Hessian
         allocate(red_space_hess(n_trial, n_trial))
         call dgemm("T", "N", n_trial, n_trial, n_param, 1.0_rp, red_space_basis, &
                    n_param, h_basis, n_param, 0.0_rp, red_space_hess, n_trial)
@@ -2863,7 +2861,7 @@ contains
                 ! increment trial vector count
                 n_trial = n_trial + 1
 
-                ! construct new augmented Hessian
+                ! extend reduced space Hessian
                 allocate(column_vec(n_trial))
                 call dgemv("T", n_param, n_trial, 1.0_rp, red_space_basis, n_param, &
                            h_basis(:, n_trial), 1_ip, 0.0_rp, column_vec, 1_ip)

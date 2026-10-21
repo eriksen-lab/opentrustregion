@@ -1797,17 +1797,17 @@ contains
         ! and imaginary parts of a complex eigenvector together
         i = 1
         do while (i <= n)
-            if (eigvals_im(i) == 0.0_rp) then
-                left_eigvecs(:, i) = left_eigvecs(:, i) / dot_product( &
-                    left_eigvecs(:, i), right_eigvecs(:, i))
-                i = i + 1
-            else
+            if (abs(eigvals_im(i)) > 0.0_rp) then
                 left = cmplx(left_eigvecs(:, i), left_eigvecs(:, i + 1), kind=rp)
                 left = left / conjg(dot_product( &
                     left, cmplx(right_eigvecs(:, i), right_eigvecs(:, i + 1), kind=rp)))
                 left_eigvecs(:, i) = real(left)
                 left_eigvecs(:, i + 1) = aimag(left)
                 i = i + 2
+            else
+                left_eigvecs(:, i) = left_eigvecs(:, i) / dot_product( &
+                    left_eigvecs(:, i), right_eigvecs(:, i))
+                i = i + 1
             end if
         end do
 
@@ -3645,19 +3645,27 @@ contains
                 "case with crossover step outside trust region."
             test_bisection_ah = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol .or. &
-            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                         mu * red_space_solution) + grad) > tol) then
+        if (abs(norm2(solution) - trust_radius) > tol) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
-                "crossover step outside trust region not level-shifted Newton step "// &
-                "on trust region boundary."
+                "crossover step outside trust region does not respect trust radius."
             test_bisection_ah = .false.
         end if
-        if (abs(mu + 5.0_rp) > tol .or. &
-            any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > tol)) then
+        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad) > tol) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
-                "crossover step outside trust region not along gradient direction "// &
-                "with level shift below lowest eigenvalue."
+                "crossover step outside trust region does not satisfy "// &
+                "level-shifted Newton equation."
+            test_bisection_ah = .false.
+        end if
+        if (abs(mu + 5.0_rp) > tol) then
+            write(stderr, *) "test_bisection_ah failed: Hard case level shift with "// &
+                "crossover step outside trust region not that of the step along "// &
+                "gradient direction."
+            test_bisection_ah = .false.
+        end if
+        if (any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > tol)) then
+            write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
+                "crossover step outside trust region not along gradient direction."
             test_bisection_ah = .false.
         end if
 
@@ -3900,19 +3908,29 @@ contains
                 "case with step at lowest eigenvalue outside trust region."
             test_bisection_mu = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol .or. &
-            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                         mu * red_space_solution) + grad) > tol) then
+        if (abs(norm2(solution) - trust_radius) > tol) then
             write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
-                "step at lowest eigenvalue outside trust region not level-shifted "// &
-                "Newton step on trust region boundary."
+                "step at lowest eigenvalue outside trust region does not respect "// &
+                "trust radius."
             test_bisection_mu = .false.
         end if
-        if (abs(mu + 5.0_rp) > tol .or. &
-            any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > tol)) then
+        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad) > tol) then
+            write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
+                "step at lowest eigenvalue outside trust region does not satisfy "// &
+                "level-shifted Newton equation."
+            test_bisection_mu = .false.
+        end if
+        if (abs(mu + 5.0_rp) > tol) then
+            write(stderr, *) "test_bisection_mu failed: Hard case level shift with "// &
+                "step at lowest eigenvalue outside trust region not that of the "// &
+                "step along gradient direction."
+            test_bisection_mu = .false.
+        end if
+        if (any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > tol)) then
             write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
                 "step at lowest eigenvalue outside trust region not along gradient "// &
-                "direction with level shift below lowest eigenvalue."
+                "direction."
             test_bisection_mu = .false.
         end if
 
@@ -3944,11 +3962,15 @@ contains
                 "direction."
             test_bisection_mu = .false.
         end if
-        if (abs(mu + 2.0_rp) > tol .or. &
-            dot_product(red_space_solution, rotation(:, 2)) >= 0.0_rp) then
+        if (abs(mu + 2.0_rp) > tol) then
             write(stderr, *) "test_bisection_mu failed: Level shift not equal to "// &
-                "lowest eigenvalue or step not against gradient along lowest "// &
-                "eigenvector nearly orthogonal to gradient direction."
+                "lowest eigenvalue for lowest eigenvector nearly orthogonal to "// &
+                "gradient direction."
+            test_bisection_mu = .false.
+        end if
+        if (dot_product(red_space_solution, rotation(:, 2)) >= 0.0_rp) then
+            write(stderr, *) "test_bisection_mu failed: Step not against gradient "// &
+                "along lowest eigenvector nearly orthogonal to gradient direction."
             test_bisection_mu = .false.
         end if
 
@@ -4029,11 +4051,15 @@ contains
                     "Newton step "//trim(newton_case_names(i_case))//"."
                 test_bisection_mu = .false.
             end if
-            if (abs(mu) > tol .or. &
-                any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > &
+            if (abs(mu) > tol) then
+                write(stderr, *) "test_bisection_mu failed: Level shift does not "// &
+                    "vanish for Newton step "//trim(newton_case_names(i_case))//"."
+                test_bisection_mu = .false.
+            end if
+            if (any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > &
                     tol * trust_radius)) then
                 write(stderr, *) "test_bisection_mu failed: Newton step "// &
-                    trim(newton_case_names(i_case))//" not taken without a level shift."
+                    trim(newton_case_names(i_case))//" not taken."
                 test_bisection_mu = .false.
             end if
         end do
@@ -4057,12 +4083,15 @@ contains
                 "vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol .or. &
-            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+        if (abs(norm2(solution) - trust_radius) > tol) then
+            write(stderr, *) "test_bisection_mu failed: Solution does not respect "// &
+                "trust radius for vanishing lowest eigenvalue."
+            test_bisection_mu = .false.
+        end if
+        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
                          mu * red_space_solution) + grad) > tol) then
-            write(stderr, *) "test_bisection_mu failed: Solution for vanishing "// &
-                "lowest eigenvalue not level-shifted Newton step on trust region "// &
-                "boundary."
+            write(stderr, *) "test_bisection_mu failed: Step does not satisfy "// &
+                "level-shifted Newton equation for vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
         if (mu >= 0.0_rp) then
@@ -4091,9 +4120,14 @@ contains
                 "lowest eigenvalues."
             test_bisection_mu = .false.
         end if
-        if (abs(mu + 2.0_rp) > tol .or. norm2(solution) >= trust_radius) then
+        if (abs(mu + 2.0_rp) > tol) then
             write(stderr, *) "test_bisection_mu failed: Level shift not the real "// &
-                "part of complex lowest eigenvalues or trust radius filled."
+                "part of complex lowest eigenvalues."
+            test_bisection_mu = .false.
+        end if
+        if (norm2(solution) >= trust_radius) then
+            write(stderr, *) "test_bisection_mu failed: Trust radius filled for "// &
+                "complex lowest eigenvalues."
             test_bisection_mu = .false.
         end if
         if (index(context%log_message, " "//bisection_imaginary_eigval_warning_msg) == &
@@ -4751,12 +4785,24 @@ contains
                     " matrix."
                 test_mat_min_eig = .false.
             end if
-            if (abs(eigval - ref_min_eigval) > tol .or. &
-                abs(norm2(eigvec) - 1.0_rp) > tol .or. &
-                norm2(matmul(matrix, eigvec) - eigval * eigvec) > tol) then
-                write(stderr, *) "test_mat_min_eig failed: Incorrect lowest "// &
-                    "eigenpair for "//trim(merge("symmetric    ", "non-symmetric", &
-                                                 i_case == 1))//" matrix."
+            if (abs(eigval - ref_min_eigval) > tol) then
+                write(stderr, *) "test_mat_min_eig failed: Incorrect minimum "// &
+                    "eigenvalue for "//trim(merge("symmetric    ", "non-symmetric", &
+                                                  i_case == 1))//" matrix."
+                test_mat_min_eig = .false.
+            end if
+            if (norm2(matmul(matrix, eigvec) - eigval * eigvec) > tol) then
+                write(stderr, *) "test_mat_min_eig failed: Incorrect eigenvector "// &
+                    "corresponding to minimum eigenvalue for "// &
+                    trim(merge("symmetric    ", "non-symmetric", i_case == 1))// &
+                    " matrix."
+                test_mat_min_eig = .false.
+            end if
+            if (abs(norm2(eigvec) - 1.0_rp) > tol) then
+                write(stderr, *) "test_mat_min_eig failed: Eigenvector "// &
+                    "corresponding to minimum eigenvalue not normalized for "// &
+                    trim(merge("symmetric    ", "non-symmetric", i_case == 1))// &
+                    " matrix."
                 test_mat_min_eig = .false.
             end if
         end do
@@ -6931,11 +6977,19 @@ contains
                         "solver."
                     test_solver_sanity_check = .false.
                 end if
-            else if (error /= 1 .or. len_trim(context%log_message) == 0) then
-                write(stderr, *) "test_solver_sanity_check failed: Non-symmetric "// &
-                    "Hessian not rejected with an error message for "// &
-                    trim(subsystem_solver_options(i))//" subsystem solver."
-                test_solver_sanity_check = .false.
+            else
+                if (error /= 1) then
+                    write(stderr, *) "test_solver_sanity_check failed: "// &
+                        "Non-symmetric Hessian not rejected for "// &
+                        trim(subsystem_solver_options(i))//" subsystem solver."
+                    test_solver_sanity_check = .false.
+                end if
+                if (len_trim(context%log_message) == 0) then
+                    write(stderr, *) "test_solver_sanity_check failed: No error "// &
+                        "message printed for non-symmetric Hessian with "// &
+                        trim(subsystem_solver_options(i))//" subsystem solver."
+                    test_solver_sanity_check = .false.
+                end if
             end if
         end do
         settings%hess_symm = .true.
@@ -7198,10 +7252,18 @@ contains
         call level_shifted_davidson(0.0_rp, grad, norm2(grad), h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, .false., &
                                     state, solution, solution_norm, mu, error)
-        if (error /= 0 .or. abs(solution_norm - 0.5_rp) > tol .or. &
-            mu >= minval(h_diag)) then
+        if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
-                "or solution not on the trust region boundary with a level shift "// &
+                "for non-symmetric Hessian."
+            test_level_shifted_davidson = .false.
+        end if
+        if (abs(solution_norm - 0.5_rp) > tol) then
+            write(stderr, *) "test_level_shifted_davidson failed: Solution not on "// &
+                "the trust region boundary for non-symmetric Hessian."
+            test_level_shifted_davidson = .false.
+        end if
+        if (mu >= minval(h_diag)) then
+            write(stderr, *) "test_level_shifted_davidson failed: Level shift not "// &
                 "below the lowest eigenvalue for non-symmetric Hessian."
             test_level_shifted_davidson = .false.
         end if
@@ -8229,9 +8291,14 @@ contains
         settings%project => vanishing_project
         perturbed_vector = vector
         call perturb_vector(perturbed_vector, noise, settings, error)
-        if (error /= 0 .or. maxval(abs(perturbed_vector - vector)) > 0.0_rp) then
-            write(stderr, *) "test_perturb_vector failed: Vector perturbed or "// &
-                "error produced when the projection removes every random vector."
+        if (error /= 0) then
+            write(stderr, *) "test_perturb_vector failed: Produced error when the "// &
+                "projection removes every random vector."
+            test_perturb_vector = .false.
+        end if
+        if (maxval(abs(perturbed_vector - vector)) > 0.0_rp) then
+            write(stderr, *) "test_perturb_vector failed: Vector perturbed when "// &
+                "the projection removes every random vector."
             test_perturb_vector = .false.
         end if
 
