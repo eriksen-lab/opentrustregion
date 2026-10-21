@@ -5270,27 +5270,32 @@ contains
                 [.false., .false., .false., .true., .true., .true., .true.]
 
         ! cases with the objective function value, the actual and the predicted
-        ! function change and whether maximum precision is reached, which requires that
-        ! the predicted change can not be resolved relative to the objective function
-        ! value and that the actual change can not be resolved either or the step is
-        ! rejected
-        character(len=*), parameter :: precision_case_names(8) = [ &
-            character(len=65) :: "vanishing function changes", &
-            "changes below the resolution of a large function value", &
-            "changes above the resolution of a small function value", &
-            "vanishing changes of a vanishing function value", "accepted step with "// &
-            "only the predicted change below the resolution", "rejected step with "// &
-            "only the predicted change below the resolution", "rejected step with "// &
-            "a huge function increase", "only the actual change below the resolution"]
+        ! function change, whether the micro iterations converged and whether maximum
+        ! precision is reached, which requires that the predicted change can not be
+        ! resolved relative to the objective function value and that the actual change
+        ! can not be resolved either or the step is rejected
+        character(len=*), parameter :: precision_case_names(9) = &
+            [character(len=68) :: "vanishing function changes", &
+             "changes below the resolution of a large function value", &
+             "changes above the resolution of a small function value", "vanishing "// &
+             "changes of a vanishing function value", "accepted step with only the "// &
+             "predicted change below the resolution", "rejected step with only the "// &
+             "predicted change below the resolution", "unconverged step with only "// &
+             "the predicted change below the resolution", "rejected step with a "// &
+             "huge function increase", "only the actual change below the resolution"]
         real(rp), parameter :: &
-            precision_case_funcs(8) = [-1.0_rp, -2000.0_rp, -1.0_rp, 0.0_rp, -1.0_rp, &
-                                       -1.0_rp, 0.0_rp, -1.0_rp], &
-            precision_case_actual(8) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-3_rp, &
-                                        1e-3_rp, 1e10_rp, 1e-20_rp], &
-            precision_case_predicted(8) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, &
-                                           1e-20_rp, -1e-20_rp, -1e-6_rp, 1e-3_rp]
-        logical, parameter :: precision_case_reached(8) = &
-            [.true., .true., .false., .true., .false., .true., .false., .false.]
+            precision_case_funcs(9) = [-1.0_rp, -2000.0_rp, -1.0_rp, 0.0_rp, -1.0_rp, &
+                                       -1.0_rp, -1.0_rp, -1.0_rp, -1.0_rp], &
+            precision_case_actual(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-3_rp, &
+                                        1e-3_rp, -1e-3_rp, 1e10_rp, 1e-20_rp], &
+            precision_case_predicted(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, &
+                                           1e-20_rp, -1e-20_rp, -1e-20_rp, -1e-6_rp, &
+                                           1e-3_rp]
+        logical, parameter :: &
+            precision_case_converged(9) = [.true., .true., .true., .true., .true., &
+                                           .true., .false., .true., .true.], &
+            precision_case_reached(9) = [.true., .true., .false., .true., .false., &
+                                         .true., .true., .false., .false.]
 
         ! cases of an actual or predicted function change which is not finite, as for
         ! an objective function or a Hessian linear transformation which overflows at
@@ -5354,11 +5359,14 @@ contains
             accept_step = accept_trust_region_step( &
                 solution, 0.5_rp, -1.0_rp, non_finite_actual(i), &
                 non_finite_predicted(i), .true., settings, state)
-            if (accept_step .or. &
-                abs(state%trust_radius - trust_radius_shrink_factor) > tol) then
-                write(stderr, *) "test_accept_trust_region_step failed: Step not "// &
-                    "rejected with reduced trust radius for "// &
-                    trim(non_finite_case_names(i))//"."
+            if (accept_step) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "accepted for "//trim(non_finite_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (abs(state%trust_radius - trust_radius_shrink_factor) > tol) then
+                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
+                    "radius not reduced for "//trim(non_finite_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
             if (state%max_precision_reached) then
@@ -5378,7 +5386,8 @@ contains
             context%log_message = ""
             accept_step = accept_trust_region_step( &
                 solution, 0.5_rp, precision_case_funcs(i), precision_case_actual(i), &
-                precision_case_predicted(i), .true., settings, state)
+                precision_case_predicted(i), precision_case_converged(i), settings, &
+                state)
             if (state%max_precision_reached .neqv. precision_case_reached(i)) then
                 write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
                     "precision detected incorrectly for "// &
@@ -5386,9 +5395,15 @@ contains
                 test_accept_trust_region_step = .false.
             end if
             if (.not. precision_case_reached(i)) cycle
-            if (accept_step .or. abs(state%trust_radius - 1.0_rp) > tol) then
+            if (accept_step) then
                 write(stderr, *) "test_accept_trust_region_step failed: Step "// &
-                    "accepted or trust radius changed at maximum precision for "// &
+                    "accepted at maximum precision for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (abs(state%trust_radius - 1.0_rp) > tol) then
+                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
+                    "radius changed at maximum precision for "// &
                     trim(precision_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
@@ -5842,10 +5857,21 @@ contains
                                     solution, solution_norm, mu, error)
         ratio = (hartmann6d_func(context%vars + solution) - func) / &
                 dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
-        if (error /= 0 .or. abs(norm2(solution) - 1e-3_rp) > tol .or. &
-            ratio < trust_radius_expand_ratio) then
-            write(stderr, *) "test_level_shifted_davidson failed: Well predicted "// &
-                "step does not lie at trust region boundary near minimum."
+        if (error /= 0) then
+            write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
+                "near minimum with trust radius shorter than Newton step."
+            test_level_shifted_davidson = .false.
+        end if
+        if (abs(norm2(solution) - 1e-3_rp) > tol) then
+            write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
+                "not lie at trust region boundary near minimum with trust radius "// &
+                "shorter than Newton step."
+            test_level_shifted_davidson = .false.
+        end if
+        if (ratio < trust_radius_expand_ratio) then
+            write(stderr, *) "test_level_shifted_davidson failed: Step at trust "// &
+                "region boundary near minimum not predicted well enough to expand "// &
+                "the trust radius."
             test_level_shifted_davidson = .false.
         end if
         if (abs(state%trust_radius - trust_radius_expand_factor * 1e-3_rp) > tol) then
@@ -6251,7 +6277,12 @@ contains
         call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
                                           obj_func_funptr, hess_x_funptr, settings, &
                                           state, solution, solution_norm, error)
-        if (error /= 0 .or. abs(state%trust_radius - 2.0_rp * metric_norm) > tol) then
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error for a step inside the trust region."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (abs(state%trust_radius - 2.0_rp * metric_norm) > tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Trust "// &
                 "radius expanded for a step inside the trust region."
             test_truncated_conjugate_gradient = .false.
@@ -6358,8 +6389,6 @@ contains
                 test_truncated_conjugate_gradient = .false.
         end do
         fault_context%fault_callback = 0
-        settings%context => context
-        hess_x_funptr => hess_x_fun
 
         ! run truncated conjugate gradient on a quadratic model with a gradient too
         ! small for its step to change the objective function, which does not change
@@ -6376,10 +6405,14 @@ contains
         call truncated_conjugate_gradient( &
             1.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
             hess_x_funptr, settings, state, solution, solution_norm, error)
-        if (error /= 0 .or. .not. state%max_precision_reached) then
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error when the objective function does not change."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (.not. state%max_precision_reached) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Maximum "// &
-                "precision not reached without error when the objective function "// &
-                "does not change."
+                "precision not reached when the objective function does not change."
             test_truncated_conjugate_gradient = .false.
         end if
         if (abs(solution_norm) > 0.0_rp) then
@@ -6406,9 +6439,14 @@ contains
         call truncated_conjugate_gradient( &
             0.5_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
             hess_x_funptr, settings, state, solution, solution_norm, error)
-        if (error /= 0 .or. .not. state%max_precision_reached) then
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error when every step is rejected."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (.not. state%max_precision_reached) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Maximum "// &
-                "precision not reached without error when every step is rejected."
+                "precision not reached when every step is rejected."
             test_truncated_conjugate_gradient = .false.
         end if
         if (abs(solution_norm) > 0.0_rp) then
