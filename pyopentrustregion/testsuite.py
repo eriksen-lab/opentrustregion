@@ -143,6 +143,7 @@ fortran_tests = {
         "perturb_vector",
         "print_message",
         "print_results",
+        "saddle_point_step",
         "solver",
         "solver_sanity_check",
         "split_string_by_space",

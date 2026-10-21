@@ -66,7 +66,12 @@ module opentrustregion
             "eigenvector direction corresponding to negative eigenvalue.", &
         reached_saddle_point_warning_msg = &
             "Reached saddle point. This is likely due to symmetry and can be "// &
-            "avoided by increasing the number of random trial vectors. The "// &
+            "avoided by decreasing the convergence criterion. The algorithm will "// &
+            "continue by moving along eigenvector direction corresponding to "// &
+            "negative eigenvalue.", &
+        reached_saddle_point_no_grad_noise_warning_msg = &
+            "Reached saddle point. This is likely due to symmetry and can be "// &
+            "avoided by enabling the gradient perturbation grad_noise. The "// &
             "algorithm will continue by moving along eigenvector direction "// &
             "corresponding to negative eigenvalue.", &
         unstable_warning_msg = "Solution not stable. Lowest eigenvalue: ", &
@@ -406,7 +411,7 @@ contains
                 ! the stationary point is unstable
                 if (local_settings%stability .or. imacro == 1 .or. &
                     grad_norm <= 0.0_rp) then
-                    call check_stationary_point(func, h_diag, hess_x_funptr, obj_func, &
+                    call check_stationary_point(grad, grad_rms, h_diag, hess_x_funptr, &
                                                 imacro, local_settings, current_state, &
                                                 stable, kappa, kappa_norm, error)
                     if (error /= 0) return
@@ -708,29 +713,21 @@ contains
 
     end subroutine stability_check
 
-    subroutine check_stationary_point(func, h_diag, hess_x_funptr, obj_func, imacro, &
+    subroutine check_stationary_point(grad, grad_rms, h_diag, hess_x_funptr, imacro, &
                                       settings, state, stable, kappa, kappa_norm, error)
         !
         ! this subroutine performs the stability check at a stationary point with the
         ! nested stability check settings and, if the stationary point is unstable,
-        ! performs a logarithmic line search along the unstable mode and returns the
-        ! step along it with its norm in the metric of the trust region
+        ! returns the step along the unstable mode
         !
-        real(rp), intent(in) :: func, h_diag(:)
+        real(rp), intent(in) :: grad(:), grad_rms, h_diag(:)
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
-        procedure(obj_func_type), intent(in), pointer :: obj_func
         integer(ip), intent(in) :: imacro
         type(solver_settings_type), intent(in) :: settings
         type(solver_state_type), intent(inout), target :: state
         logical, intent(out) :: stable
         real(rp), intent(out) :: kappa(:), kappa_norm
         integer(ip), intent(out) :: error
-
-        real(rp) :: n_kappa, new_func
-        real(rp), allocatable :: precond_kappa(:)
-        integer(ip) :: i, n_param
-        integer(ip), parameter :: stability_n_points = 21
-        real(rp), external :: dnrm2, ddot
 
         ! initialize error flag
         error = 0
@@ -740,50 +737,72 @@ contains
         call stability_check(h_diag, hess_x_funptr, stable, error, &
                              settings%stability_settings, state=state%stability_state, &
                              kappa=kappa)
-        call add_error_origin(error, error_stability_check, settings)
         state%n_hess_x = state%n_hess_x + state%stability_state%n_hess_x
         if (error /= 0) return
         if (stable) return
 
-        ! logarithmic line search along unstable mode
-        do i = 1, stability_n_points
-            n_kappa = 10.0_rp** &
-                      (-(i - 1) / real(stability_n_points - 1, kind=rp) * 10.0_rp)
-            new_func = obj_func(n_kappa * kappa, error, settings%context)
-            state%n_obj_func = state%n_obj_func + 1
-            call add_error_origin(error, error_obj_func, settings)
-            if (error /= 0) return
-            if (new_func < func) then
-                kappa = n_kappa * kappa
-                exit
-            end if
-        end do
-        if (new_func >= func) then
-            call settings%log("Line search was unable to find lower objective "// &
-                              "function along unstable mode.", verbosity_error, .true.)
-            error = error_solver + 1
-            return
-        else if (imacro == 1) then
+        ! move far enough along the unstable mode, whose eigenvalue the state of the
+        ! stability check holds, so that gradient is increased by one order of
+        ! magnitude
+        call saddle_point_step(grad, grad_rms, state%stability_state%min_eigval, &
+                               state%trust_radius, settings, kappa, kappa_norm)
+        if (imacro == 1) then
             call settings%log(started_at_saddle_point_warning_msg, verbosity_warning)
-        else
+        else if (settings%grad_noise) then
             call settings%log(reached_saddle_point_warning_msg, verbosity_warning)
-        end if
-
-        ! get the norm of the step in the metric of the trust region, the Euclidean
-        ! norm for (Jacobi-)Davidson and the norm of the absolute diagonal
-        ! preconditioner for truncated conjugate gradient
-        n_param = size(kappa)
-        if (string_in("davidson", settings%subsystem_solver)) then
-            kappa_norm = dnrm2(n_param, kappa, 1_ip)
         else
-            allocate(precond_kappa(n_param))
-            call abs_diag_precond(kappa, h_diag, precond_kappa, settings, error)
-            if (error /= 0) return
-            kappa_norm = sqrt(ddot(n_param, kappa, 1_ip, precond_kappa, 1_ip))
-            deallocate(precond_kappa)
+            call settings%log(reached_saddle_point_no_grad_noise_warning_msg, &
+                              verbosity_warning)
         end if
 
     end subroutine check_stationary_point
+
+    subroutine saddle_point_step(grad, grad_rms, min_eigval, trust_radius, settings, &
+                                 kappa, kappa_norm)
+        !
+        ! this subroutine determines the step along the direction of negative curvature
+        ! such that the (linearized) gradient RMS increases to one order of magnitude
+        ! above its current value, or above the convergence threshold if the gradient
+        ! is already converged, or, if both vanish, the step to the trust radius
+        !
+        real(rp), intent(in) :: grad(:), grad_rms, min_eigval, trust_radius
+        type(solver_settings_type), intent(in) :: settings
+        real(rp), intent(inout) :: kappa(:)
+        real(rp), intent(out) :: kappa_norm
+
+        integer(ip) :: n_param
+        real(rp) :: grad_kappa, n_kappa, target_grad_rms
+        real(rp), external :: ddot, dnrm2
+
+        ! number of parameters
+        n_param = size(grad)
+
+        ! project gradient onto direction of negative curvature
+        grad_kappa = ddot(n_param, kappa, 1_ip, grad, 1_ip)
+
+        ! target gradient RMS is one order of magnitude above the current value, or
+        ! above the convergence threshold if the gradient is already converged, to
+        ! ensure the step is always large enough to escape the stationary point
+        target_grad_rms = 10 * max(settings%conv_tol, grad_rms)
+
+        if (target_grad_rms > 0.0_rp) then
+            ! determine step length that reaches the target gradient RMS in the
+            ! linearized model along the direction of negative curvature
+            n_kappa = (-grad_kappa + sign(1.0_rp, grad_kappa) * sqrt( &
+                grad_kappa**2 + real(n_param, kind=rp) * &
+                (target_grad_rms**2 - grad_rms**2))) / min_eigval
+        else
+            ! an exactly vanishing gradient with a vanishing convergence threshold
+            ! leaves no target, so the step reaches the trust radius instead, as a
+            ! trust region step along the direction of negative curvature would
+            n_kappa = trust_radius
+        end if
+
+        ! scale step
+        kappa = n_kappa * kappa
+        kappa_norm = dnrm2(n_param, kappa, 1_ip)
+
+    end subroutine saddle_point_step
 
     subroutine newton_step(grad_norm, red_space_basis, red_space_hess_eigvals, &
                            red_space_hess_right_eigvecs, red_space_hess_left_eigvecs, &
