@@ -1403,8 +1403,8 @@ contains
         type(solver_settings_type_c) :: settings_c
         type(solver_settings_type) :: settings, expected_settings
         integer(ip) :: i
-        character(len=11), parameter :: logical_names(2) = &
-            [character(len=11) :: "stability", "line_search"]
+        character(len=11), parameter :: logical_names(4) = &
+            [character(len=11) :: "stability", "line_search", "grad_noise", "hess_symm"]
 
         ! assume tests pass
         test_assign_solver_f_c = .true.
@@ -1442,6 +1442,8 @@ contains
             expected_settings = ref_solver_settings
             expected_settings%stability = logical_names(i) == "stability"
             expected_settings%line_search = logical_names(i) == "line_search"
+            expected_settings%grad_noise = logical_names(i) == "grad_noise"
+            expected_settings%hess_symm = logical_names(i) == "hess_symm"
             settings = settings_c
             if (settings /= expected_settings) then
                 write(stderr, *) "test_assign_solver_f_c failed: Settings with "// &
@@ -1558,8 +1560,8 @@ contains
         type(solver_settings_type) :: settings
         type(solver_settings_type_c) :: settings_c
         integer(ip) :: i
-        character(len=11), parameter :: logical_names(2) = &
-            [character(len=11) :: "stability", "line_search"]
+        character(len=11), parameter :: logical_names(4) = &
+            [character(len=11) :: "stability", "line_search", "grad_noise", "hess_symm"]
 
         ! assume tests pass
         test_assign_solver_c_f = .true.
@@ -1615,6 +1617,8 @@ contains
             settings = ref_solver_settings
             settings%stability = logical_names(i) == "stability"
             settings%line_search = logical_names(i) == "line_search"
+            settings%grad_noise = logical_names(i) == "grad_noise"
+            settings%hess_symm = logical_names(i) == "hess_symm"
             settings_c = settings
             if (settings_c /= settings) then
                 write(stderr, *) "test_assign_solver_c_f failed: Settings with "// &

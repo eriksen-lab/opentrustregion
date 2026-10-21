@@ -56,13 +56,14 @@ module test_reference
                                 jacobi_davidson_start=13, seed=34, verbose=2, &
                                 diag_solver="jacobi-davidson")
     type(solver_settings_type), parameter :: ref_solver_settings = &
-        solver_settings_type( &
-            precond=null(), project=null(), conv_check=null(), logger=null(), &
-            stability=.true., line_search=.false., conv_tol=2e-3_rp, &
-            start_trust_radius=0.3_rp, global_red_factor=3e-2_rp, &
-            local_red_factor=4e-3_rp, n_random_trial_vectors=5, n_macro=300, &
-            n_micro=200, jacobi_davidson_start=10, seed=33, verbose=3, &
-            subsystem_solver="tcg", stability_settings=ref_stability_settings)
+        solver_settings_type(precond=null(), project=null(), conv_check=null(), &
+                             logger=null(), stability=.true., line_search=.false., &
+                             grad_noise=.false., hess_symm=.false., conv_tol=2e-3_rp, &
+                             start_trust_radius=0.3_rp, global_red_factor=3e-2_rp, &
+                             local_red_factor=4e-3_rp, n_random_trial_vectors=5, &
+                             n_macro=300, n_micro=200, jacobi_davidson_start=10, &
+                             seed=33, verbose=3, subsystem_solver="tcg", &
+                             stability_settings=ref_stability_settings)
 
     ! reference states, every field with a value distinct from every other field of
     ! the same kind in either state and from its default value, so that a field read
@@ -349,10 +350,14 @@ contains
         if (len(name) == 0) then
             values_out%stability = ref_solver_settings%stability
             values_out%line_search = ref_solver_settings%line_search
+            values_out%grad_noise = ref_solver_settings%grad_noise
+            values_out%hess_symm = ref_solver_settings%hess_symm
             values_out%initialized = .true.
         else
             values_out%stability = name == "stability"
             values_out%line_search = name == "line_search"
+            values_out%grad_noise = name == "grad_noise"
+            values_out%hess_symm = name == "hess_symm"
             values_out%initialized = name == "initialized"
         end if
 
@@ -565,6 +570,10 @@ contains
             field_value = merge(1.0_c_rp, 0.0_c_rp, values%stability)
         case ("line_search")
             field_value = merge(1.0_c_rp, 0.0_c_rp, values%line_search)
+        case ("grad_noise")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%grad_noise)
+        case ("hess_symm")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%hess_symm)
         case ("initialized")
             field_value = merge(1.0_c_rp, 0.0_c_rp, values%initialized)
         case ("conv_tol")
@@ -781,6 +790,8 @@ contains
         equal_solver = &
             (lhs%stability .eqv. rhs%stability) .and. &
             (lhs%line_search .eqv. rhs%line_search) .and. &
+            (lhs%grad_noise .eqv. rhs%grad_noise) .and. &
+            (lhs%hess_symm .eqv. rhs%hess_symm) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
             abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
@@ -847,6 +858,8 @@ contains
         equal_solver_c = &
             (lhs_c%stability .eqv. logical(rhs%stability, kind=c_bool)) .and. &
             (lhs_c%line_search .eqv. logical(rhs%line_search, kind=c_bool)) .and. &
+            (lhs_c%grad_noise .eqv. logical(rhs%grad_noise, kind=c_bool)) .and. &
+            (lhs_c%hess_symm .eqv. logical(rhs%hess_symm, kind=c_bool)) .and. &
             lhs_c%initialized .and. abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
             abs(lhs_c%start_trust_radius - rhs%start_trust_radius) <= tol .and. &
             abs(lhs_c%global_red_factor - rhs%global_red_factor) <= tol .and. &

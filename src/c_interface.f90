@@ -157,7 +157,7 @@ module c_interface
     ! derived type for solver settings
     type, bind(C) :: solver_settings_type_c
         type(c_funptr) :: precond, project, conv_check, logger
-        logical(c_bool) :: stability, line_search, initialized
+        logical(c_bool) :: stability, line_search, grad_noise, hess_symm, initialized
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
         integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
                          jacobi_davidson_start, seed, verbose
@@ -790,6 +790,8 @@ contains
             ! convert logicals
             settings%stability = logical(settings_c%stability)
             settings%line_search = logical(settings_c%line_search)
+            settings%grad_noise = logical(settings_c%grad_noise)
+            settings%hess_symm = logical(settings_c%hess_symm)
 
             ! convert reals
             settings%conv_tol = real(settings_c%conv_tol, kind=rp)
@@ -887,6 +889,8 @@ contains
         ! convert logicals
         settings_c%stability = logical(settings%stability, kind=c_bool)
         settings_c%line_search = logical(settings%line_search, kind=c_bool)
+        settings_c%grad_noise = logical(settings%grad_noise, kind=c_bool)
+        settings_c%hess_symm = logical(settings%hess_symm, kind=c_bool)
 
         ! convert reals
         settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)

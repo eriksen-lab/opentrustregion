@@ -16,7 +16,7 @@ OpenTrustRegion is a Fortran library implementing a second-order trust-region op
 
 **Clarity over performance.** The library is not on the hot path of a quantum-chemistry calculation — the host program's integral transforms and Hessian-vector products dominate. Prefer short, obviously-correct code over fast code. Don't propose performance refactors (buffer growth, pooling, micro-optimizations) without evidence the affected code is hot for a real workload.
 
-**Norms: BLAS in production, intrinsics in tests.** Production Fortran (`src/`) uses BLAS (`dnrm2`, `ddot`) for norms/dot products. Test code (`tests/`) uses intrinsics (`norm2`, `dot_product`, `matmul`, `sum`, `transpose`) instead. BLAS/LAPACK is allowed in tests only where no intrinsic exists (`dsyev`, `zheev`) — don't hand-roll linear algebra to avoid the dependency.
+**Norms: BLAS in production, intrinsics in tests.** Production Fortran (`src/`) uses BLAS (`dnrm2`, `ddot`) for norms/dot products. Test code (`tests/`) uses intrinsics (`norm2`, `dot_product`, `matmul`, `sum`, `transpose`) instead. BLAS/LAPACK is allowed in tests only where no intrinsic exists (`dsyev`, `dgeev`, `zheev`) — don't hand-roll linear algebra to avoid the dependency.
 
 ### Unit tests must not depend on untested code
 
@@ -92,7 +92,7 @@ The Python suite runs Fortran- and C-side tests (via symbols dynamically loaded 
 
 | Test | Covers |
 |---|---|
-| `test_h2o_fb_solver_<option>` (`opentrustregion_system_tests.f90`) | `solver` on the water Foster-Boys localization with the default settings and with one algorithm-selecting option switched on at a time (Jacobi-Davidson, TCG, `line_search`, `stability`), each from a guess and from a saddle point; checks the converged gradient, the reference minimum and its stability. |
+| `test_h2o_fb_solver_<option>` (`opentrustregion_system_tests.f90`) | `solver` on the water Foster-Boys localization with the default settings and with one algorithm-selecting option switched on at a time (the subsystem solvers `davidson_ls`, `jacobi-davidson_ls`, `jacobi-davidson_ah` and `tcg`, `line_search`, `stability`, and `hess_symm` switched off, which takes the non-symmetric path of `davidson_ls`, the only subsystem solver that supports it), each from a guess and from a saddle point, the Jacobi-Davidson solvers switching to Jacobi-Davidson right away; checks the converged gradient, the reference minimum and its stability. |
 | `test_h2o_fb_stability_check_<option>` (same file) | `stability_check` with the default Davidson and with the Jacobi-Davidson diagonalization solver at the minimum (stable) and at a saddle point (unstable, returned direction along the eigenvector of the lowest Hessian eigenvalue, since the saddle point has several unstable modes). |
 
 The integration tests check what crosses the C and Python interfaces. The interface unit tests replace the other side with mocks, so these are the only tests that run the real entry points behind the real header and ctypes declarations; their solves on the Hartmann 6D problem only serve as evidence that the results came back:
@@ -105,7 +105,7 @@ The integration tests check what crosses the C and Python interfaces. The interf
 | `test_solver_settings_init`, `test_stability_settings_init` (same file) | That the header's inline `*_init()` wrappers return the library's defaults with no callbacks and no host context. Both the initialization and the comparison access the struct's fields in Fortran, so these do not detect layout drift; `test_settings_layout` does. |
 | `test_solver_py`, `test_stability_check_py` (`PyIntegrationTests` in `testsuite.py`) | The real library through the Python wrapper: every optional callback of both settings classes, including the nested stability settings' own, the returned states and the states current in the callbacks, the stability flag and direction, and the call without a direction. |
 
-System tests are registered per option and integration tests per interface scenario, not per routine: the one-registered-test-per-routine rule and the advice above to cover a new setting in the unit tests apply to unit tests and to settings that only tune a routine. A new option that selects a different algorithm gets its own registered `test_h2o_fb_solver_<option>` or `test_h2o_fb_stability_check_<option>` test, never a combination with another option. The integration tests gain a check only when a new callback, settings or state field or return value crosses their interface.
+System tests are registered per option and integration tests per interface scenario, not per routine: the one-registered-test-per-routine rule and the advice above to cover a new setting in the unit tests apply to unit tests and to settings that only tune a routine. A new option that selects a different algorithm gets its own registered `test_h2o_fb_solver_<option>` or `test_h2o_fb_stability_check_<option>` test, never a combination with another option, except that the `hess_symm` test selects `davidson_ls`, the only subsystem solver supporting a non-symmetric Hessian, while it is not the default. The integration tests gain a check only when a new callback, settings or state field or return value crosses their interface.
 
 ### Registering a new Fortran unit test
 

@@ -104,6 +104,8 @@ typedef struct {
 
   c_bool stability;
   c_bool line_search;
+  c_bool grad_noise;
+  c_bool hess_symm;
   c_bool initialized;
 
   c_real conv_tol;

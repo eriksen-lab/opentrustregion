@@ -448,14 +448,16 @@ bool test_settings_layout(void) {
 
   /* check that every logical is stored as a C bool and read back under its own name,
    * only one is set at a time so that swapped logicals can be told apart */
-  static const char *logicals[] = {"stability", "line_search", "initialized",
-                                   "stability_settings.initialized"};
+  static const char *logicals[] = {"stability",   "line_search",
+                                   "grad_noise",  "hess_symm",
+                                   "initialized", "stability_settings.initialized"};
   const int n_logicals = sizeof logicals / sizeof *logicals;
   for (int i = 0; i < n_logicals; i++) {
     solver_settings_type s = {0};
     get_reference_solver_values(&s, logicals[i]);
-    const c_bool *read[] = {&s.stability, &s.line_search, &s.initialized,
-                            &s.stability_settings.initialized};
+    const c_bool *read[] = {&s.stability,   &s.line_search,
+                            &s.grad_noise,  &s.hess_symm,
+                            &s.initialized, &s.stability_settings.initialized};
     _Static_assert(sizeof read / sizeof *read == sizeof logicals / sizeof *logicals,
                    "test_settings_layout: every logical needs a name and a field");
     for (int j = 0; j < n_logicals; j++) {
