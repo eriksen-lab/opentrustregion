@@ -1108,9 +1108,9 @@ contains
         !
         ! this function describes a convergence check of the double well function
         ! which, like a host's check of the change of the objective function, reports
-        ! convergence once the objective function has changed by less than the
-        ! tolerance since the previous check, so that it can not pass at a stationary
-        ! point the solver has just reached
+        ! convergence once the objective function has changed by less than 1e-8 since
+        ! the previous check, so that it can not pass at a stationary point the solver
+        ! has just reached
         !
         use test_reference, only: check_host_context
 
@@ -1134,7 +1134,7 @@ contains
         ! compare the objective function against that of the previous check and keep
         ! it for the next check
         func = double_well_func(state%vars)
-        converged = abs(func - state%last_conv_check_func) < tol
+        converged = abs(func - state%last_conv_check_func) < 1e-8_rp
         state%last_conv_check_func = func
 
     end function double_well_conv_check
@@ -2520,10 +2520,13 @@ contains
         ! vanishing gradient, once with a convergence check of the change of the
         ! objective function, which can not pass at a stationary point the solver has
         ! just reached, so that the solver takes the saddle point as a point at maximum
-        ! precision and resets the flag once it continues, and once with the criterion
-        ! on the RMS gradient, which passes there, and check that the solver checks the
-        ! stability of the saddle point nevertheless, continues along the unstable mode
-        ! and finally stops at a minimum
+        ! precision and resets the flag once it continues, and which would pass at the
+        ! point the step along the unstable mode reaches, since this step changes the
+        ! objective function by far less than the tolerance of the check for a small
+        ! convergence threshold, and once with the criterion on the RMS gradient, which
+        ! passes there, and check that the solver checks the stability of the saddle
+        ! point nevertheless, continues along the unstable mode and finally stops at a
+        ! minimum
         update_orbs_funptr => double_well_update_orbs
         obj_func_funptr => double_well_obj_func
         do i_case = 1, 2
@@ -2533,6 +2536,7 @@ contains
             settings%context => double_well_context
             if (i_case == 1) then
                 settings%conv_check => double_well_conv_check
+                settings%conv_tol = 1e-7_rp
                 case_name = "with convergence check of the function change"
             else
                 case_name = "with gradient criterion"
@@ -3091,9 +3095,12 @@ contains
         type(solver_state_type) :: state
         type(double_well_context_type), target :: context, stability_context
         procedure(hess_x_type), pointer :: hess_x_funptr
-        real(rp) :: kappa(2), kappa_norm
+        real(rp) :: kappa(2), kappa_norm, grad(2), grad_rms
         logical :: stable
-        integer(ip) :: error
+        integer(ip) :: error, i_case
+        character(len=*), parameter :: reached_case_names(2) = &
+            [character(len=33) :: "with gradient perturbation", &
+             "with truncated conjugate gradient"]
 
         ! the double well function x^2 - y^2 + y^4 has a vanishing gradient and the
         ! Hessian diagonal (2, -2) at its saddle point at the origin, whose unstable
@@ -3108,19 +3115,23 @@ contains
         ! set function pointer
         hess_x_funptr => double_well_hess_x
 
-        ! check the saddle point in the first macro iteration with a context in the
-        ! nested stability check settings and check that this context reaches the
-        ! callback functions of the stability check, that its Hessian linear
-        ! transformations are added to the solver's counter, that a step along the
-        ! unstable mode is returned with its norm and the length its eigenvalue sets
-        ! and that the warning for starting at a saddle point is printed
+        ! check the saddle point in the first macro iteration with a converged gradient
+        ! along the unstable mode and a context in the nested stability check settings
+        ! and check that this context reaches the callback functions of the stability
+        ! check, that its Hessian linear transformations are added to the solver's
+        ! counter, that a step along the unstable mode is returned with its norm and
+        ! the length the gradient and the eigenvalue set and that the warning for
+        ! starting at a saddle point is printed
         call setup_settings(settings, context)
         state%n_hess_x = 5
+        state%trust_radius = 1.0_rp
         context%vars = [0.0_rp, 0.0_rp]
+        grad = [0.0_rp, 0.5_rp * settings%conv_tol * sqrt(2.0_rp)]
+        grad_rms = norm2(grad) / sqrt(2.0_rp)
         call arm_host_context(settings%stability_settings, context)
-        call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
-                                    hess_x_funptr, 1_ip, settings, state, stable, &
-                                    kappa, kappa_norm, error)
+        call check_stationary_point(grad, grad_rms, saddle_h_diag, hess_x_funptr, &
+                                    1_ip, settings, state, stable, kappa, kappa_norm, &
+                                    error)
         if (error /= 0) then
             write(stderr, *) "test_check_stationary_point failed: Produced error "// &
                 "at saddle point."
@@ -3142,14 +3153,20 @@ contains
             test_check_stationary_point = .false.
         end if
 
-        ! the step along the unstable mode, whose eigenvalue the stability check leaves
-        ! in its state, has to raise the linearized gradient RMS |lambda| |kappa| /
-        ! sqrt(n_param) from zero to ten times the convergence threshold for the
-        ! eigenvalue -2 of the double well at its saddle point
-        if (abs(2.0_rp * kappa_norm / sqrt(2.0_rp) - 10.0_rp * settings%conv_tol) > &
-            tol) then
+        ! the step along the unstable mode, whose eigenvalue -2 the stability check
+        ! leaves in its state, has to raise the RMS of the linearized gradient from the
+        ! given converged one to ten times the convergence threshold, pointing against
+        ! the gradient, comparing such that a NaN fails
+        if (.not. abs(norm2(grad - 2.0_rp * kappa) / sqrt(2.0_rp) - &
+                      10.0_rp * settings%conv_tol) <= tol) then
             write(stderr, *) "test_check_stationary_point failed: Step along "// &
-                "unstable mode not scaled by the lowest Hessian eigenvalue."
+                "unstable mode does not raise the linearized gradient RMS to ten "// &
+                "times the convergence threshold."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. dot_product(grad, kappa) < 0.0_rp) then
+            write(stderr, *) "test_check_stationary_point failed: Step along "// &
+                "unstable mode does not point against the gradient."
             test_check_stationary_point = .false.
         end if
         if (.not. host_context_reached("check_stationary_point", context)) &
@@ -3173,34 +3190,46 @@ contains
         end if
 
         ! check the saddle point in a later macro iteration with the gradient
-        ! perturbation and with nested stability check settings with a context of their
-        ! own, which the stability check hands to every callback function it calls,
-        ! which its own test covers, so that the Hessian linear transformation has to
-        ! receive it instead of the solver's, and check that the warning for reaching a
-        ! saddle point is printed
-        call setup_settings(settings, context)
-        settings%grad_noise = .true.
-        context%vars = [0.0_rp, 0.0_rp]
-        stability_context%vars = [0.0_rp, 0.0_rp]
-        settings%stability_settings%context => stability_context
-        call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
-                                    hess_x_funptr, 2_ip, settings, state, stable, &
-                                    kappa, kappa_norm, error)
-        if (error /= 0) then
-            write(stderr, *) "test_check_stationary_point failed: Produced error "// &
-                "at saddle point in later macro iteration."
-            test_check_stationary_point = .false.
-        end if
-        if (.not. stability_context%hess_x_called) then
-            write(stderr, *) "test_check_stationary_point failed: Context of "// &
-                "nested settings not handed to the Hessian linear transformation."
-            test_check_stationary_point = .false.
-        end if
-        if (index(context%log_message, " "//reached_saddle_point_warning_msg) == 0) then
-            write(stderr, *) "test_check_stationary_point failed: Warning not "// &
-                "printed for reaching saddle point."
-            test_check_stationary_point = .false.
-        end if
+        ! perturbation and with truncated conjugate gradient, which perturbs the
+        ! gradient in any case, and with nested stability check settings with a
+        ! context of their own, which the stability check hands to every callback
+        ! function it calls, which its own test covers, so that the Hessian linear
+        ! transformation has to receive it instead of the solver's, and check that the
+        ! warning for reaching a saddle point is printed
+        do i_case = 1, size(reached_case_names)
+            call setup_settings(settings, context)
+            if (i_case == 1) then
+                settings%grad_noise = .true.
+            else
+                settings%subsystem_solver = "tcg"
+            end if
+            context%vars = [0.0_rp, 0.0_rp]
+            stability_context%vars = [0.0_rp, 0.0_rp]
+            stability_context%hess_x_called = .false.
+            settings%stability_settings%context => stability_context
+            call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
+                                        hess_x_funptr, 2_ip, settings, state, stable, &
+                                        kappa, kappa_norm, error)
+            if (error /= 0) then
+                write(stderr, *) "test_check_stationary_point failed: Produced "// &
+                    "error at saddle point in later macro iteration "// &
+                    trim(reached_case_names(i_case))//"."
+                test_check_stationary_point = .false.
+            end if
+            if (.not. stability_context%hess_x_called) then
+                write(stderr, *) "test_check_stationary_point failed: Context of "// &
+                    "nested settings not handed to the Hessian linear "// &
+                    "transformation "//trim(reached_case_names(i_case))//"."
+                test_check_stationary_point = .false.
+            end if
+            if (index(context%log_message, " "//reached_saddle_point_warning_msg) == &
+                0) then
+                write(stderr, *) "test_check_stationary_point failed: Warning not "// &
+                    "printed for reaching saddle point "// &
+                    trim(reached_case_names(i_case))//"."
+                test_check_stationary_point = .false.
+            end if
+        end do
 
         ! check the saddle point in a later macro iteration without the gradient
         ! perturbation and with a vanishing convergence threshold, as the solver reaches
@@ -3237,7 +3266,6 @@ contains
         ! check that a minimum is found to be stable
         call setup_settings(settings, context)
         settings%stability_settings%context => context
-        hess_x_funptr => double_well_hess_x
         context%vars = [0.0_rp, 1.0_rp / sqrt(2.0_rp)]
         call check_stationary_point(stationary_grad, 0.0_rp, minimum_h_diag, &
                                     hess_x_funptr, 2_ip, settings, state, stable, &
@@ -3258,7 +3286,6 @@ contains
         ! stability check
         call setup_settings(settings, context)
         settings%stability_settings%diag_solver = "unknown"
-        hess_x_funptr => double_well_hess_x
         call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
                                     hess_x_funptr, 2_ip, settings, state, stable, &
                                     kappa, kappa_norm, error)
@@ -3372,6 +3399,29 @@ contains
             abs(kappa_norm - trust_radius) > tol) then
             write(stderr, *) "test_saddle_point_step failed: Step does not reach "// &
                 "trust radius at vanishing gradient and convergence threshold."
+            test_saddle_point_step = .false.
+        end if
+
+        ! with a trust radius below the length of the step that reaches the targeted
+        ! gradient RMS, the step, which is taken without evaluating the objective
+        ! function, is limited to the trust radius and still points against the
+        ! gradient
+        settings%conv_tol = 1e-6_rp
+        grad = 50.0_rp * settings%conv_tol * sqrt(real(n_param, kind=rp)) * grad_dir
+        grad_rms = norm2(grad) / sqrt(real(n_param, kind=rp))
+        unstable_dir = kappa_dir + 0.5_rp * grad_dir
+        kappa = unstable_dir / norm2(unstable_dir)
+        trust_radius = 1e-5_rp
+        call saddle_point_step(grad, grad_rms, min_eigval, trust_radius, settings, &
+                               kappa, kappa_norm)
+        if (.not. abs(norm2(kappa) - trust_radius) <= tol) then
+            write(stderr, *) "test_saddle_point_step failed: Step not limited to "// &
+                "the trust radius."
+            test_saddle_point_step = .false.
+        end if
+        if (.not. dot_product(grad, kappa) < 0.0_rp) then
+            write(stderr, *) "test_saddle_point_step failed: Step limited to the "// &
+                "trust radius does not point against the gradient."
             test_saddle_point_step = .false.
         end if
 
