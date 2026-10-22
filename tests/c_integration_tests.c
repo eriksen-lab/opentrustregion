@@ -66,6 +66,10 @@ typedef struct {
   int nested_check_error;
   int in_nested;
   int outer_used_inner_hess_x;
+  int get_extra_trial_vectors_called;
+  int stability_get_extra_trial_vectors_called;
+  int stability_conv_check_called;
+  c_real stability_residual_rms_seen;
 } hartmann_context;
 
 static void exp_terms(const c_real x[N_PARAM], c_real out[N_TERM]) {
@@ -221,6 +225,49 @@ static c_int stability_project(c_real *vector, void *context) {
   if (!ctx)
     return 1;
   ctx->stability_project_called = 1;
+  return 0;
+}
+
+/* Extra trial vector functions, which contribute no direction so that the solve is
+ * unaffected, the stability variant again only for the nested settings. */
+static c_int get_extra_trial_vectors(c_real *trial_vectors, c_int n_extra_trial_vectors,
+                                     void *context) {
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
+  ctx->get_extra_trial_vectors_called = 1;
+  for (c_int i = 0; i < n_extra_trial_vectors * N_PARAM; ++i)
+    trial_vectors[i] = 0.0;
+  return 0;
+}
+
+static c_int stability_get_extra_trial_vectors(c_real *trial_vectors,
+                                               c_int n_extra_trial_vectors,
+                                               void *context) {
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
+  ctx->stability_get_extra_trial_vectors_called = 1;
+  for (c_int i = 0; i < n_extra_trial_vectors * N_PARAM; ++i)
+    trial_vectors[i] = 0.0;
+  return 0;
+}
+
+/* Convergence check of the stability check, which reads the RMS residual of the lowest
+ * eigenpair from the state of a standalone stability check or from the nested state of
+ * the solver and records it, and fails without a state to read. */
+static c_int stability_conv_check(c_bool *converged, void *context) {
+  hartmann_context *ctx = context;
+  if (!ctx)
+    return 1;
+  ctx->stability_conv_check_called = 1;
+  const stability_state_type *state = ctx->stability_state;
+  if (!state && ctx->solver_state)
+    state = &ctx->solver_state->stability_state;
+  if (!state)
+    return 1;
+  ctx->stability_residual_rms_seen = state->residual_rms;
+  *converged = state->residual_rms < 1e-9;
   return 0;
 }
 
@@ -448,16 +495,26 @@ bool test_settings_layout(void) {
 
   /* check that every logical is stored as a C bool and read back under its own name,
    * only one is set at a time so that swapped logicals can be told apart */
-  static const char *logicals[] = {"stability",   "line_search",
-                                   "grad_noise",  "hess_symm",
-                                   "initialized", "stability_settings.initialized"};
+  static const char *logicals[] = {"stability",
+                                   "line_search",
+                                   "grad_noise",
+                                   "hess_symm",
+                                   "initialized",
+                                   "stability_settings.hess_symm",
+                                   "stability_settings.stop_on_instability",
+                                   "stability_settings.initialized"};
   const int n_logicals = sizeof logicals / sizeof *logicals;
   for (int i = 0; i < n_logicals; i++) {
     solver_settings_type s = {0};
     get_reference_solver_values(&s, logicals[i]);
-    const c_bool *read[] = {&s.stability,   &s.line_search,
-                            &s.grad_noise,  &s.hess_symm,
-                            &s.initialized, &s.stability_settings.initialized};
+    const c_bool *read[] = {&s.stability,
+                            &s.line_search,
+                            &s.grad_noise,
+                            &s.hess_symm,
+                            &s.initialized,
+                            &s.stability_settings.hess_symm,
+                            &s.stability_settings.stop_on_instability,
+                            &s.stability_settings.initialized};
     _Static_assert(sizeof read / sizeof *read == sizeof logicals / sizeof *logicals,
                    "test_settings_layout: every logical needs a name and a field");
     for (int j = 0; j < n_logicals; j++) {
@@ -480,6 +537,7 @@ bool test_settings_layout(void) {
   get_reference_solver_values(&s, NULL);
   ok &= check_field((uintptr_t)s.precond, "precond");
   ok &= check_field((uintptr_t)s.project, "project");
+  ok &= check_field((uintptr_t)s.get_extra_trial_vectors, "get_extra_trial_vectors");
   ok &= check_field((uintptr_t)s.conv_check, "conv_check");
   ok &= check_field((uintptr_t)s.logger, "logger");
   ok &= check_field((uintptr_t)s.context, "context");
@@ -488,6 +546,7 @@ bool test_settings_layout(void) {
   ok &= check_field(s.global_red_factor, "global_red_factor");
   ok &= check_field(s.local_red_factor, "local_red_factor");
   ok &= check_field(s.n_random_trial_vectors, "n_random_trial_vectors");
+  ok &= check_field(s.n_extra_trial_vectors, "n_extra_trial_vectors");
   ok &= check_field(s.n_macro, "n_macro");
   ok &= check_field(s.n_micro, "n_micro");
   ok &= check_field(s.jacobi_davidson_start, "jacobi_davidson_start");
@@ -500,11 +559,16 @@ bool test_settings_layout(void) {
   stability_settings_type ss = s.stability_settings;
   ok &= check_field((uintptr_t)ss.precond, "stability_settings.precond");
   ok &= check_field((uintptr_t)ss.project, "stability_settings.project");
+  ok &= check_field((uintptr_t)ss.get_extra_trial_vectors,
+                    "stability_settings.get_extra_trial_vectors");
+  ok &= check_field((uintptr_t)ss.conv_check, "stability_settings.conv_check");
   ok &= check_field((uintptr_t)ss.logger, "stability_settings.logger");
   ok &= check_field((uintptr_t)ss.context, "stability_settings.context");
   ok &= check_field(ss.conv_tol, "stability_settings.conv_tol");
   ok &= check_field(ss.n_random_trial_vectors,
                     "stability_settings.n_random_trial_vectors");
+  ok &=
+      check_field(ss.n_extra_trial_vectors, "stability_settings.n_extra_trial_vectors");
   ok &= check_field(ss.n_iter, "stability_settings.n_iter");
   ok &=
       check_field(ss.jacobi_davidson_start, "stability_settings.jacobi_davidson_start");
@@ -613,11 +677,15 @@ bool test_solver_c(void) {
   settings.context = &ctx;
   settings.precond = precond;
   settings.project = project;
+  settings.get_extra_trial_vectors = get_extra_trial_vectors;
   settings.logger = logger;
   settings.conv_check = conv_check_nested;
   settings.stability = true;
   settings.stability_settings.precond = stability_precond;
   settings.stability_settings.project = stability_project;
+  settings.stability_settings.get_extra_trial_vectors =
+      stability_get_extra_trial_vectors;
+  settings.stability_settings.conv_check = stability_conv_check;
   settings.stability_settings.logger = stability_logger;
   settings.verbose = 3; /* ensure the logger callbacks are exercised */
   logger_without_context = 0;
@@ -675,10 +743,12 @@ bool test_solver_c(void) {
                     "the internal stability check was not populated.\n");
     ok = false;
   }
-  /* every orbital update read the updates before it, and the last Hessian linear
-   * transformation of the internal stability check the ones before it */
+  /* every orbital update read the updates before it, the last Hessian linear
+   * transformation of the internal stability check the ones before it and its last
+   * convergence check the residual of its last iteration */
   if (ctx.state_not_current || ctx.n_update_orbs_calls != state.n_update_orbs ||
-      ctx.nested_n_hess_x_seen != state.stability_state.n_hess_x - 1) {
+      ctx.nested_n_hess_x_seen != state.stability_state.n_hess_x - 1 ||
+      ctx.stability_residual_rms_seen != state.stability_state.residual_rms) {
     fprintf(stderr, "test_solver_c failed: State was not current in the callbacks.\n");
     ok = false;
   }
@@ -695,6 +765,23 @@ bool test_solver_c(void) {
   if (!ctx.stability_logger_called) {
     fprintf(stderr, "test_solver_c failed: Logger set on the nested stability "
                     "settings was not called by the internal stability check.\n");
+    ok = false;
+  }
+  if (!ctx.get_extra_trial_vectors_called) {
+    fprintf(stderr, "test_solver_c failed: Extra trial vector function was not "
+                    "called.\n");
+    ok = false;
+  }
+  if (!ctx.stability_get_extra_trial_vectors_called) {
+    fprintf(stderr, "test_solver_c failed: Extra trial vector function set on the "
+                    "nested stability settings was not called by the internal "
+                    "stability check.\n");
+    ok = false;
+  }
+  if (!ctx.stability_conv_check_called) {
+    fprintf(stderr, "test_solver_c failed: Convergence check set on the nested "
+                    "stability settings was not called by the internal stability "
+                    "check.\n");
     ok = false;
   }
   if (!ctx.nested_check_ran) {
@@ -760,6 +847,8 @@ bool test_stability_check_c(void) {
   settings.context = &ctx;
   settings.precond = precond;
   settings.project = project;
+  settings.get_extra_trial_vectors = get_extra_trial_vectors;
+  settings.conv_check = stability_conv_check;
   settings.logger = logger;
   settings.verbose = 3; /* ensure the logger callback is exercised */
   logger_without_context = 0;
@@ -769,11 +858,9 @@ bool test_stability_check_c(void) {
   c_real h_diag[N_PARAM];
   for (int i = 0; i < N_PARAM; i++)
     h_diag[i] = ctx.hess[i][i];
-  /* the direction starts nonzero so that the zeros written at a stable point are
-   * detected */
+  /* the state starts from zero, so that a lowest eigenvalue that is not written back
+   * is detected */
   c_real direction[N_PARAM];
-  for (int i = 0; i < N_PARAM; i++)
-    direction[i] = 1.0;
   c_bool stable = false;
   stability_state_type state = {0};
   ctx.stability_state = &state;
@@ -804,6 +891,16 @@ bool test_stability_check_c(void) {
     fprintf(stderr, "test_stability_check_c failed: Logger was not called.\n");
     ok = false;
   }
+  if (!ctx.get_extra_trial_vectors_called) {
+    fprintf(stderr, "test_stability_check_c failed: Extra trial vector function was "
+                    "not called.\n");
+    ok = false;
+  }
+  if (!ctx.stability_conv_check_called) {
+    fprintf(stderr, "test_stability_check_c failed: Convergence check was not "
+                    "called.\n");
+    ok = false;
+  }
   if (logger_without_context) {
     fprintf(stderr, "test_stability_check_c failed: Logger was called without the "
                     "host context.\n");
@@ -818,20 +915,18 @@ bool test_stability_check_c(void) {
     fprintf(stderr, "test_stability_check_c failed: State was not returned.\n");
     ok = false;
   }
-  /* the last Hessian linear transformation read the ones before it */
-  if (ctx.n_hess_x_seen != state.n_hess_x - 1) {
+  if (state.min_eigval <= 0.0) {
+    fprintf(stderr, "test_stability_check_c failed: State does not hold a positive "
+                    "lowest eigenvalue for minimum.\n");
+    ok = false;
+  }
+  /* the last Hessian linear transformation read the ones before it and the last
+   * convergence check the residual of the last iteration */
+  if (ctx.n_hess_x_seen != state.n_hess_x - 1 ||
+      ctx.stability_residual_rms_seen != state.residual_rms) {
     fprintf(stderr, "test_stability_check_c failed: State was not current in the "
                     "callbacks.\n");
     ok = false;
-  }
-  ctx.stability_state = NULL;
-  for (int i = 0; i < N_PARAM; i++) {
-    if (direction[i] != 0.0) {
-      fprintf(stderr, "test_stability_check_c failed: Stability check does not return "
-                      "a zero direction for minimum.\n");
-      ok = false;
-      break;
-    }
   }
 
   /* at a saddle, expect unstable */
@@ -840,8 +935,8 @@ bool test_stability_check_c(void) {
     h_diag[i] = ctx.hess[i][i];
 
   stable = true;
-  error =
-      stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, NULL, direction);
+  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, &state,
+                          direction);
   if (error != 0) {
     fprintf(stderr, "test_stability_check_c failed: Produced error near saddle.\n");
     ok = false;
@@ -852,8 +947,13 @@ bool test_stability_check_c(void) {
     ok = false;
   }
 
-  /* the returned direction replaces the zero direction returned at the minimum and has
-   * to be a normalized direction of negative curvature */
+  if (state.min_eigval >= 0.0) {
+    fprintf(stderr, "test_stability_check_c failed: State does not hold a negative "
+                    "lowest eigenvalue for saddle point.\n");
+    ok = false;
+  }
+
+  /* the returned direction has to be a normalized direction of negative curvature */
   c_real norm_squared = 0.0, curvature = 0.0;
   for (int i = 0; i < N_PARAM; i++) {
     norm_squared += direction[i] * direction[i];
@@ -871,9 +971,11 @@ bool test_stability_check_c(void) {
     ok = false;
   }
 
-  /* also exercise the no-direction path */
+  /* also exercise the no-direction path, with the state, which the convergence check
+   * reads */
   stable = true;
-  error = stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, NULL, NULL);
+  error =
+      stability_check(h_diag, hess_x_fun, N_PARAM, &stable, &settings, &state, NULL);
   if (error != 0) {
     fprintf(stderr, "test_stability_check_c failed: Produced error when not passing "
                     "direction.\n");

@@ -488,17 +488,17 @@ contains
 
     end function check_h2o_fb_solver
 
-    logical function check_h2o_fb_stability_check(test_name, diag_solver)
+    logical function check_h2o_fb_stability_check(test_name, option)
         !
         ! this function performs the stability check for the Foster-Boys localization
         ! of the occupied orbitals of water at the minimum and at a saddle point with
-        ! a diagonalization solver and checks that the minimum is found to be stable
-        ! and the saddle point to be unstable with a returned direction along the
-        ! eigenvector of the lowest eigenvalue of the Hessian
+        ! a stability check option switched on and checks that the minimum is found to
+        ! be stable and the saddle point to be unstable with a returned direction along
+        ! the eigenvector of the lowest eigenvalue of the Hessian
         !
         use opentrustregion, only: hess_x_type, stability_settings_type, stability_check
 
-        character(len=*), intent(in) :: test_name, diag_solver
+        character(len=*), intent(in) :: test_name, option
 
         type(fb_context_type), target :: context
         procedure(hess_x_type), pointer :: hess_x_funptr
@@ -529,13 +529,20 @@ contains
             call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, &
                              context_ptr)
 
-            ! initialize settings and select the diagonalization solver, the
-            ! Jacobi-Davidson method is started immediately since the Davidson method
-            ! converges before switching on a problem of this size
+            ! initialize settings and switch on the option, which is either a
+            ! diagonalization solver option or a logical setting, the Jacobi-Davidson
+            ! method is started immediately since the Davidson method converges before
+            ! switching on a problem of this size
             settings = stability_settings_type()
             settings%context => context
-            if (diag_solver /= "default") settings%diag_solver = diag_solver
-            if (diag_solver == "jacobi-davidson") settings%jacobi_davidson_start = 0
+            select case (option)
+            case ("default")
+            case ("non-symmetric Hessian")
+                settings%hess_symm = .false.
+            case default
+                settings%diag_solver = option
+                if (option == "jacobi-davidson") settings%jacobi_davidson_start = 0
+            end select
 
             ! perform stability check
             call stability_check(h_diag, hess_x_funptr, stable, error, settings, &
@@ -696,5 +703,15 @@ contains
                                          "jacobi-davidson"), kind=c_bool)
 
     end function test_h2o_fb_stability_check_jacobi_davidson
+
+    logical(c_bool) function test_h2o_fb_stability_check_hess_symm() bind(C)
+        !
+        ! this function tests the stability check for the Foster-Boys localization of
+        ! the occupied orbitals of water with the Hessian treated as non-symmetric
+        !
+        test_h2o_fb_stability_check_hess_symm = logical(check_h2o_fb_stability_check( &
+            "h2o_fb_stability_check_hess_symm", "non-symmetric Hessian"), kind=c_bool)
+
+    end function test_h2o_fb_stability_check_hess_symm
 
 end module opentrustregion_system_tests

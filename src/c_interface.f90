@@ -6,12 +6,12 @@
 
 module c_interface
 
-    use opentrustregion, only: rp, ip, kw_len, standard_solver => solver, &
-                               standard_stability_check => stability_check, &
-                               default_solver_settings, default_stability_settings, &
-                               update_orbs_type, hess_x_type, obj_func_type, &
-                               precond_type, project_type, conv_check_type, &
-                               logger_type, solver_state_type, stability_state_type
+    use opentrustregion, only: &
+        rp, ip, kw_len, standard_solver => solver, &
+        standard_stability_check => stability_check, default_solver_settings, &
+        default_stability_settings, update_orbs_type, hess_x_type, obj_func_type, &
+        precond_type, project_type, conv_check_type, get_extra_trial_vectors_type, &
+        logger_type, solver_state_type, stability_state_type
     use, intrinsic :: iso_c_binding, only: &
         c_double, c_int64_t, c_int32_t, c_bool, c_ptr, c_funptr, c_f_pointer, &
         c_f_procpointer, c_associated, c_char, c_null_char, c_null_ptr, c_null_funptr
@@ -100,6 +100,18 @@ module c_interface
     end interface
 
     abstract interface
+        function get_extra_trial_vectors_c_type( &
+            trial_vectors_c, n_extra_trial_vectors_c, context_c) result(error) bind(C)
+            import :: c_rp, c_ip, c_ptr
+
+            real(c_rp), intent(out), target :: trial_vectors_c(*)
+            integer(c_ip), intent(in), value :: n_extra_trial_vectors_c
+            type(c_ptr), intent(in), value :: context_c
+            integer(c_ip) :: error
+        end function get_extra_trial_vectors_c_type
+    end interface
+
+    abstract interface
         subroutine logger_c_type(message, context_c) bind(C)
             import :: c_char, c_ptr
 
@@ -133,6 +145,8 @@ module c_interface
         procedure(obj_func_c_type), pointer, nopass :: obj_func => null()
         procedure(precond_c_type), pointer, nopass :: precond => null()
         procedure(project_c_type), pointer, nopass :: project => null()
+        procedure(get_extra_trial_vectors_c_type), pointer, nopass :: &
+            get_extra_trial_vectors => null()
         procedure(conv_check_c_type), pointer, nopass :: conv_check => null()
         procedure(logger_c_type), pointer, nopass :: logger => null()
         type(c_ptr) :: host_context = c_null_ptr
@@ -145,22 +159,22 @@ module c_interface
 
     ! derived type for stability check settings
     type, bind(C) :: stability_settings_type_c
-        type(c_funptr) :: precond, project, logger
-        logical(c_bool) :: initialized
+        type(c_funptr) :: precond, project, get_extra_trial_vectors, conv_check, logger
+        logical(c_bool) :: hess_symm, stop_on_instability, initialized
         real(c_rp) :: conv_tol
-        integer(c_ip) :: n_random_trial_vectors, n_iter, jacobi_davidson_start, seed, &
-                         verbose
+        integer(c_ip) :: n_random_trial_vectors, n_extra_trial_vectors, n_iter, &
+                         jacobi_davidson_start, seed, verbose
         character(kind=c_char) :: diag_solver(kw_len + 1)
         type(c_ptr) :: context
     end type
 
     ! derived type for solver settings
     type, bind(C) :: solver_settings_type_c
-        type(c_funptr) :: precond, project, conv_check, logger
+        type(c_funptr) :: precond, project, get_extra_trial_vectors, conv_check, logger
         logical(c_bool) :: stability, line_search, grad_noise, hess_symm, initialized
         real(c_rp) :: conv_tol, start_trust_radius, global_red_factor, local_red_factor
-        integer(c_ip) :: n_random_trial_vectors, n_macro, n_micro, &
-                         jacobi_davidson_start, seed, verbose
+        integer(c_ip) :: n_random_trial_vectors, n_extra_trial_vectors, n_macro, &
+                         n_micro, jacobi_davidson_start, seed, verbose
         character(kind=c_char) :: subsystem_solver(kw_len + 1)
         type(stability_settings_type_c) :: stability_settings
         type(c_ptr) :: context
@@ -179,6 +193,8 @@ module c_interface
     procedure(project_type), pointer :: project_f_wrapper_ptr => project_f_wrapper
     procedure(conv_check_type), pointer :: conv_check_f_wrapper_ptr => &
         conv_check_f_wrapper
+    procedure(get_extra_trial_vectors_type), pointer :: &
+        get_extra_trial_vectors_f_wrapper_ptr => get_extra_trial_vectors_f_wrapper
     procedure(logger_type), pointer :: logger_f_wrapper_ptr => logger_f_wrapper
 
     ! interfaces for converting settings between C and Fortran and states from
@@ -231,8 +247,9 @@ contains
         call c_f_procpointer(cptr=obj_func_c_funptr, fptr=callbacks%obj_func)
         call store_optional_c_callbacks( &
             callbacks, local_settings_c%initialized, local_settings_c%precond, &
-            local_settings_c%project, local_settings_c%conv_check, &
-            local_settings_c%logger, local_settings_c%context)
+            local_settings_c%project, local_settings_c%get_extra_trial_vectors, &
+            local_settings_c%conv_check, local_settings_c%logger, &
+            local_settings_c%context)
 
         ! let the bundle refer to the state and to the host's record, if one is given,
         ! so that the state is copied into it before every callback function
@@ -249,7 +266,9 @@ contains
             stability_callbacks, local_settings_c%initialized .and. &
             local_settings_c%stability_settings%initialized, &
             local_settings_c%stability_settings%precond, &
-            local_settings_c%stability_settings%project, c_null_funptr, &
+            local_settings_c%stability_settings%project, &
+            local_settings_c%stability_settings%get_extra_trial_vectors, &
+            local_settings_c%stability_settings%conv_check, &
             local_settings_c%stability_settings%logger, &
             local_settings_c%stability_settings%context)
         callbacks%stability => stability_callbacks
@@ -332,7 +351,8 @@ contains
         call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
         call store_optional_c_callbacks( &
             callbacks, local_settings_c%initialized, local_settings_c%precond, &
-            local_settings_c%project, c_null_funptr, local_settings_c%logger, &
+            local_settings_c%project, local_settings_c%get_extra_trial_vectors, &
+            local_settings_c%conv_check, local_settings_c%logger, &
             local_settings_c%context)
 
         ! let the bundle refer to the state and to the host's record, if one is given,
@@ -395,9 +415,10 @@ contains
 
     end function stability_check_c_wrapper
 
-    subroutine store_optional_c_callbacks(callbacks, initialized, precond_c_funptr, &
-                                          project_c_funptr, conv_check_c_funptr, &
-                                          logger_c_funptr, context_c)
+    subroutine store_optional_c_callbacks( &
+        callbacks, initialized, precond_c_funptr, project_c_funptr, &
+        get_extra_trial_vectors_c_funptr, conv_check_c_funptr, logger_c_funptr, &
+        context_c)
         !
         ! this subroutine stores the optional C callback functions and the host context
         ! of C settings in a callback bundle, skipping the ones that were not provided
@@ -406,6 +427,7 @@ contains
         type(c_callbacks_type), intent(inout) :: callbacks
         logical(c_bool), intent(in) :: initialized
         type(c_funptr), intent(in) :: precond_c_funptr, project_c_funptr, &
+                                      get_extra_trial_vectors_c_funptr, &
                                       conv_check_c_funptr, logger_c_funptr
         type(c_ptr), intent(in) :: context_c
 
@@ -421,6 +443,9 @@ contains
             call c_f_procpointer(cptr=precond_c_funptr, fptr=callbacks%precond)
         if (c_associated(project_c_funptr)) &
             call c_f_procpointer(cptr=project_c_funptr, fptr=callbacks%project)
+        if (c_associated(get_extra_trial_vectors_c_funptr)) &
+            call c_f_procpointer(cptr=get_extra_trial_vectors_c_funptr, &
+                                 fptr=callbacks%get_extra_trial_vectors)
         if (c_associated(conv_check_c_funptr)) &
             call c_f_procpointer(cptr=conv_check_c_funptr, fptr=callbacks%conv_check)
         if (c_associated(logger_c_funptr)) &
@@ -704,6 +729,44 @@ contains
 
     end function conv_check_f_wrapper
 
+    subroutine get_extra_trial_vectors_f_wrapper(trial_vectors, error, context)
+        !
+        ! this subroutine exposes a C-implemented extra trial vector function to Fortran
+        !
+        real(rp), intent(out), target :: trial_vectors(:, :)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        real(c_rp), pointer :: trial_vectors_c(:, :)
+        integer(c_ip) :: error_c
+
+        ! convert arguments to C kind
+        if (rp == c_rp) then
+            trial_vectors_c => trial_vectors
+        else
+            allocate(trial_vectors_c(size(trial_vectors, 1), size(trial_vectors, 2)))
+            trial_vectors_c = real(trial_vectors, kind=c_rp)
+        end if
+
+        ! call get_extra_trial_vectors C function
+        select type (callbacks => context)
+        type is (c_callbacks_type)
+            call copy_state_to_c(callbacks)
+            error_c = callbacks%get_extra_trial_vectors(trial_vectors_c, size( &
+                trial_vectors, 2, kind=c_ip), callbacks%host_context)
+        class default
+            error_c = 1
+        end select
+
+        ! convert arguments to Fortran kind
+        error = int(error_c, kind=ip)
+        if (rp /= c_rp) then
+            trial_vectors = real(trial_vectors_c, kind=rp)
+            deallocate(trial_vectors_c)
+        end if
+
+    end subroutine get_extra_trial_vectors_f_wrapper
+
     subroutine logger_f_wrapper(message, context)
         !
         ! this subroutine exposes a C-implemented logger function to Fortran
@@ -776,6 +839,11 @@ contains
             else
                 settings%project => null()
             end if
+            if (c_associated(settings_c%get_extra_trial_vectors)) then
+                settings%get_extra_trial_vectors => get_extra_trial_vectors_f_wrapper
+            else
+                settings%get_extra_trial_vectors => null()
+            end if
             if (c_associated(settings_c%conv_check)) then
                 settings%conv_check => conv_check_f_wrapper
             else
@@ -802,6 +870,8 @@ contains
             ! convert integers
             settings%n_random_trial_vectors = &
                 int(settings_c%n_random_trial_vectors, kind=ip)
+            settings%n_extra_trial_vectors = &
+                int(settings_c%n_extra_trial_vectors, kind=ip)
             settings%n_macro = int(settings_c%n_macro, kind=ip)
             settings%n_micro = int(settings_c%n_micro, kind=ip)
             settings%jacobi_davidson_start = &
@@ -843,11 +913,25 @@ contains
             else
                 settings%project => null()
             end if
+            if (c_associated(settings_c%get_extra_trial_vectors)) then
+                settings%get_extra_trial_vectors => get_extra_trial_vectors_f_wrapper
+            else
+                settings%get_extra_trial_vectors => null()
+            end if
+            if (c_associated(settings_c%conv_check)) then
+                settings%conv_check => conv_check_f_wrapper
+            else
+                settings%conv_check => null()
+            end if
             if (c_associated(settings_c%logger)) then
                 settings%logger => logger_f_wrapper
             else
                 settings%logger => null()
             end if
+
+            ! convert logicals
+            settings%hess_symm = logical(settings_c%hess_symm)
+            settings%stop_on_instability = logical(settings_c%stop_on_instability)
 
             ! convert reals
             settings%conv_tol = real(settings_c%conv_tol, kind=rp)
@@ -855,6 +939,8 @@ contains
             ! convert integers
             settings%n_random_trial_vectors = &
                 int(settings_c%n_random_trial_vectors, kind=ip)
+            settings%n_extra_trial_vectors = &
+                int(settings_c%n_extra_trial_vectors, kind=ip)
             settings%n_iter = int(settings_c%n_iter, kind=ip)
             settings%jacobi_davidson_start = &
                 int(settings_c%jacobi_davidson_start, kind=ip)
@@ -883,6 +969,7 @@ contains
         ! callback functions cannot be converted
         settings_c%precond = c_null_funptr
         settings_c%project = c_null_funptr
+        settings_c%get_extra_trial_vectors = c_null_funptr
         settings_c%conv_check = c_null_funptr
         settings_c%logger = c_null_funptr
 
@@ -901,6 +988,8 @@ contains
         ! convert integers
         settings_c%n_random_trial_vectors = &
             int(settings%n_random_trial_vectors, kind=c_ip)
+        settings_c%n_extra_trial_vectors = &
+            int(settings%n_extra_trial_vectors, kind=c_ip)
         settings_c%n_macro = int(settings%n_macro, kind=c_ip)
         settings_c%n_micro = int(settings%n_micro, kind=c_ip)
         settings_c%jacobi_davidson_start = &
@@ -934,7 +1023,14 @@ contains
         ! callback functions cannot be converted
         settings_c%precond = c_null_funptr
         settings_c%project = c_null_funptr
+        settings_c%get_extra_trial_vectors = c_null_funptr
+        settings_c%conv_check = c_null_funptr
         settings_c%logger = c_null_funptr
+
+        ! convert logicals
+        settings_c%hess_symm = logical(settings%hess_symm, kind=c_bool)
+        settings_c%stop_on_instability = &
+            logical(settings%stop_on_instability, kind=c_bool)
 
         ! convert reals
         settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
@@ -942,6 +1038,8 @@ contains
         ! convert integers
         settings_c%n_random_trial_vectors = &
             int(settings%n_random_trial_vectors, kind=c_ip)
+        settings_c%n_extra_trial_vectors = &
+            int(settings%n_extra_trial_vectors, kind=c_ip)
         settings_c%n_iter = int(settings%n_iter, kind=c_ip)
         settings_c%jacobi_davidson_start = &
             int(settings%jacobi_davidson_start, kind=c_ip)

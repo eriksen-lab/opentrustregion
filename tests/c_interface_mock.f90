@@ -44,6 +44,7 @@ contains
                                logger_c_type, obj_func_c_type
         use test_reference, only: check_update_orbs_c_funptr, check_obj_func_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
+                                  check_get_extra_trial_vectors_c_funptr, &
                                   check_conv_check_c_funptr, &
                                   get_reference_solver_state_values, operator(/=)
 
@@ -107,6 +108,12 @@ contains
                 settings_c%project, "solver_py_interface", " by given projection "// &
                 "function", context)) test_solver_interface = .false.
 
+            ! test passed extra trial vector function
+            if (.not. check_get_extra_trial_vectors_c_funptr( &
+                settings_c%get_extra_trial_vectors, "solver_py_interface", &
+                " by given extra trial vector function", context)) &
+                test_solver_interface = .false.
+
             ! test passed convergence check function
             if (.not. check_conv_check_c_funptr( &
                 settings_c%conv_check, "solver_py_interface", " by given "// &
@@ -125,6 +132,14 @@ contains
             if (.not. check_project_c_funptr( &
                 settings_c%stability_settings%project, "solver_py_interface", &
                 " by projection function of nested settings", context)) &
+                test_solver_interface = .false.
+            if (.not. check_get_extra_trial_vectors_c_funptr( &
+                settings_c%stability_settings%get_extra_trial_vectors, &
+                "solver_py_interface", " by extra trial vector function of nested "// &
+                "settings", context)) test_solver_interface = .false.
+            if (.not. check_conv_check_c_funptr( &
+                settings_c%stability_settings%conv_check, "solver_py_interface", &
+                " by convergence check function of nested settings", context)) &
                 test_solver_interface = .false.
             call c_f_procpointer(cptr=settings_c%stability_settings%logger, &
                                  fptr=logger_funptr)
@@ -160,6 +175,8 @@ contains
                                logger_c_type, hess_x_c_type
         use test_reference, only: tol_c, check_hess_x_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
+                                  check_get_extra_trial_vectors_c_funptr, &
+                                  check_conv_check_c_funptr, &
                                   get_reference_stability_state_values, operator(/=)
 
         real(c_rp), intent(in), target :: h_diag_c(*)
@@ -231,6 +248,18 @@ contains
             if (.not. check_project_c_funptr( &
                 settings_c%project, "stability_check_py_interface", &
                 " by given projection function", context)) &
+                test_stability_check_interface = .false.
+
+            ! test passed extra trial vector function
+            if (.not. check_get_extra_trial_vectors_c_funptr( &
+                settings_c%get_extra_trial_vectors, "stability_check_py_interface", &
+                " by given extra trial vector function", context)) &
+                test_stability_check_interface = .false.
+
+            ! test passed convergence check function
+            if (.not. check_conv_check_c_funptr( &
+                settings_c%conv_check, "stability_check_py_interface", &
+                " by given convergence check function", context)) &
                 test_stability_check_interface = .false.
 
             ! get Fortran pointer to passed logging function and call it

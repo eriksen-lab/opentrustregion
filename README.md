@@ -229,9 +229,10 @@ The optimization process can be fine-tuned using the following settings:
 
 - **`precond`** (subroutine): Applies a preconditioner to a residual vector. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors). Receives the host context as its last argument.
 - **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for optimization using non-redundant parameters. When this is used, all other passed routines (`update_orbs`, `hess_x`, and `precond`) must be self-projecting. Receives the host context as its last argument.
+- **`get_extra_trial_vectors`** (subroutine): Returns extra trial vectors that seed the leading part of the initial trial space, written in-place to the provided matrix, whose column count is `n_extra_trial_vectors` and is passed to the callback itself by the C and Python interfaces, since those only receive a flat pointer. In Python, the matrix holds one trial vector per row instead. The vectors do not need to be orthonormalized or projected, and a vanishing column is dropped, which is how the callback signals that it has no vector to contribute for that slot. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
 - **`conv_check`** (function): Returns whether the optimization has converged due to some supplied convergence criterion, which replaces the criterion on the RMS gradient (`conv_tol`). A point the solver reaches by a step along an unstable mode does not count as converged, whatever the check returns. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
 - **`stability`** (boolean): Determines whether a stability check is performed upon convergence. The solver checks the stability of a starting point that is already converged and of a point with an exactly vanishing gradient in any case. From an unstable point, it steps along the unstable mode until the gradient RMS of the quadratic model is ten times the larger of the current one and `conv_tol`, or by the trust radius if both vanish or the step would be longer, and does not take the point it reaches as converged.
-- **`hess_symm`** (boolean): Determines whether the supplied Hessian is symmetric. This is sometimes not the case for approximate Hessians. A non-symmetric Hessian is only supported by the `"davidson_ls"` subsystem solver; the stability check, also the one the solver performs internally, treats the Hessian as symmetric.
+- **`hess_symm`** (boolean): Determines whether the supplied Hessian is symmetric. This is sometimes not the case for approximate Hessians. A non-symmetric Hessian is only supported by the `"davidson_ls"` subsystem solver.
 - **`line_search`** (boolean): Determines whether a line search is performed after every macro iteration.
 - **`grad_noise`** (boolean): Determines whether the gradient is perturbed by a random vector before every subsystem solve of the Davidson-family subsystem solvers. The perturbation keeps the solution from remaining exactly within a symmetry subspace of the starting point, which a Hessian with no negative curvature outside that subspace, or no information about it, cannot otherwise leave. Its norm is the micro-iteration reduction factor (`local_red_factor` or `global_red_factor`) of the region the previous subproblem was solved in, the first counting as global, times the gradient norm, so that it goes to zero together with the gradient at convergence; the micro iterations are never asked to reduce the residual below this relative size, so that they do not resolve the perturbation itself, whichever region the subproblem turns out to be solved in.
 - **`subsystem_solver`** (string): Specifies which subsystem solver to use. Options include:
@@ -242,6 +243,7 @@ The optimization process can be fine-tuned using the following settings:
   - `"tcg"`: truncated conjugate gradient method.
 - **`conv_tol`** (real): Specifies the convergence criterion for the RMS gradient, which a custom `conv_check` replaces.
 - **`n_random_trial_vectors`** (integer): Number of random trial vectors used to initialize the micro iterations of the Davidson-family subsystem solvers.
+- **`n_extra_trial_vectors`** (integer): Number of non-random trial vectors added alongside the gradient direction to initialize the micro iterations, on top of the `n_random_trial_vectors` random ones. These are taken from `get_extra_trial_vectors` when that callback is provided, and are otherwise unit vectors along the lowest Hessian diagonal elements, added only where those indicate negative curvature. Vectors that vanish or are linearly dependent on the gradient direction are dropped.
 - **`start_trust_radius`** (real): Initial trust radius.
 - **`n_macro`** (integer): Maximum number of macro iterations.
 - **`n_micro`** (integer): Maximum number of micro iterations per attempted trust-region step.
@@ -273,7 +275,7 @@ The solver keeps the state it is given up to date during the optimization, start
 - **`stability_state`** (stability_state_type): State of the most recent internal stability check, see the [stability check's output](#output-1).
 
 ## Stability Check
-A separate `stability_check` subroutine is available to verify whether the current solution corresponds to a minimum. If not, it returns a boolean indicating instability and optionally, writes the eigenvector corresponding to the negative eigenvalue in-place to the provided memory. It takes the following arguments:
+A separate `stability_check` subroutine is available to verify whether the current solution corresponds to a minimum. It returns whether the point is stable and, optionally, the lowest Hessian eigenvalue and the corresponding eigenvector, which at an unstable point is the direction along which the objective function decreases. It takes the following arguments:
 
 ### Arguments
 
@@ -282,11 +284,11 @@ A separate `stability_check` subroutine is available to verify whether the curre
   - Accepts a trial vector and writes the result of the Hessian transformation into an output array (real array, written in-place)
   - Returns an integer error code (0 for success, positive integers < 100 for errors)
   - Receives the host context as its last argument.
-- **`stable`** (boolean): Returns whether the current point is stable.
+- **`stable`** (boolean): Returns whether the current point is stable, i.e. whether the lowest Hessian eigenvalue is above -1e-2; a less negative eigenvalue is not distinguished from numerical noise, such as that of the integration grid of a density functional.
 - **`error`** (integer): An integer code indicating the success or failure of the stability check. The error code structure is explained below.
 - **`settings`** (settings_type, optional): Settings object which controls optional arguments as described below. The stability check only reads it. Without it, the default settings are used.
 - **`state`** (stability_state_type, optional): Record that the stability check keeps up to date during its iterations and that holds its final state once it returns, as described below.
-- **`kappa`** (real array, optional): If the memory is provided, the descent direction along the unstable mode is written in-place in this array when the current point is not stable (as can be checked from `stable`), and zeros are written when it is stable.
+- **`kappa`** (real array, optional): If provided, receives the normalized eigenvector of the lowest Hessian eigenvalue, written in-place, whether the current point is stable or not. At an unstable point (as can be checked from `stable`), this is the descent direction along the unstable mode.
 
 ---
 
@@ -315,9 +317,11 @@ settings%diag_solver = "jacobi-davidson"
 settings%context => host_data
 
 ! run stability check
-call stability_check(h_diag, hess_x_funptr, stable, error, settings, state, kappa=kappa)
+call stability_check(h_diag, hess_x_funptr, stable, error, settings, state, &
+                     kappa=kappa)
 
 ! read the final state
+print *, "Lowest Hessian eigenvalue:", state%min_eigval
 print *, "Number of Hessian linear transformations:", state%n_hess_x
 ```
 
@@ -326,8 +330,8 @@ print *, "Number of Hessian linear transformations:", state%n_hess_x
 - A declared settings object holds the default settings, which can be overridden (here, `conv_tol` and `n_iter`); assigning `stability_settings_type()` resets an object to them.
 - `host_data` is a variable of any type declared with the `target` attribute. Every callback function receives it as its last argument, declared as `class(*), intent(in), pointer :: context`, and recovers its own type with `select type`. The `intent(in)` applies to the pointer rather than the data, so a callback function may modify `host_data` but not point `context` elsewhere. Leaving `settings%context` unset is fine; the callback functions then receive an unassociated pointer.
 - The `stable` logical output receives the result of the stability check.
-- The settings, the state and the descent direction `kappa` are optional: without settings, the default settings are used, and the others are only returned if provided.
-- After the call, `state` holds the final state of the stability check (here, `n_hess_x`), see [Output](#output-1). The settings are left unchanged.
+- The settings, the state and the lowest eigenvector `kappa` are optional: without settings, the default settings are used, and the others are only returned if provided.
+- After the call, `state` holds the final state of the stability check (here, the lowest eigenvalue `min_eigval` and `n_hess_x`), see [Output](#output-1). The settings are left unchanged.
 
 ---
 
@@ -356,7 +360,7 @@ strcpy(settings.diag_solver, "jacobi-davidson");
 // hand the callback functions whatever the host needs to reach its own data
 settings.context = &host_data;
 
-// pointers to Hessian diagonal and descent direction
+// pointers to Hessian diagonal and lowest eigenvector
 c_real* h_diag;
 c_real* kappa;
 
@@ -365,6 +369,7 @@ c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, &settings
                               &state, kappa);
 
 // read the final state
+printf("Lowest Hessian eigenvalue: %f\n", state.min_eigval);
 printf("Number of Hessian linear transformations: %lld\n", (long long)state.n_hess_x);
 ```
 
@@ -373,8 +378,8 @@ printf("Number of Hessian linear transformations: %lld\n", (long long)state.n_he
 - `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
 - Stability settings are initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol` and `n_iter`) can then be overridden.
 - The `stable` output receives the result of the stability check which directly returns an error code in typical C fashion.
-- The descent direction `kappa` can be defined elsewhere if needed; otherwise, it can be set to `NULL`. So can `state`, and `settings` can be `NULL` to use the default settings.
-- After the call, `state` holds the final state of the stability check (here, `n_hess_x`), also after an error, see [Output](#output-1). The state struct needs no initialization, and the settings are left unchanged.
+- `kappa` receives the lowest eigenvector and can be `NULL` to skip it. So can `state`, and `settings` can be `NULL` to use the default settings.
+- After the call, `state` holds the final state of the stability check (here, the lowest eigenvalue `min_eigval` and `n_hess_x`), also after an error, see [Output](#output-1). The state struct needs no initialization, and the settings are left unchanged.
 
 ---
 
@@ -392,7 +397,7 @@ settings.conv_tol = 1e-6
 settings.n_iter = 100
 settings.diag_solver = "jacobi-davidson"
 
-# Hessian diagonal and descent direction arrays
+# Hessian diagonal and lowest eigenvector arrays
 h_diag = np.asarray(h_diag, dtype=np.float64)
 kappa = np.empty(n_param, dtype=np.float64)
 
@@ -400,6 +405,7 @@ kappa = np.empty(n_param, dtype=np.float64)
 stable = stability_check(h_diag, hess_x, n_param, settings, state, kappa=kappa)
 
 # read the final state
+print(f"Lowest Hessian eigenvalue: {state.min_eigval}")
 print(f"Number of Hessian linear transformations: {state.n_hess_x}")
 ```
 
@@ -408,20 +414,25 @@ print(f"Number of Hessian linear transformations: {state.n_hess_x}")
 - Stability settings are initialized via the `StabilitySettings` class, which returns an object with default values; individual settings (here, `conv_tol`) can then be overridden.
 - There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
 - The `stable` output receives the result of the stability check and errors can be caught in pythonic fashion in the form of a `RuntimeError`.
-- The descent direction `kappa` is optional and is only returned if provided.
+- The lowest eigenvector is written into `kappa` if it is provided.
 - The settings and the state are optional: without settings, the default settings are used, and the state is only needed to read it.
-- After the call, `state` holds the final state of the stability check (here, `n_hess_x`), see [Output](#output-1), whose fields are read-only attributes. The settings are left unchanged.
+- After the call, `state` holds the final state of the stability check (here, the lowest eigenvalue `min_eigval` and `n_hess_x`), see [Output](#output-1), whose fields are read-only attributes. The settings are left unchanged.
 
 ### Optional Settings
 The stability check can be fine-tuned using the following settings:
 
 - **`precond`** (subroutine): Applies a preconditioner to a residual vector. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors). Receives the host context as its last argument.
 - **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for stability check using non-redundant parameters. When this is used, all other passed routines (`hess_x` and `precond`) must be self-projecting. Receives the host context as its last argument.
+- **`conv_check`** (function): Returns whether the stability check has converged due to some supplied convergence criterion, which replaces the criterion on the RMS residual (`conv_tol`) and `stop_on_instability`. It has the same arguments as the convergence check of the solver and can read the `state` passed to `stability_check`, or, for the internal stability check, from `stability_state` of the state passed to `solver`, so a host that supplies it has to pass a state. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
+- **`get_extra_trial_vectors`** (subroutine): Returns extra trial vectors that seed the leading part of the initial trial space, written in-place to the provided matrix, whose column count is `n_extra_trial_vectors` and is passed to the callback itself by the C and Python interfaces, since those only receive a flat pointer. In Python, the matrix holds one trial vector per row instead. The vectors do not need to be orthonormalized or projected, and a vanishing column is dropped, which is how the callback signals that it has no vector to contribute for that slot. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
+- **`hess_symm`** (boolean): Determines whether the supplied Hessian is symmetric. This is sometimes not the case for approximate Hessians. A non-symmetric Hessian is not supported by the `"jacobi-davidson"` diagonalization solver.
+- **`stop_on_instability`** (boolean): When no `conv_check` is supplied, lets the default convergence policy accept a Ritz pair as soon as its eigenvalue drops below the instability threshold, without waiting for the residual to converge, since a Ritz value is an upper bound on the true lowest eigenvalue and the sign is then already certain. Off by default.
 - **`diag_solver`** (string): Specifies which diagonalization solver to use. Options include:
   - `"davidson"`: standard Davidson method,
   - `"jacobi-davidson"`: Davidson method that switches to Jacobi-Davidson after `jacobi_davidson_start` iterations.
-- **`conv_tol`** (real): Convergence criterion for the residual norm.
+- **`conv_tol`** (real): Convergence criterion for the RMS residual.
 - **`n_random_trial_vectors`** (integer): Number of random trial vectors used to start the Davidson iterations.
+- **`n_extra_trial_vectors`** (integer): Number of non-random trial vectors used to start the Davidson iterations, on top of the `n_random_trial_vectors` random ones. These non-random vectors are taken from `get_extra_trial_vectors` when that callback is provided, and otherwise are unit vectors along the lowest Hessian diagonal elements. Vectors that vanish or are linearly dependent are dropped, so the trial space holds the remaining ones plus the random ones, at most as many as there are parameters, and the stability check fails if nothing remains.
 - **`n_iter`** (integer): Maximum number of Davidson iterations.
 - **`jacobi_davidson_start`** (integer): Number of iterations after which the diagonalization solver switches to the Jacobi-Davidson method.
 - **`verbose`** (integer): Controls the verbosity of output during the stability check. Level 0 prints nothing, 1 prints errors, 2 also warnings, 3 also progress information and 4 also debugging information.
@@ -452,16 +463,17 @@ The library uses structured integer return codes to indicate whether a function 
 
 ### Origins (`OO`)
 
-| Code Prefix (`OO`) | Component           |
-|--------------------|---------------------|
-| `01`               | `solver`            |
-| `02`               | `stability_check`   |
-| `11`               | `obj_func`          |
-| `12`               | `update_orbs`       |
-| `13`               | `hess_x`            |
-| `14`               | `precond`           |
-| `15`               | `conv_check`        |
-| `16`               | `project`           |
+| Code Prefix (`OO`) | Component                                                                  |
+|--------------------|----------------------------------------------------------------------------|
+| `01`               | `solver`                                                                   |
+| `02`               | `stability_check`                                                          |
+| `11`               | `obj_func`                                                                 |
+| `12`               | `update_orbs`                                                              |
+| `13`               | `hess_x`                                                                   |
+| `14`               | `precond`                                                                  |
+| `15`               | `conv_check`, of the solver and of the stability check                     |
+| `16`               | `project`                                                                  |
+| `17`               | `get_extra_trial_vectors`, of the solver and of the stability check        |
 
 ### Error Codes (`EE`)
 

@@ -9,7 +9,8 @@ module c_interface_unit_tests
     use opentrustregion, only: rp, ip, stderr
     use c_interface, only: c_rp, c_ip, update_orbs_c_type, hess_x_c_type, &
                            obj_func_c_type, precond_c_type, project_c_type, &
-                           conv_check_c_type, logger_c_type
+                           get_extra_trial_vectors_c_type, conv_check_c_type, &
+                           logger_c_type
     use test_reference, only: tol_c, n_param, n_param_c
     use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_loc, c_funptr, c_funloc, &
                                            c_char, c_associated, c_null_ptr, &
@@ -35,6 +36,13 @@ module c_interface_unit_tests
         mock_stability_project
     procedure(logger_c_type), pointer :: mock_stability_logger_ptr => &
         mock_stability_logger
+    procedure(get_extra_trial_vectors_c_type), pointer :: &
+        mock_get_extra_trial_vectors_ptr => mock_get_extra_trial_vectors
+    procedure(conv_check_c_type), pointer :: mock_stability_conv_check_ptr => &
+        mock_stability_conv_check
+    procedure(get_extra_trial_vectors_c_type), pointer :: &
+        mock_stability_get_extra_trial_vectors_ptr => &
+        mock_stability_get_extra_trial_vectors
 
 contains
 
@@ -203,6 +211,61 @@ contains
 
     end function mock_conv_check_not_converged
 
+    function mock_get_extra_trial_vectors(trial_vectors, n_extra_trial_vectors_c, &
+                                          context_c) result(error) bind(C)
+        !
+        ! this function is a test function for the C extra trial vector function
+        !
+        use test_reference, only: check_host_context_c, host_context_error, &
+                                  n_extra_trial_vectors_c_ref => n_extra_trial_vectors_c
+
+        real(c_rp), intent(out), target :: trial_vectors(*)
+        integer(c_ip), intent(in), value :: n_extra_trial_vectors_c
+        type(c_ptr), intent(in), value :: context_c
+        integer(c_ip) :: error
+
+        integer(c_ip) :: i
+
+        ! check host context
+        call check_host_context_c(context_c)
+
+        ! check the number of extra trial vectors, which is all the function knows of
+        ! the size of the array, before writing them
+        if (n_extra_trial_vectors_c /= n_extra_trial_vectors_c_ref) then
+            write(stderr, *) "test_get_extra_trial_vectors_f_wrapper failed: "// &
+                "Passed number of extra trial vectors wrong."
+            error = 1
+            return
+        end if
+
+        do i = 1, n_extra_trial_vectors_c
+            trial_vectors((i - 1) * n_param + 1:i * n_param) = real(i, kind=c_rp)
+        end do
+
+        error = host_context_error(context_c)
+
+    end function mock_get_extra_trial_vectors
+
+    function mock_stability_conv_check(converged, context_c) result(error) bind(C)
+        !
+        ! this function is a test function for the C convergence check function of the
+        ! stability check, which has to be a function distinct from the solver's
+        !
+        use test_reference, only: check_host_context_c, host_context_error
+
+        logical(c_bool), intent(out) :: converged
+        type(c_ptr), intent(in), value :: context_c
+        integer(c_ip) :: error
+
+        ! check host context
+        call check_host_context_c(context_c)
+
+        converged = .true.
+
+        error = host_context_error(context_c)
+
+    end function mock_stability_conv_check
+
     subroutine mock_logger(message_c, context_c) bind(C)
         !
         ! this subroutine is a test subroutine for the C logging function
@@ -270,6 +333,23 @@ contains
 
     end function mock_stability_project
 
+    function mock_stability_get_extra_trial_vectors( &
+        trial_vectors, n_extra_trial_vectors_c, context_c) result(error) bind(C)
+        !
+        ! this function is a test function for a C extra trial vector function the
+        ! nested stability check settings provide of their own, which behaves like the
+        ! solver's but is a different function
+        !
+        real(c_rp), intent(out), target :: trial_vectors(*)
+        integer(c_ip), intent(in), value :: n_extra_trial_vectors_c
+        type(c_ptr), intent(in), value :: context_c
+        integer(c_ip) :: error
+
+        error = mock_get_extra_trial_vectors(trial_vectors, n_extra_trial_vectors_c, &
+                                             context_c)
+
+    end function mock_stability_get_extra_trial_vectors
+
     subroutine mock_stability_logger(message_c, context_c) bind(C)
         !
         ! this subroutine is a test subroutine for a C logging function the nested
@@ -306,6 +386,9 @@ contains
         type(host_context_type), target :: nested_host_context
         procedure(precond_c_type), pointer :: expected_precond
         procedure(project_c_type), pointer :: expected_project
+        procedure(get_extra_trial_vectors_c_type), pointer :: &
+            expected_get_extra_trial_vectors
+        procedure(conv_check_c_type), pointer :: expected_conv_check
         procedure(logger_c_type), pointer :: expected_logger
         type(c_ptr) :: expected_context
         integer(c_ip) :: error
@@ -338,6 +421,7 @@ contains
             settings%stability_settings%context = c_null_ptr
             settings%precond = c_funloc(mock_precond)
             settings%project = c_funloc(mock_project)
+            settings%get_extra_trial_vectors = c_funloc(mock_get_extra_trial_vectors)
             settings%conv_check = c_funloc(mock_conv_check)
             settings%logger = c_funloc(mock_logger)
 
@@ -348,6 +432,10 @@ contains
             if (i_case >= 3) then
                 settings%stability_settings%precond = c_funloc(mock_stability_precond)
                 settings%stability_settings%project = c_funloc(mock_stability_project)
+                settings%stability_settings%get_extra_trial_vectors = &
+                    c_funloc(mock_stability_get_extra_trial_vectors)
+                settings%stability_settings%conv_check = &
+                    c_funloc(mock_stability_conv_check)
                 settings%stability_settings%logger = c_funloc(mock_stability_logger)
             end if
             if (i_case == 4) settings%stability_settings%initialized = .false.
@@ -356,10 +444,15 @@ contains
             if (i_case == 3) then
                 expected_precond => mock_stability_precond
                 expected_project => mock_stability_project
+                expected_get_extra_trial_vectors => &
+                    mock_stability_get_extra_trial_vectors
+                expected_conv_check => mock_stability_conv_check
                 expected_logger => mock_stability_logger
             else
                 expected_precond => mock_precond
                 expected_project => mock_project
+                expected_get_extra_trial_vectors => mock_get_extra_trial_vectors
+                expected_conv_check => mock_conv_check
                 expected_logger => mock_logger
             end if
             if (i_case == 2 .or. i_case == 3) then
@@ -414,6 +507,19 @@ contains
                                  expected_project)) then
                 write(stderr, *) "test_solver_c_wrapper failed: Projection of "// &
                     "internal stability check wrong "//trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
+            end if
+            if (.not. associated(received_stability_callbacks%get_extra_trial_vectors, &
+                                 expected_get_extra_trial_vectors)) then
+                write(stderr, *) "test_solver_c_wrapper failed: Extra trial vector "// &
+                    "function of internal stability check wrong "// &
+                    trim(case_names(i_case))//"."
+                test_solver_c_wrapper = .false.
+            end if
+            if (.not. associated(received_stability_callbacks%conv_check, &
+                                 expected_conv_check)) then
+                write(stderr, *) "test_solver_c_wrapper failed: Convergence check "// &
+                    "of internal stability check wrong "//trim(case_names(i_case))//"."
                 test_solver_c_wrapper = .false.
             end if
             if (.not. associated(received_stability_callbacks%logger, &
@@ -478,11 +584,15 @@ contains
         call get_reference_solver_values(settings)
         settings%precond = c_funloc(mock_precond)
         settings%project = c_funloc(mock_project)
+        settings%get_extra_trial_vectors = c_funloc(mock_get_extra_trial_vectors)
         settings%conv_check = c_funloc(mock_conv_check)
         settings%logger = c_funloc(mock_logger)
         settings%context = c_loc(host_context)
         settings%stability_settings%precond = c_funloc(mock_stability_precond)
         settings%stability_settings%project = c_funloc(mock_stability_project)
+        settings%stability_settings%get_extra_trial_vectors = &
+            c_funloc(mock_stability_get_extra_trial_vectors)
+        settings%stability_settings%conv_check = c_funloc(mock_stability_conv_check)
         settings%stability_settings%logger = c_funloc(mock_stability_logger)
         settings%stability_settings%context = c_loc(nested_host_context)
         settings%initialized = .false.
@@ -503,6 +613,8 @@ contains
         end if
         if (associated(received_stability_callbacks%precond) .or. &
             associated(received_stability_callbacks%project) .or. &
+            associated(received_stability_callbacks%get_extra_trial_vectors) .or. &
+            associated(received_stability_callbacks%conv_check) .or. &
             associated(received_stability_callbacks%logger)) then
             write(stderr, *) "test_solver_c_wrapper failed: Callback functions of "// &
                 "nested settings passed for settings that were not initialized."
@@ -594,6 +706,8 @@ contains
             call get_reference_stability_values(settings)
             settings%precond = c_funloc(mock_precond)
             settings%project = c_funloc(mock_project)
+            settings%get_extra_trial_vectors = c_funloc(mock_get_extra_trial_vectors)
+            settings%conv_check = c_funloc(mock_conv_check)
             settings%logger = c_funloc(mock_logger)
 
             ! set host context
@@ -750,7 +864,8 @@ contains
         ! store the callback functions and host context of initialized settings
         call store_optional_c_callbacks( &
             callbacks, .true._c_bool, c_funloc(mock_precond), c_funloc(mock_project), &
-            c_funloc(mock_conv_check), c_funloc(mock_logger), c_loc(host_context))
+            c_funloc(mock_get_extra_trial_vectors), c_funloc(mock_conv_check), &
+            c_funloc(mock_logger), c_loc(host_context))
         if (.not. callbacks_stored(.true., "of initialized settings not stored")) &
             test_store_optional_c_callbacks = .false.
         if (.not. c_associated(callbacks%host_context, c_loc(host_context))) then
@@ -763,7 +878,7 @@ contains
         ! host context already in the bundle have to be kept
         call store_optional_c_callbacks(callbacks, .true._c_bool, c_null_funptr, &
                                         c_null_funptr, c_null_funptr, c_null_funptr, &
-                                        c_null_ptr)
+                                        c_null_funptr, c_null_ptr)
         if (.not. callbacks_stored( &
             .true., "in the bundle replaced by one that was not provided")) &
             test_store_optional_c_callbacks = .false.
@@ -778,7 +893,8 @@ contains
         callbacks = c_callbacks_type()
         call store_optional_c_callbacks( &
             callbacks, .false._c_bool, c_funloc(mock_precond), c_funloc(mock_project), &
-            c_funloc(mock_conv_check), c_funloc(mock_logger), c_loc(host_context))
+            c_funloc(mock_get_extra_trial_vectors), c_funloc(mock_conv_check), &
+            c_funloc(mock_logger), c_loc(host_context))
         if (.not. callbacks_stored(.false., "of settings that were not initialized "// &
                                    "stored")) test_store_optional_c_callbacks = .false.
         if (c_associated(callbacks%host_context)) then
@@ -799,20 +915,24 @@ contains
             logical, intent(in) :: stored
             character(len=*), intent(in) :: failure
 
-            character(len=*), parameter :: names(4) = &
-                [character(len=26) :: "Preconditioner", "Projection function", &
-                 "Convergence check function", "Logging function"]
-            logical :: correct(4)
+            character(len=*), parameter :: names(5) = &
+                [character(len=29) :: "Preconditioner", "Projection function", &
+                 "Extra trial vector function", "Convergence check function", &
+                 "Logging function"]
+            logical :: correct(5)
             integer(ip) :: i_callback
 
-            correct = [merge(associated(callbacks%precond, mock_precond), &
-                             .not. associated(callbacks%precond), stored), &
-                       merge(associated(callbacks%project, mock_project), &
-                             .not. associated(callbacks%project), stored), &
-                       merge(associated(callbacks%conv_check, mock_conv_check), &
-                             .not. associated(callbacks%conv_check), stored), &
-                       merge(associated(callbacks%logger, mock_logger), &
-                             .not. associated(callbacks%logger), stored)]
+            correct = [merge(associated( &
+                callbacks%precond, mock_precond), .not. associated(callbacks%precond), &
+                stored), merge(associated(callbacks%project, mock_project), &
+                               .not. associated(callbacks%project), stored), &
+                merge(associated(callbacks%get_extra_trial_vectors, &
+                                 mock_get_extra_trial_vectors), &
+                      .not. associated(callbacks%get_extra_trial_vectors), stored), &
+                merge(associated(callbacks%conv_check, mock_conv_check), &
+                      .not. associated(callbacks%conv_check), stored), &
+                merge(associated(callbacks%logger, mock_logger), &
+                      .not. associated(callbacks%logger), stored)]
             do i_callback = 1, size(names)
                 if (.not. correct(i_callback)) &
                     write(stderr, *) "test_store_optional_c_callbacks failed: "// &
@@ -933,8 +1053,8 @@ contains
         end if
 
         ! an orbital update that succeeds without providing a Hessian linear
-        ! transformation leaves the Hessian linear transformation disassociated, even if
-        ! it was associated before, so that the solver reports the missing one
+        ! transformation leaves the Hessian linear transformation disassociated, even
+        ! if it was associated before, so that the solver reports the missing one
         callbacks%update_orbs => mock_update_orbs_no_hess_x
         kappa = 1.0_rp
         hess_x_funptr => hess_x_f_wrapper
@@ -1282,6 +1402,65 @@ contains
 
     end function test_conv_check_f_wrapper
 
+    logical(c_bool) function test_get_extra_trial_vectors_f_wrapper() bind(C)
+        !
+        ! this function tests the Fortran wrapper for the extra trial vector function
+        !
+        use opentrustregion, only: get_extra_trial_vectors_type
+        use c_interface, only: c_callbacks_type, get_extra_trial_vectors_f_wrapper
+        use test_reference, only: check_get_extra_trial_vectors_funptr, host_context, &
+                                  arm_host_context_c, arm_state_c, &
+                                  host_context_reached, n_extra_trial_vectors
+
+        procedure(get_extra_trial_vectors_type), pointer :: funptr
+        type(c_callbacks_type), target :: callbacks
+        class(*), pointer :: context, foreign_context
+        real(rp), target :: foreign_context_target
+        real(rp) :: trial_vectors(n_param, n_extra_trial_vectors)
+        integer(ip) :: error
+
+        ! assume tests pass
+        test_get_extra_trial_vectors_f_wrapper = .true.
+
+        ! inject mock C function and hand the bundle to the wrapper as its context
+        callbacks%get_extra_trial_vectors => mock_get_extra_trial_vectors
+        call arm_host_context_c(callbacks%host_context)
+        call arm_state_c(callbacks)
+        context => callbacks
+
+        ! get pointer to subroutine
+        funptr => get_extra_trial_vectors_f_wrapper
+
+        ! test wrapper
+        if (.not. check_get_extra_trial_vectors_funptr( &
+            funptr, "get_extra_trial_vectors_f_wrapper", "", context)) &
+            test_get_extra_trial_vectors_f_wrapper = .false.
+
+        ! check that the wrapper handed the host context to the C function
+        if (.not. host_context_reached("get_extra_trial_vectors_f_wrapper")) &
+            test_get_extra_trial_vectors_f_wrapper = .false.
+
+        ! check that an error of the C function is passed on
+        host_context%mock_error = 2
+        call get_extra_trial_vectors_f_wrapper(trial_vectors, error, context)
+        if (error /= 2) then
+            write(stderr, *) "test_get_extra_trial_vectors_f_wrapper failed: Did "// &
+                "not pass on the error of the C function."
+            test_get_extra_trial_vectors_f_wrapper = .false.
+        end if
+        host_context%mock_error = 0
+
+        ! a context this module did not create is reported rather than dereferenced
+        foreign_context => foreign_context_target
+        call get_extra_trial_vectors_f_wrapper(trial_vectors, error, foreign_context)
+        if (error /= 1) then
+            write(stderr, *) "test_get_extra_trial_vectors_f_wrapper failed: Did "// &
+                "not report an invalid context."
+            test_get_extra_trial_vectors_f_wrapper = .false.
+        end if
+
+    end function test_get_extra_trial_vectors_f_wrapper
+
     logical(c_bool) function test_logger_f_wrapper() bind(C)
         !
         ! this function tests the Fortran wrapper for the logging function
@@ -1403,8 +1582,10 @@ contains
         type(solver_settings_type_c) :: settings_c
         type(solver_settings_type) :: settings, expected_settings
         integer(ip) :: i
-        character(len=11), parameter :: logical_names(4) = &
-            [character(len=11) :: "stability", "line_search", "grad_noise", "hess_symm"]
+        character(len=38), parameter :: logical_names(6) = &
+            [character(len=38) :: "stability", "line_search", "grad_noise", &
+             "hess_symm", "stability_settings.hess_symm", &
+             "stability_settings.stop_on_instability"]
 
         ! assume tests pass
         test_assign_solver_f_c = .true.
@@ -1444,6 +1625,10 @@ contains
             expected_settings%line_search = logical_names(i) == "line_search"
             expected_settings%grad_noise = logical_names(i) == "grad_noise"
             expected_settings%hess_symm = logical_names(i) == "hess_symm"
+            expected_settings%stability_settings%hess_symm = &
+                logical_names(i) == "stability_settings.hess_symm"
+            expected_settings%stability_settings%stop_on_instability = &
+                logical_names(i) == "stability_settings.stop_on_instability"
             settings = settings_c
             if (settings /= expected_settings) then
                 write(stderr, *) "test_assign_solver_f_c failed: Settings with "// &
@@ -1493,7 +1678,10 @@ contains
                                   callbacks_unset, unset_callbacks, callbacks_wrapped
 
         type(stability_settings_type_c) :: settings_c
-        type(stability_settings_type) :: settings
+        type(stability_settings_type) :: settings, expected_settings
+        integer(ip) :: i
+        character(len=19), parameter :: logical_names(2) = &
+            [character(len=19) :: "hess_symm", "stop_on_instability"]
 
         ! assume tests pass
         test_assign_stability_f_c = .true.
@@ -1517,6 +1705,25 @@ contains
                 "converted correctly."
             test_assign_stability_f_c = .false.
         end if
+
+        ! convert again with only one of the logicals other than initialized set at a
+        ! time, so that a logical that is swapped with another or not converted is
+        ! detected
+        do i = 1, size(logical_names)
+            call get_reference_stability_values(settings_c)
+            settings_c%hess_symm = logical_names(i) == "hess_symm"
+            settings_c%stop_on_instability = logical_names(i) == "stop_on_instability"
+            expected_settings = ref_stability_settings
+            expected_settings%hess_symm = logical_names(i) == "hess_symm"
+            expected_settings%stop_on_instability = &
+                logical_names(i) == "stop_on_instability"
+            settings = settings_c
+            if (settings /= expected_settings) then
+                write(stderr, *) "test_assign_stability_f_c failed: Settings with "// &
+                    "only "//trim(logical_names(i))//" set not converted correctly."
+                test_assign_stability_f_c = .false.
+            end if
+        end do
 
         ! convert initialized C settings without callback functions and check that no
         ! callback functions are associated
@@ -1560,8 +1767,10 @@ contains
         type(solver_settings_type) :: settings
         type(solver_settings_type_c) :: settings_c
         integer(ip) :: i
-        character(len=11), parameter :: logical_names(4) = &
-            [character(len=11) :: "stability", "line_search", "grad_noise", "hess_symm"]
+        character(len=38), parameter :: logical_names(6) = &
+            [character(len=38) :: "stability", "line_search", "grad_noise", &
+             "hess_symm", "stability_settings.hess_symm", &
+             "stability_settings.stop_on_instability"]
 
         ! assume tests pass
         test_assign_solver_c_f = .true.
@@ -1619,6 +1828,10 @@ contains
             settings%line_search = logical_names(i) == "line_search"
             settings%grad_noise = logical_names(i) == "grad_noise"
             settings%hess_symm = logical_names(i) == "hess_symm"
+            settings%stability_settings%hess_symm = &
+                logical_names(i) == "stability_settings.hess_symm"
+            settings%stability_settings%stop_on_instability = &
+                logical_names(i) == "stability_settings.stop_on_instability"
             settings_c = settings
             if (settings_c /= settings) then
                 write(stderr, *) "test_assign_solver_c_f failed: Settings with "// &
@@ -1641,6 +1854,9 @@ contains
 
         type(stability_settings_type) :: settings
         type(stability_settings_type_c) :: settings_c
+        integer(ip) :: i
+        character(len=19), parameter :: logical_names(2) = &
+            [character(len=19) :: "hess_symm", "stop_on_instability"]
 
         ! assume tests pass
         test_assign_stability_c_f = .true.
@@ -1683,6 +1899,21 @@ contains
                 "not converted correctly."
             test_assign_stability_c_f = .false.
         end if
+
+        ! convert again with only one of the logicals set at a time, since the logicals
+        ! cannot all differ from each other and from their default values, so that a
+        ! logical that is swapped with another or not converted is detected
+        do i = 1, size(logical_names)
+            settings = ref_stability_settings
+            settings%hess_symm = logical_names(i) == "hess_symm"
+            settings%stop_on_instability = logical_names(i) == "stop_on_instability"
+            settings_c = settings
+            if (settings_c /= settings) then
+                write(stderr, *) "test_assign_stability_c_f failed: Settings with "// &
+                    "only "//trim(logical_names(i))//" set not converted correctly."
+                test_assign_stability_c_f = .false.
+            end if
+        end do
 
     end function test_assign_stability_c_f
 

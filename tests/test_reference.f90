@@ -26,6 +26,11 @@ module test_reference
     integer(ip), parameter :: n_param = 3_ip
     integer(c_ip), bind(C, name="test_n_param") :: n_param_c = n_param
 
+    ! number of extra trial vectors the checks of extra trial vector functions request
+    integer(ip), parameter :: n_extra_trial_vectors = 2_ip
+    integer(c_ip), parameter :: n_extra_trial_vectors_c = &
+        int(n_extra_trial_vectors, kind=c_ip)
+
     ! warnings the C entry points print for settings and nested stability check
     ! settings that were not initialized, as null-terminated strings for the C
     ! integration tests
@@ -51,19 +56,22 @@ module test_reference
     ! stability check settings of the reference solver settings are the reference
     ! stability check settings
     type(stability_settings_type), parameter :: ref_stability_settings = &
-        stability_settings_type(precond=null(), project=null(), logger=null(), &
-                                conv_tol=5e-6_rp, n_random_trial_vectors=6, n_iter=60, &
-                                jacobi_davidson_start=13, seed=34, verbose=2, &
-                                diag_solver="jacobi-davidson")
+        stability_settings_type( &
+            precond=null(), project=null(), get_extra_trial_vectors=null(), &
+            conv_check=null(), logger=null(), hess_symm=.false., &
+            stop_on_instability=.true., conv_tol=5e-6_rp, n_random_trial_vectors=6, &
+            n_extra_trial_vectors=14, n_iter=60, jacobi_davidson_start=13, seed=34, &
+            verbose=2, diag_solver="jacobi-davidson")
     type(solver_settings_type), parameter :: ref_solver_settings = &
-        solver_settings_type(precond=null(), project=null(), conv_check=null(), &
-                             logger=null(), stability=.true., line_search=.false., &
-                             grad_noise=.false., hess_symm=.false., conv_tol=2e-3_rp, &
-                             start_trust_radius=0.3_rp, global_red_factor=3e-2_rp, &
-                             local_red_factor=4e-3_rp, n_random_trial_vectors=5, &
-                             n_macro=300, n_micro=200, jacobi_davidson_start=10, &
-                             seed=33, verbose=3, subsystem_solver="tcg", &
-                             stability_settings=ref_stability_settings)
+        solver_settings_type( &
+            precond=null(), project=null(), get_extra_trial_vectors=null(), &
+            conv_check=null(), logger=null(), stability=.true., line_search=.false., &
+            grad_noise=.false., hess_symm=.false., conv_tol=2e-3_rp, &
+            start_trust_radius=0.3_rp, global_red_factor=3e-2_rp, &
+            local_red_factor=4e-3_rp, n_random_trial_vectors=5, &
+            n_extra_trial_vectors=4, n_macro=300, n_micro=200, &
+            jacobi_davidson_start=10, seed=33, verbose=3, subsystem_solver="tcg", &
+            stability_settings=ref_stability_settings)
 
     ! reference states, every field with a value distinct from every other field of
     ! the same kind in either state and from its default value, so that a field read
@@ -340,9 +348,10 @@ contains
         ! set callback function pointers and host context to distinct addresses
         values_out%precond = transfer(1_c_intptr_t, c_null_funptr)
         values_out%project = transfer(2_c_intptr_t, c_null_funptr)
-        values_out%conv_check = transfer(3_c_intptr_t, c_null_funptr)
-        values_out%logger = transfer(4_c_intptr_t, c_null_funptr)
-        values_out%context = transfer(5_c_intptr_t, c_null_ptr)
+        values_out%get_extra_trial_vectors = transfer(3_c_intptr_t, c_null_funptr)
+        values_out%conv_check = transfer(4_c_intptr_t, c_null_funptr)
+        values_out%logger = transfer(5_c_intptr_t, c_null_funptr)
+        values_out%context = transfer(6_c_intptr_t, c_null_ptr)
 
         ! set logicals
         name = ""
@@ -369,6 +378,7 @@ contains
 
         ! set integers
         values_out%n_random_trial_vectors = ref_solver_settings%n_random_trial_vectors
+        values_out%n_extra_trial_vectors = ref_solver_settings%n_extra_trial_vectors
         values_out%n_macro = ref_solver_settings%n_macro
         values_out%n_micro = ref_solver_settings%n_micro
         values_out%jacobi_davidson_start = ref_solver_settings%jacobi_davidson_start
@@ -381,8 +391,14 @@ contains
 
         ! set nested stability check settings
         call get_reference_stability_values(values_out%stability_settings)
-        if (len(name) > 0) values_out%stability_settings%initialized = &
-            name == "stability_settings.initialized"
+        if (len(name) > 0) then
+            values_out%stability_settings%hess_symm = &
+                name == "stability_settings.hess_symm"
+            values_out%stability_settings%stop_on_instability = &
+                name == "stability_settings.stop_on_instability"
+            values_out%stability_settings%initialized = &
+                name == "stability_settings.initialized"
+        end if
 
     end subroutine get_reference_solver_values
 
@@ -398,16 +414,21 @@ contains
         type(stability_settings_type_c), intent(out) :: values_out
 
         ! set callback function pointers and host context to distinct addresses
-        values_out%precond = transfer(6_c_intptr_t, c_null_funptr)
-        values_out%project = transfer(7_c_intptr_t, c_null_funptr)
-        values_out%logger = transfer(8_c_intptr_t, c_null_funptr)
-        values_out%context = transfer(9_c_intptr_t, c_null_ptr)
+        values_out%precond = transfer(7_c_intptr_t, c_null_funptr)
+        values_out%project = transfer(8_c_intptr_t, c_null_funptr)
+        values_out%get_extra_trial_vectors = transfer(9_c_intptr_t, c_null_funptr)
+        values_out%conv_check = transfer(10_c_intptr_t, c_null_funptr)
+        values_out%logger = transfer(11_c_intptr_t, c_null_funptr)
+        values_out%context = transfer(12_c_intptr_t, c_null_ptr)
 
-        ! set logical, real and integers
+        ! set logicals, real and integers
+        values_out%hess_symm = ref_stability_settings%hess_symm
+        values_out%stop_on_instability = ref_stability_settings%stop_on_instability
         values_out%initialized = .true.
         values_out%conv_tol = ref_stability_settings%conv_tol
         values_out%n_random_trial_vectors = &
             ref_stability_settings%n_random_trial_vectors
+        values_out%n_extra_trial_vectors = ref_stability_settings%n_extra_trial_vectors
         values_out%n_iter = ref_stability_settings%n_iter
         values_out%jacobi_davidson_start = ref_stability_settings%jacobi_davidson_start
         values_out%seed = ref_stability_settings%seed
@@ -560,6 +581,8 @@ contains
             field_value = address(values%precond)
         case ("project")
             field_value = address(values%project)
+        case ("get_extra_trial_vectors")
+            field_value = address(values%get_extra_trial_vectors)
         case ("conv_check")
             field_value = address(values%conv_check)
         case ("logger")
@@ -586,6 +609,8 @@ contains
             field_value = values%local_red_factor
         case ("n_random_trial_vectors")
             field_value = values%n_random_trial_vectors
+        case ("n_extra_trial_vectors")
+            field_value = values%n_extra_trial_vectors
         case ("n_macro")
             field_value = values%n_macro
         case ("n_micro")
@@ -602,11 +627,20 @@ contains
             field_value = address(values%stability_settings%precond)
         case ("stability_settings.project")
             field_value = address(values%stability_settings%project)
+        case ("stability_settings.get_extra_trial_vectors")
+            field_value = address(values%stability_settings%get_extra_trial_vectors)
+        case ("stability_settings.conv_check")
+            field_value = address(values%stability_settings%conv_check)
         case ("stability_settings.logger")
             field_value = address(values%stability_settings%logger)
         case ("stability_settings.context")
             field_value = real( &
                 transfer(values%stability_settings%context, 0_c_intptr_t), kind=c_rp)
+        case ("stability_settings.hess_symm")
+            field_value = merge(1.0_c_rp, 0.0_c_rp, values%stability_settings%hess_symm)
+        case ("stability_settings.stop_on_instability")
+            field_value = &
+                merge(1.0_c_rp, 0.0_c_rp, values%stability_settings%stop_on_instability)
         case ("stability_settings.initialized")
             field_value = &
                 merge(1.0_c_rp, 0.0_c_rp, values%stability_settings%initialized)
@@ -614,6 +648,8 @@ contains
             field_value = values%stability_settings%conv_tol
         case ("stability_settings.n_random_trial_vectors")
             field_value = values%stability_settings%n_random_trial_vectors
+        case ("stability_settings.n_extra_trial_vectors")
+            field_value = values%stability_settings%n_extra_trial_vectors
         case ("stability_settings.n_iter")
             field_value = values%stability_settings%n_iter
         case ("stability_settings.jacobi_davidson_start")
@@ -716,6 +752,7 @@ contains
 
         settings_c%precond = c_null_funptr
         settings_c%project = c_null_funptr
+        settings_c%get_extra_trial_vectors = c_null_funptr
         settings_c%conv_check = c_null_funptr
         settings_c%logger = c_null_funptr
         call unset_stability_callbacks_c(settings_c%stability_settings)
@@ -732,6 +769,8 @@ contains
 
         settings_c%precond = c_null_funptr
         settings_c%project = c_null_funptr
+        settings_c%get_extra_trial_vectors = c_null_funptr
+        settings_c%conv_check = c_null_funptr
         settings_c%logger = c_null_funptr
 
     end subroutine unset_stability_callbacks_c
@@ -797,6 +836,7 @@ contains
             abs(lhs%global_red_factor - rhs%global_red_factor) <= tol .and. &
             abs(lhs%local_red_factor - rhs%local_red_factor) <= tol .and. &
             lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
+            lhs%n_extra_trial_vectors == rhs%n_extra_trial_vectors .and. &
             lhs%n_macro == rhs%n_macro .and. lhs%n_micro == rhs%n_micro .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
@@ -824,8 +864,11 @@ contains
         type(stability_settings_type), intent(in) :: lhs, rhs
 
         equal_stability = &
+            (lhs%hess_symm .eqv. rhs%hess_symm) .and. &
+            (lhs%stop_on_instability .eqv. rhs%stop_on_instability) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
             lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
+            lhs%n_extra_trial_vectors == rhs%n_extra_trial_vectors .and. &
             lhs%n_iter == rhs%n_iter .and. &
             lhs%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs%seed == rhs%seed .and. lhs%verbose == rhs%verbose .and. &
@@ -865,6 +908,7 @@ contains
             abs(lhs_c%global_red_factor - rhs%global_red_factor) <= tol .and. &
             abs(lhs_c%local_red_factor - rhs%local_red_factor) <= tol .and. &
             lhs_c%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
+            lhs_c%n_extra_trial_vectors == rhs%n_extra_trial_vectors .and. &
             lhs_c%n_macro == rhs%n_macro .and. lhs_c%n_micro == rhs%n_micro .and. &
             lhs_c%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs_c%seed == rhs%seed .and. lhs_c%verbose == rhs%verbose .and. &
@@ -900,8 +944,12 @@ contains
         type(stability_settings_type), intent(in) :: rhs
 
         equal_stability_c = &
+            (lhs_c%hess_symm .eqv. logical(rhs%hess_symm, kind=c_bool)) .and. &
+            (lhs_c%stop_on_instability .eqv. &
+             logical(rhs%stop_on_instability, kind=c_bool)) .and. &
             lhs_c%initialized .and. abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
             lhs_c%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
+            lhs_c%n_extra_trial_vectors == rhs%n_extra_trial_vectors .and. &
             lhs_c%n_iter == rhs%n_iter .and. &
             lhs_c%jacobi_davidson_start == rhs%jacobi_davidson_start .and. &
             lhs_c%seed == rhs%seed .and. lhs_c%verbose == rhs%verbose .and. &
@@ -1004,6 +1052,7 @@ contains
 
         solver_callbacks_unset = .not. ( &
             associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%get_extra_trial_vectors) .or. &
             associated(settings%conv_check) .or. associated(settings%logger)) .and. &
                                  stability_callbacks_unset(settings%stability_settings)
 
@@ -1016,16 +1065,17 @@ contains
         !
         type(stability_settings_type), intent(in) :: settings
 
-        stability_callbacks_unset = .not. (associated(settings%precond) .or. &
-                                           associated(settings%project) .or. &
-                                           associated(settings%logger))
+        stability_callbacks_unset = .not. ( &
+            associated(settings%precond) .or. associated(settings%project) .or. &
+            associated(settings%get_extra_trial_vectors) .or. &
+            associated(settings%conv_check) .or. associated(settings%logger))
 
     end function stability_callbacks_unset
 
     logical function solver_callbacks_unset_c(settings_c)
         !
-        ! this function checks that no callback function of C solver settings, including
-        ! those of the nested stability check settings, is associated
+        ! this function checks that no callback function of C solver settings,
+        ! including those of the nested stability check settings, is associated
         !
         use c_interface, only: solver_settings_type_c
 
@@ -1034,6 +1084,7 @@ contains
         solver_callbacks_unset_c = &
             .not. (c_associated(settings_c%precond) .or. &
                    c_associated(settings_c%project) .or. &
+                   c_associated(settings_c%get_extra_trial_vectors) .or. &
                    c_associated(settings_c%conv_check) .or. &
                    c_associated(settings_c%logger)) .and. &
             stability_callbacks_unset_c(settings_c%stability_settings)
@@ -1049,19 +1100,22 @@ contains
 
         type(stability_settings_type_c), intent(in) :: settings_c
 
-        stability_callbacks_unset_c = .not. (c_associated(settings_c%precond) .or. &
-                                             c_associated(settings_c%project) .or. &
-                                             c_associated(settings_c%logger))
+        stability_callbacks_unset_c = .not. ( &
+            c_associated(settings_c%precond) .or. &
+            c_associated(settings_c%project) .or. &
+            c_associated(settings_c%get_extra_trial_vectors) .or. &
+            c_associated(settings_c%conv_check) .or. c_associated(settings_c%logger))
 
     end function stability_callbacks_unset_c
 
     logical function solver_callbacks_wrapped(settings)
         !
-        ! this function checks that every callback function of solver settings converted
-        ! from C, including those of the nested stability check settings, is associated
-        ! with its wrapper
+        ! this function checks that every callback function of solver settings
+        ! converted from C, including those of the nested stability check settings, is
+        ! associated with its wrapper
         !
         use c_interface, only: precond_f_wrapper, project_f_wrapper, &
+                               get_extra_trial_vectors_f_wrapper, &
                                conv_check_f_wrapper, logger_f_wrapper
 
         type(solver_settings_type), intent(in) :: settings
@@ -1069,6 +1123,8 @@ contains
         solver_callbacks_wrapped = &
             associated(settings%precond, precond_f_wrapper) .and. &
             associated(settings%project, project_f_wrapper) .and. &
+            associated(settings%get_extra_trial_vectors, &
+                       get_extra_trial_vectors_f_wrapper) .and. &
             associated(settings%conv_check, conv_check_f_wrapper) .and. &
             associated(settings%logger, logger_f_wrapper) .and. &
             stability_callbacks_wrapped(settings%stability_settings)
@@ -1080,13 +1136,18 @@ contains
         ! this function checks that every callback function of stability check
         ! settings converted from C is associated with its wrapper
         !
-        use c_interface, only: precond_f_wrapper, project_f_wrapper, logger_f_wrapper
+        use c_interface, only: precond_f_wrapper, project_f_wrapper, &
+                               get_extra_trial_vectors_f_wrapper, &
+                               conv_check_f_wrapper, logger_f_wrapper
 
         type(stability_settings_type), intent(in) :: settings
 
         stability_callbacks_wrapped = &
             associated(settings%precond, precond_f_wrapper) .and. &
             associated(settings%project, project_f_wrapper) .and. &
+            associated(settings%get_extra_trial_vectors, &
+                       get_extra_trial_vectors_f_wrapper) .and. &
+            associated(settings%conv_check, conv_check_f_wrapper) .and. &
             associated(settings%logger, logger_f_wrapper)
 
     end function stability_callbacks_wrapped
@@ -1731,6 +1792,113 @@ contains
         deallocate(vector)
 
     end function check_project_c_funptr
+
+    function check_get_extra_trial_vectors_funptr( &
+        get_extra_trial_vectors_funptr, test_name, message, context) result(test_passed)
+        !
+        ! this function tests a provided extra trial vector function pointer
+        !
+        use opentrustregion, only: get_extra_trial_vectors_type
+
+        procedure(get_extra_trial_vectors_type), intent(in), pointer :: &
+            get_extra_trial_vectors_funptr
+        character(len=*), intent(in) :: test_name, message
+        class(*), intent(in), pointer :: context
+        logical :: test_passed
+
+        real(rp), allocatable :: trial_vectors(:, :)
+        integer(ip) :: error, i
+
+        ! assume tests pass
+        test_passed = .true.
+
+        ! check if function pointer is associated
+        if (.not. associated(get_extra_trial_vectors_funptr)) then
+            write(stderr, *) "test_"//test_name//" failed: Extra trial vector "// &
+                "function provided"//message//" not associated with value."
+            test_passed = .false.
+            return
+        end if
+
+        ! allocate arrays
+        allocate(trial_vectors(n_param, n_extra_trial_vectors))
+
+        ! call extra trial vector function
+        call get_extra_trial_vectors_funptr(trial_vectors, error, context)
+
+        ! check for error
+        if (error /= 0) then
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
+            test_passed = .false.
+        end if
+
+        ! check returned trial space
+        if (any(abs(trial_vectors - spread( &
+            [(real(i, kind=rp), i=1, n_extra_trial_vectors)], 1, n_param)) > tol)) then
+            write(stderr, *) "test_"//test_name//" failed: Returned trial vectors"// &
+                message//" wrong."
+            test_passed = .false.
+        end if
+
+    end function check_get_extra_trial_vectors_funptr
+
+    function check_get_extra_trial_vectors_c_funptr(get_extra_trial_vectors_c_funptr, &
+                                                    test_name, message, context_c) &
+        result(test_passed)
+        !
+        ! this function tests a provided extra trial vector C function pointer
+        !
+        use c_interface, only: get_extra_trial_vectors_c_type
+
+        type(c_funptr), intent(in) :: get_extra_trial_vectors_c_funptr
+        character(len=*), intent(in) :: test_name, message
+        type(c_ptr), intent(in) :: context_c
+        logical :: test_passed
+
+        procedure(get_extra_trial_vectors_c_type), pointer :: &
+            get_extra_trial_vectors_funptr
+        real(c_rp), allocatable :: trial_vectors(:, :)
+        integer(c_ip) :: error
+        integer(ip) :: i
+
+        ! assume tests pass
+        test_passed = .true.
+
+        ! check if function pointer is associated
+        if (.not. c_associated(get_extra_trial_vectors_c_funptr)) then
+            write(stderr, *) "test_"//test_name//" failed: Extra trial vector "// &
+                "function provided"//message//" not associated with value."
+            test_passed = .false.
+            return
+        end if
+
+        ! convert to Fortran function pointer
+        call c_f_procpointer(cptr=get_extra_trial_vectors_c_funptr, &
+                             fptr=get_extra_trial_vectors_funptr)
+
+        ! allocate arrays
+        allocate(trial_vectors(n_param, n_extra_trial_vectors))
+
+        ! call extra trial vector function
+        error = get_extra_trial_vectors_funptr(trial_vectors, n_extra_trial_vectors_c, &
+                                               context_c)
+
+        ! check for error
+        if (error /= 0) then
+            write(stderr, *) "test_"//test_name//" failed: Error produced"//message//"."
+            test_passed = .false.
+        end if
+
+        ! check returned trial space
+        if (any(abs(trial_vectors - &
+                    spread([(real(i, kind=c_rp), i=1, n_extra_trial_vectors)], 1, &
+                           n_param)) > tol_c)) then
+            write(stderr, *) "test_"//test_name//" failed: Returned trial vectors"// &
+                message//" wrong."
+            test_passed = .false.
+        end if
+
+    end function check_get_extra_trial_vectors_c_funptr
 
     function check_conv_check_funptr(conv_check_funptr, test_name, message, context) &
         result(test_passed)

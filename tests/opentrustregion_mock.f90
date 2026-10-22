@@ -62,6 +62,7 @@ contains
         use opentrustregion, only: update_orbs_type, obj_func_type
         use test_reference, only: check_update_orbs_funptr, check_obj_func_funptr, &
                                   check_precond_funptr, check_project_funptr, &
+                                  check_get_extra_trial_vectors_funptr, &
                                   check_conv_check_funptr, n_param_ref => n_param
 
         procedure(update_orbs_type), intent(in), pointer :: update_orbs_funptr
@@ -110,6 +111,12 @@ contains
             if (.not. check_project_funptr(settings%project, "solver_c_wrapper", &
                                            " by given projection subroutine", &
                                            settings%context)) test_passed = .false.
+        end if
+        if (associated(settings%get_extra_trial_vectors)) then
+            if (.not. check_get_extra_trial_vectors_funptr( &
+                settings%get_extra_trial_vectors, "solver_c_wrapper", &
+                " by given extra trial vector subroutine", settings%context)) &
+                test_passed = .false.
         end if
         if (associated(settings%conv_check)) then
             if (.not. check_conv_check_funptr(settings%conv_check, "solver_c_wrapper", &
@@ -161,8 +168,9 @@ contains
         ! interface
         !
         use opentrustregion, only: hess_x_type
-        use test_reference, only: check_hess_x_funptr, check_precond_funptr, &
-                                  check_project_funptr, n_param
+        use test_reference, only: &
+            check_hess_x_funptr, check_precond_funptr, check_project_funptr, &
+            check_get_extra_trial_vectors_funptr, check_conv_check_funptr, n_param
 
         real(rp), intent(in) :: h_diag(:)
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
@@ -213,6 +221,17 @@ contains
             if (.not. check_project_funptr( &
                 settings%project, "stability_check_c_wrapper", " by given "// &
                 "projection subroutine", settings%context)) test_passed = .false.
+        end if
+        if (associated(settings%get_extra_trial_vectors)) then
+            if (.not. check_get_extra_trial_vectors_funptr( &
+                settings%get_extra_trial_vectors, "stability_check_c_wrapper", &
+                " by given extra trial vector subroutine", settings%context)) &
+                test_passed = .false.
+        end if
+        if (associated(settings%conv_check)) then
+            if (.not. check_conv_check_funptr( &
+                settings%conv_check, "stability_check_c_wrapper", " by given "// &
+                "convergence check function", settings%context)) test_passed = .false.
         end if
         if (associated(settings%logger)) call settings%logger("test", settings%context)
 

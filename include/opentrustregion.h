@@ -62,6 +62,11 @@ typedef project_fn *project_fp;
 typedef c_int conv_check_fn(c_bool *converged, void *context);
 typedef conv_check_fn *conv_check_fp;
 
+/* Extra trial vector callback */
+typedef c_int get_extra_trial_vectors_fn(c_real *trial_vectors,
+                                         c_int n_extra_trial_vectors, void *context);
+typedef get_extra_trial_vectors_fn *get_extra_trial_vectors_fp;
+
 /* Logger callback */
 typedef void logger_fn(const char *message, void *context);
 typedef logger_fn *logger_fp;
@@ -74,13 +79,18 @@ typedef logger_fn *logger_fp;
 typedef struct {
   precond_fp precond;
   project_fp project;
+  get_extra_trial_vectors_fp get_extra_trial_vectors;
+  conv_check_fp conv_check;
   logger_fp logger;
 
+  c_bool hess_symm;
+  c_bool stop_on_instability;
   c_bool initialized;
 
   c_real conv_tol;
 
   c_int n_random_trial_vectors;
+  c_int n_extra_trial_vectors;
   c_int n_iter;
   c_int jacobi_davidson_start;
   c_int seed;
@@ -99,6 +109,7 @@ void init_stability_settings(stability_settings_type *settings);
 typedef struct {
   precond_fp precond;
   project_fp project;
+  get_extra_trial_vectors_fp get_extra_trial_vectors;
   conv_check_fp conv_check;
   logger_fp logger;
 
@@ -114,6 +125,7 @@ typedef struct {
   c_real local_red_factor;
 
   c_int n_random_trial_vectors;
+  c_int n_extra_trial_vectors;
   c_int n_macro;
   c_int n_micro;
   c_int jacobi_davidson_start;
@@ -195,8 +207,9 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  *                          NULL to use the default settings
  * @param state             Pointer to struct that receives the state of the
  *                          stability check, may be NULL to skip returning it
- * @param kappa_ptr         Pointer to array that receives the orbital rotation along
- *                          the unstable mode, zero if stable, or NULL
+ * @param kappa_ptr         Pointer to array that receives the eigenvector of the
+ *                          lowest Hessian eigenvalue, the direction of instability at
+ *                          an unstable point, may be NULL to skip returning it
  * @return                  Integer error code from Fortran
  */
 c_int stability_check(const c_real *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_param,
