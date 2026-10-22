@@ -2039,7 +2039,7 @@ contains
             error_solver, error_precond, error_project, error_get_extra_trial_vectors, &
             subsystem_solver_options
 
-        real(rp), parameter :: var_thres = 1e-6_rp
+        real(rp), parameter :: var_thres = 1e-4_rp
         integer(ip) :: error, i_solver, i_case, callback, i_call, &
                        n_calls(n_fault_callbacks)
         logical :: grad_noise
@@ -2408,11 +2408,13 @@ contains
         end if
 
         ! check that the truncated conjugate gradient solver is used instead of the
-        ! Davidson solvers, whose first trial vector is the normalized gradient
+        ! Davidson solvers, whose first trial vector is the normalized gradient, which
+        ! the gradient perturbation would hide
         context%vars = near_minimum
         settings = solver_settings_type()
         settings%context => context
         settings%subsystem_solver = "tcg"
+        settings%grad_noise = .false.
         context%hess_x_normalized_grad = .false.
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
         if (error /= 0) then
@@ -2477,12 +2479,13 @@ contains
         end if
 
         ! perform a line search for an objective function whose minimum along the step
-        ! lies at twice the Newton step of the model and check that the step and its
-        ! size in the state are scaled by the multiplier the bracketing returns, the
-        ! solver is stopped by the maximum number of macro iterations once the first
-        ! step is taken
+        ! lies at twice the Newton step of the model, which the gradient perturbation
+        ! would move, and check that the step and its size in the state are scaled by
+        ! the multiplier the bracketing returns, the solver is stopped by the maximum
+        ! number of macro iterations once the first step is taken
         call setup_settings(settings, half_step_context)
         settings%line_search = .true.
+        settings%grad_noise = .false.
         settings%n_macro = 2
         call random_number(start_vars)
         start_vars = 2.0_rp * start_vars - 1.0_rp
@@ -2506,37 +2509,12 @@ contains
             test_solver = .false.
         end if
 
-        ! converge to the saddle point of the double well function by excluding the
-        ! direction of negative curvature from the reduced space, without random or
-        ! extra trial vectors, and check that the requested stability check detects the
-        ! saddle point and the optimization continues to a minimum
-        call setup_settings(settings, double_well_context)
-        settings%stability = .true.
-        settings%n_random_trial_vectors = 0
-        settings%n_extra_trial_vectors = 0
-        double_well_context%vars = [0.5_rp, 0.0_rp]
-        update_orbs_funptr => double_well_update_orbs
-        obj_func_funptr => double_well_obj_func
-        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings)
-        if (error /= 0) then
-            write(stderr, *) "test_solver failed: Produced error when saddle point "// &
-                "is reached."
-            test_solver = .false.
-        end if
-        if (abs(double_well_context%vars(2)) < 0.5_rp) then
-            write(stderr, *) "test_solver failed: Did not continue to minimum "// &
-                "after saddle point was reached."
-            test_solver = .false.
-        end if
-
         ! minimize the double well function x^2 - y^2 + y^4 from (0.5, 0) with every
         ! subsystem solver and with a state record, which the orbital update reads
         ! during the optimization through the pointer in its context, and without
-        ! random or extra trial vectors, so that (Jacobi-)Davidson first converges to
-        ! the saddle point at the origin, which the requested stability check finds
-        ! unstable, and then continues to a minimum, while truncated conjugate
-        ! gradient, whose initial residual is randomly perturbed, leaves the line
-        ! through the saddle point and reaches a minimum directly
+        ! random or extra trial vectors and gradient perturbation, so that the solver
+        ! first converges to the saddle point at the origin, which the requested
+        ! stability check finds unstable, and then continues to a minimum
         update_orbs_funptr => state_reading_update_orbs
         obj_func_funptr => double_well_obj_func
         state_context%state => state
@@ -2544,6 +2522,7 @@ contains
             settings = solver_settings_type()
             settings%subsystem_solver = subsystem_solver_options(i_solver)
             settings%stability = .true.
+            settings%grad_noise = .false.
             settings%n_random_trial_vectors = 0
             settings%n_extra_trial_vectors = 0
             settings%start_trust_radius = 0.3_rp
@@ -2598,28 +2577,28 @@ contains
 
             ! check the state the orbital update read during the optimization: the
             ! first update sees the starting trust radius before anything was
-            ! evaluated, every later one the previous macro iteration and the step
-            ! it is given, whose size is measured in the metric of the trust region,
-            ! the Euclidean norm for (Jacobi-)Davidson and the norm of the absolute
+            ! evaluated, every later one the previous macro iteration and the step it
+            ! is given, whose size is measured in the metric of the trust region, the
+            ! Euclidean norm for (Jacobi-)Davidson and the norm of the absolute
             ! diagonal preconditioner of the previous point for truncated conjugate
-            ! gradient, the second one the level shift of the first step, which the
-            ! trust radius truncates for (Jacobi-)Davidson and which vanishes for
-            ! truncated conjugate gradient, the level shift never being negative or a
-            ! negative zero, and, for (Jacobi-)Davidson, one update the step along the
-            ! unstable mode, without micro iterations, level shift and residual, after
-            ! steps of the subsystem solver
+            ! gradient, while the step along an unstable mode, which needs no micro
+            ! iterations, is measured in the Euclidean norm, the second one the level
+            ! shift of the first step, which the trust radius truncates for
+            ! (Jacobi-)Davidson and which vanishes for truncated conjugate gradient,
+            ! the level shift never being negative or a negative zero, and one update
+            ! the step along the unstable mode, without micro iterations, level shift
+            ! and residual, after steps of the subsystem solver
             if (n_updates < 3) then
                 write(stderr, *) "test_solver failed: Too few orbital updates to "// &
                     "check the state during the optimization for "//trim(case_name)//"."
                 test_solver = .false.
                 cycle
             end if
-            if (settings%subsystem_solver == "tcg") then
-                step_norms = state_context%precond_step_norms
-            else
-                step_norms = state_context%step_norms
-            end if
             associate (seen => state_context%seen_states)
+                step_norms = state_context%step_norms
+                if (settings%subsystem_solver == "tcg") &
+                    where (seen%micro_iteration > 0) step_norms = &
+                    state_context%precond_step_norms
                 if (seen(1)%macro_iteration /= 0 .or. seen(1)%n_update_orbs /= 0 .or. &
                     abs(seen(1)%trust_radius - settings%start_trust_radius) > tol .or. &
                     seen(1)%micro_iteration /= 0 .or. abs(seen(1)%step_size) > tol) then
@@ -2660,14 +2639,13 @@ contains
                         "negative zero in the state for "//trim(case_name)//"."
                     test_solver = .false.
                 end if
-                if (settings%subsystem_solver /= "tcg" .and. .not. any([( &
-                    seen(i_update)%micro_iteration == 0 .and. &
-                    seen(i_update)%jacobi_davidson_iteration == 0 .and. &
-                    abs(seen(i_update)%level_shift) < tol .and. &
-                    abs(seen(i_update)%relative_residual) < tol .and. &
-                    seen(i_update)%step_size > 0.0_rp .and. &
-                    seen(i_update - 1)%micro_iteration > 0, i_update=3, n_updates)])) &
-                    then
+                if (.not. any([(seen(i_update)%micro_iteration == 0 .and. &
+                                seen(i_update)%jacobi_davidson_iteration == 0 .and. &
+                                abs(seen(i_update)%level_shift) < tol .and. &
+                                abs(seen(i_update)%relative_residual) < tol .and. &
+                                seen(i_update)%step_size > 0.0_rp .and. &
+                                seen(i_update - 1)%micro_iteration > 0, i_update=3, &
+                                n_updates)])) then
                     write(stderr, *) "test_solver failed: Step along the unstable "// &
                         "mode after steps of the subsystem solver not in the state "// &
                         "for "//trim(case_name)//"."
@@ -2692,6 +2670,7 @@ contains
         obj_func_funptr => double_well_obj_func
         do i_case = 1, 2
             settings = solver_settings_type()
+            settings%grad_noise = .false.
             settings%n_random_trial_vectors = 0
             settings%n_extra_trial_vectors = 0
             settings%start_trust_radius = 0.3_rp
@@ -2747,17 +2726,14 @@ contains
         ! the internal stability check, with a stability check at convergence, a line
         ! search and every optional callback function, also of the nested settings,
         ! once without a fault to count the calls of every callback function and then
-        ! letting every one of these calls fail in turn, for every subsystem solver and
-        ! for the Davidson-family subsystem solvers also with a perturbed gradient,
-        ! whose perturbation is projected, and check that the unfaulted run reaches
-        ! every callback function, that the error is reported with the origin of the
-        ! failing callback function and that the reported counters still agree with the
-        ! calls
+        ! letting every one of these calls fail in turn, for every subsystem solver
+        ! without and with a perturbed gradient, whose perturbation is projected, and
+        ! check that the unfaulted run reaches every callback function, that the error
+        ! is reported with the origin of the failing callback function and that the
+        ! reported counters still agree with the calls
         do i_solver = 1, size(subsystem_solver_options)
             do i_case = 1, 2
                 grad_noise = i_case == 2
-                if (grad_noise .and. &
-                    index(subsystem_solver_options(i_solver), "davidson") == 0) cycle
                 case_name = trim(subsystem_solver_options(i_solver))// &
                             " subsystem solver"
                 if (grad_noise) case_name = trim(case_name)//" and perturbed gradient"
@@ -3008,6 +2984,21 @@ contains
             write(stderr, *) "test_stability_check failed: Stability check "// &
                 "incorrectly classifies stability of saddle point without returned "// &
                 "direction."
+            test_stability_check = .false.
+        end if
+
+        ! check that a stability threshold below the lowest eigenvalue counts the
+        ! saddle point as stable
+        settings%stability_thresh = 2.0_rp * hess_eigvals(1)
+        call stability_check(h_diag, hess_x_funptr, stable, error, settings)
+        if (error /= 0) then
+            write(stderr, *) "test_stability_check failed: Produced error for "// &
+                "saddle point with stability threshold below its lowest eigenvalue."
+            test_stability_check = .false.
+        end if
+        if (.not. stable) then
+            write(stderr, *) "test_stability_check failed: Saddle point not stable "// &
+                "with stability threshold below its lowest eigenvalue."
             test_stability_check = .false.
         end if
 
@@ -3307,10 +3298,7 @@ contains
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp) :: kappa(2), kappa_norm, grad(2), grad_rms
         logical :: stable
-        integer(ip) :: error, i_case
-        character(len=*), parameter :: reached_case_names(2) = &
-            [character(len=33) :: "with gradient perturbation", &
-             "with truncated conjugate gradient"]
+        integer(ip) :: error
 
         ! the double well function x^2 - y^2 + y^4 has a vanishing gradient and the
         ! Hessian diagonal (2, -2) at its saddle point at the origin, whose unstable
@@ -3400,55 +3388,46 @@ contains
         end if
 
         ! check the saddle point in a later macro iteration with the gradient
-        ! perturbation and with truncated conjugate gradient, which perturbs the
-        ! gradient in any case, and with nested stability check settings with a
-        ! context of their own, which the stability check hands to every callback
-        ! function it calls, which its own test covers, so that the Hessian linear
-        ! transformation has to receive it instead of the solver's, and check that the
-        ! warning for reaching a saddle point is printed
-        do i_case = 1, size(reached_case_names)
-            call setup_settings(settings, context)
-            if (i_case == 1) then
-                settings%grad_noise = .true.
-            else
-                settings%subsystem_solver = "tcg"
-            end if
-            context%vars = [0.0_rp, 0.0_rp]
-            stability_context%vars = [0.0_rp, 0.0_rp]
-            stability_context%hess_x_called = .false.
-            settings%stability_settings%context => stability_context
-            call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
-                                        hess_x_funptr, 2_ip, settings, state, stable, &
-                                        kappa, kappa_norm, error)
-            if (error /= 0) then
-                write(stderr, *) "test_check_stationary_point failed: Produced "// &
-                    "error at saddle point in later macro iteration "// &
-                    trim(reached_case_names(i_case))//"."
-                test_check_stationary_point = .false.
-            end if
-            if (.not. stability_context%hess_x_called) then
-                write(stderr, *) "test_check_stationary_point failed: Context of "// &
-                    "nested settings not handed to the Hessian linear "// &
-                    "transformation "//trim(reached_case_names(i_case))//"."
-                test_check_stationary_point = .false.
-            end if
-            if (index(context%log_message, " "//reached_saddle_point_warning_msg) == &
-                0) then
-                write(stderr, *) "test_check_stationary_point failed: Warning not "// &
-                    "printed for reaching saddle point "// &
-                    trim(reached_case_names(i_case))//"."
-                test_check_stationary_point = .false.
-            end if
-        end do
+        ! perturbation and with nested stability check settings with a context of their
+        ! own, which the stability check hands to every callback function it calls,
+        ! which its own test covers, so that the Hessian linear transformation has to
+        ! receive it instead of the solver's, and check that the warning for reaching a
+        ! saddle point is printed
+        call setup_settings(settings, context)
+        settings%grad_noise = .true.
+        context%vars = [0.0_rp, 0.0_rp]
+        stability_context%vars = [0.0_rp, 0.0_rp]
+        stability_context%hess_x_called = .false.
+        settings%stability_settings%context => stability_context
+        call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
+                                    hess_x_funptr, 2_ip, settings, state, stable, &
+                                    kappa, kappa_norm, error)
+        if (error /= 0) then
+            write(stderr, *) "test_check_stationary_point failed: Produced error "// &
+                "at saddle point in later macro iteration."
+            test_check_stationary_point = .false.
+        end if
+        if (.not. stability_context%hess_x_called) then
+            write(stderr, *) "test_check_stationary_point failed: Context of "// &
+                "nested settings not handed to the Hessian linear transformation."
+            test_check_stationary_point = .false.
+        end if
+        if (index(context%log_message, " "//reached_saddle_point_warning_msg) == 0) then
+            write(stderr, *) "test_check_stationary_point failed: Warning not "// &
+                "printed for reaching saddle point."
+            test_check_stationary_point = .false.
+        end if
 
         ! check the saddle point in a later macro iteration without the gradient
-        ! perturbation and with a vanishing convergence threshold, as the solver
+        ! perturbation, with truncated conjugate gradient, which also only perturbs the
+        ! gradient with it, and with a vanishing convergence threshold, as the solver
         ! reaches it at an exactly vanishing gradient, and check that the step along
         ! the unstable mode reaches the trust radius of the state and that the warning
         ! for reaching a saddle point advises enabling the perturbation
         call setup_settings(settings, context)
         context%vars = [0.0_rp, 0.0_rp]
         settings%grad_noise = .false.
+        settings%subsystem_solver = "tcg"
         settings%conv_tol = 0.0_rp
         settings%stability_settings%context => context
         state%trust_radius = 0.7_rp
@@ -5543,8 +5522,7 @@ contains
         ! eigenpair and a larger block
         !
         use opentrustregion, only: hess_x_type, stability_settings_type, &
-                                   block_davidson, stability_thresh, error_hess_x, &
-                                   error_conv_check
+                                   block_davidson, error_hess_x, error_conv_check
 
         integer(ip), parameter :: n_block = 3
         character(len=*), parameter :: jacobi_davidson_case_names(5) = &
@@ -5636,13 +5614,14 @@ contains
         ! check single eigenpair, with a preconditioner which has to be level-shifted
         ! to the stability threshold
         settings%conv_tol = res_tol
+        settings%stability_thresh = -2e-2_rp
         settings%precond => mu_recording_precond
         context%recorded_mu = huge(1.0_rp)
         trial_space = unit_vectors(1_ip)
         call block_davidson(hess_x_funptr, h_diag, trial_space, .true., 1_ip, 200_ip, &
                             eigvals(:1), eigvecs(:, :1), converged, settings, state, &
                             error)
-        if (abs(context%recorded_mu - stability_thresh) > tol) then
+        if (abs(context%recorded_mu - settings%stability_thresh) > tol) then
             write(stderr, *) "test_block_davidson failed: Preconditioner not "// &
                 "level-shifted to the stability threshold."
             test_block_davidson = .false.
@@ -5913,6 +5892,24 @@ contains
         if (abs(eigvals(1) + 1.0_rp) > tol) then
             write(stderr, *) "test_block_davidson failed: Incorrect Ritz value "// &
                 "when stopping at instability."
+            test_block_davidson = .false.
+        end if
+
+        ! a stability threshold below the eigenvalue does not establish an instability,
+        ! so that the same single iteration must not report convergence
+        settings%stability_thresh = -2.0_rp
+        trial_space = unit_vectors(1_ip)
+        call block_davidson(hess_x_funptr, h_diag, trial_space, .true., 1_ip, 1_ip, &
+                            eigvals(:1), eigvecs(:, :1), converged, settings, state, &
+                            error)
+        if (error /= 0) then
+            write(stderr, *) "test_block_davidson failed: Produced error when "// &
+                "stopping at instability below the eigenvalue."
+            test_block_davidson = .false.
+        end if
+        if (converged) then
+            write(stderr, *) "test_block_davidson failed: Converged when stopping "// &
+                "at instability with a stability threshold below the eigenvalue."
             test_block_davidson = .false.
         end if
 
@@ -7710,21 +7707,30 @@ contains
         use opentrustregion, only: solver_settings_type, init_defaults, &
                                    verbosity_info, verbosity_debug
 
+        ! the settings of the cases for the symmetry of the Hessian of the nested
+        ! stability check settings
+        character(len=*), parameter :: hess_symm_case_names(2) = &
+            [character(len=44) :: "non-symmetric Hessian of the solver", &
+             "non-symmetric Hessian of the nested settings"]
         type(solver_settings_type) :: settings
         type(test_context_type), target :: context, stability_context
+        integer(ip) :: i_case
 
         ! assume tests pass
         test_init_defaults = .true.
 
-        ! check that nested stability check settings without callback functions or a
-        ! context of their own, with a verbosity below the solver's and a symmetric
-        ! Hessian inherit the solver's preconditioning, projection and logging
-        ! functions, context, verbosity and non-symmetric Hessian
+        ! check that nested stability check settings without callback functions, a
+        ! convergence check or a context of their own, with a verbosity below the
+        ! solver's and an unset number of random trial vectors inherit the solver's
+        ! preconditioning, projection and logging functions, context and verbosity,
+        ! stop as soon as an instability is certain and use a single random trial
+        ! vector
         call setup_settings(settings, context)
         settings%precond => identity_precond
         settings%project => identity_project
         settings%verbose = verbosity_debug
-        settings%hess_symm = .false.
+        settings%stability_settings%stop_on_instability = .false.
+        settings%stability_settings%n_random_trial_vectors = -1
         call init_defaults(settings)
         if (.not. associated(settings%stability_settings%precond, &
                              identity_precond) .or. &
@@ -7745,16 +7751,21 @@ contains
                 "settings did not inherit the solver's higher verbosity."
             test_init_defaults = .false.
         end if
-        if (settings%stability_settings%hess_symm) then
+        if (.not. settings%stability_settings%stop_on_instability) then
             write(stderr, *) "test_init_defaults failed: Nested stability check "// &
-                "settings did not inherit the solver's non-symmetric Hessian."
+                "settings without convergence check do not stop on instability."
+            test_init_defaults = .false.
+        end if
+        if (settings%stability_settings%n_random_trial_vectors /= 1) then
+            write(stderr, *) "test_init_defaults failed: Unset number of random "// &
+                "trial vectors of nested stability check settings not set to one."
             test_init_defaults = .false.
         end if
 
-        ! check that nested stability check settings with callback functions and a
-        ! context of their own, a logging function while the solver has none, a
-        ! verbosity above the solver's and a non-symmetric Hessian while the solver's
-        ! is symmetric keep all of these
+        ! check that nested stability check settings with callback functions, a
+        ! convergence check and a context of their own, a logging function while the
+        ! solver has none, a verbosity above the solver's and no random trial vectors
+        ! keep all of these and do not stop as soon as an instability is certain
         call setup_settings(settings, context)
         settings%precond => mock_precond
         settings%project => mock_project
@@ -7763,9 +7774,11 @@ contains
         settings%stability_settings%precond => identity_precond
         settings%stability_settings%project => identity_project
         settings%stability_settings%logger => logger
+        settings%stability_settings%conv_check => mock_stability_conv_check
         settings%stability_settings%context => stability_context
         settings%stability_settings%verbose = verbosity_debug
-        settings%stability_settings%hess_symm = .false.
+        settings%stability_settings%stop_on_instability = .false.
+        settings%stability_settings%n_random_trial_vectors = 0
         call init_defaults(settings)
         if (.not. associated(settings%stability_settings%precond, &
                              identity_precond) .or. &
@@ -7787,11 +7800,44 @@ contains
                 "nested stability check settings replaced."
             test_init_defaults = .false.
         end if
-        if (settings%stability_settings%hess_symm) then
-            write(stderr, *) "test_init_defaults failed: Non-symmetric Hessian of "// &
-                "nested stability check settings replaced."
+        if (settings%stability_settings%stop_on_instability) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings with convergence check stop on instability."
             test_init_defaults = .false.
         end if
+        if (settings%stability_settings%n_random_trial_vectors /= 0) then
+            write(stderr, *) "test_init_defaults failed: Vanishing number of "// &
+                "random trial vectors of nested stability check settings replaced."
+            test_init_defaults = .false.
+        end if
+
+        ! check that nested stability check settings without a convergence check of
+        ! their own treat the Hessian as non-symmetric if the solver or they do so and
+        ! then do not stop as soon as an instability is certain, which only the Ritz
+        ! values of a symmetric Hessian establish
+        do i_case = 1, size(hess_symm_case_names)
+            call setup_settings(settings, context)
+            settings%stability_settings%stop_on_instability = .false.
+            select case (i_case)
+            case (1)
+                settings%hess_symm = .false.
+            case (2)
+                settings%stability_settings%hess_symm = .false.
+            end select
+            call init_defaults(settings)
+            if (settings%stability_settings%hess_symm) then
+                write(stderr, *) "test_init_defaults failed: Nested stability "// &
+                    "check settings treat the Hessian as symmetric for "// &
+                    trim(hess_symm_case_names(i_case))//"."
+                test_init_defaults = .false.
+            end if
+            if (settings%stability_settings%stop_on_instability) then
+                write(stderr, *) "test_init_defaults failed: Nested stability "// &
+                    "check settings stop on instability for "// &
+                    trim(hess_symm_case_names(i_case))//"."
+                test_init_defaults = .false.
+            end if
+        end do
 
     end function test_init_defaults
 
@@ -7975,9 +8021,10 @@ contains
         ! this function tests the subroutine which performs a sanity check for the
         ! stability check
         !
-        use opentrustregion, only: stability_settings_type, stability_sanity_check, &
-                                   project_warning_msg, &
-                                   random_trial_vector_warning_msg, diag_solver_options
+        use opentrustregion, only: &
+            stability_settings_type, stability_sanity_check, project_warning_msg, &
+            random_trial_vector_warning_msg, diag_solver_options, &
+            standalone_n_random_trial_vectors
 
         ! the diagonalization solvers in mixed case and settings which the sanity check
         ! rejects
@@ -7985,16 +8032,16 @@ contains
             [character(len=15) :: "Davidson", "Jacobi-Davidson"]
         character(len=*), parameter :: error_case_names(9) = &
             [character(len=55) :: "vanishing number of parameters", &
-             "extra trial vector function without extra trial vectors", "negative "// &
-             "number of random trial vectors", "vanishing number of trial vectors", &
+             "extra trial vector function without extra trial vectors", &
+             "vanishing number of trial vectors", &
              "no random and a negative number of extra trial vectors", "no extra "// &
              "and no random trial vectors that fit", "unknown diagonalization solver", &
-             "non-symmetric Hessian with Jacobi-Davidson solver", &
-             "stopping at an instability with non-symmetric Hessian"]
-        character(len=*), parameter :: accepted_case_names(3) = &
+             "non-symmetric Hessian with Jacobi-Davidson solver", "stopping at an "// &
+             "instability with non-symmetric Hessian", "positive stability threshold"]
+        character(len=*), parameter :: accepted_case_names(4) = &
             [character(len=49) :: "non-symmetric Hessian with Davidson solver", &
              "stopping at an instability with symmetric Hessian", &
-             "no random but extra trial vectors"]
+             "no random but extra trial vectors", "vanishing stability threshold"]
         type(stability_settings_type) :: settings
         integer(ip) :: error, i_solver, i_case, n_param
         type(test_context_type), target :: context
@@ -8003,11 +8050,14 @@ contains
         test_stability_sanity_check = .true.
 
         ! check that every diagonalization solver passes when given in mixed case,
-        ! which is converted to lowercase
+        ! which is converted to lowercase, and that an unset number of random trial
+        ! vectors resolves to the default of a stability check outside the solver
+        ! without any message
         do i_solver = 1, size(diag_solver_options)
             call setup_settings(settings, context)
             settings%diag_solver = mixed_case_diag_solvers(i_solver)
-            call stability_sanity_check(settings, 4_ip, error)
+            call stability_sanity_check(settings, &
+                                        4_ip * standalone_n_random_trial_vectors, error)
             if (error /= 0) then
                 write(stderr, *) "test_stability_sanity_check failed: Error "// &
                     "returned for "//trim(diag_solver_options(i_solver))// &
@@ -8018,6 +8068,19 @@ contains
                 write(stderr, *) "test_stability_sanity_check failed: Not "// &
                     "converted to lowercase for "// &
                     trim(diag_solver_options(i_solver))//" diagonalization solver."
+                test_stability_sanity_check = .false.
+            end if
+            if (settings%n_random_trial_vectors /= standalone_n_random_trial_vectors) &
+                then
+                write(stderr, *) "test_stability_sanity_check failed: Unset number "// &
+                    "of random trial vectors not resolved for "// &
+                    trim(diag_solver_options(i_solver))//" diagonalization solver."
+                test_stability_sanity_check = .false.
+            end if
+            if (len_trim(context%log_message) > 0) then
+                write(stderr, *) "test_stability_sanity_check failed: Message "// &
+                    "printed for "//trim(diag_solver_options(i_solver))// &
+                    " diagonalization solver."
                 test_stability_sanity_check = .false.
             end if
         end do
@@ -8056,27 +8119,27 @@ contains
                 settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
                 settings%n_extra_trial_vectors = 0
             case (3)
-                settings%n_random_trial_vectors = -1
-            case (4)
                 settings%n_extra_trial_vectors = 0
                 settings%n_random_trial_vectors = 0
-            case (5)
+            case (4)
                 settings%n_extra_trial_vectors = -1
                 settings%n_random_trial_vectors = 0
-            case (6)
+            case (5)
                 ! a single parameter leaves no room for the requested random trial
                 ! vectors once their number is reduced to half the number of
                 ! parameters
                 n_param = 1
                 settings%n_extra_trial_vectors = 0
-            case (7)
+            case (6)
                 settings%diag_solver = "unknown"
-            case (8)
+            case (7)
                 settings%diag_solver = "jacobi-davidson"
                 settings%hess_symm = .false.
-            case (9)
+            case (8)
                 settings%hess_symm = .false.
                 settings%stop_on_instability = .true.
+            case (9)
+                settings%stability_thresh = 1e-3_rp
             end select
             call stability_sanity_check(settings, n_param, error)
             if (error /= 1) then
@@ -8101,11 +8164,18 @@ contains
                 settings%stop_on_instability = .true.
             case (3)
                 settings%n_random_trial_vectors = 0
+            case (4)
+                settings%stability_thresh = 0.0_rp
             end select
             call stability_sanity_check(settings, 4_ip, error)
             if (error /= 0) then
                 write(stderr, *) "test_stability_sanity_check failed: Error "// &
                     "returned for "//trim(accepted_case_names(i_case))//"."
+                test_stability_sanity_check = .false.
+            end if
+            if (i_case == 3 .and. settings%n_random_trial_vectors /= 0) then
+                write(stderr, *) "test_stability_sanity_check failed: Vanishing "// &
+                    "number of random trial vectors replaced."
                 test_stability_sanity_check = .false.
             end if
         end do
@@ -8451,7 +8521,6 @@ contains
         do i_case = 1, 2
             call setup_settings(settings, quadratic_context)
             settings%grad_noise = .false.
-            settings%n_random_trial_vectors = 0
             settings%local_red_factor = 0.0_rp
             settings%global_red_factor = 0.0_rp
             quadratic_context%hess = identity_matrix(n_param)
@@ -9005,6 +9074,87 @@ contains
                 test_truncated_conjugate_gradient = .false.
         end do
         fault_context%fault_callback = 0
+
+        ! run truncated conjugate gradient on a quadratic model with a diagonal
+        ! Hessian, which the absolute diagonal preconditioner inverts exactly, so that
+        ! the first micro iteration solves the system it is given, and a gradient along
+        ! the first parameter, without and with the gradient perturbation, and check
+        ! that the solution only leaves the first parameter if the gradient is
+        ! perturbed, and then by the reduction factor of the local region, which the
+        ! residual of the unperturbed Newton equation shows
+        call setup_settings(settings, quadratic_context)
+        quadratic_context%hess = identity_matrix(n_param)
+        do i = 1, n_param
+            quadratic_context%hess(i, i) = real(i, kind=rp)
+        end do
+        quadratic_context%grad = spread(0.0_rp, 1, n_param)
+        quadratic_context%grad(1) = 0.1_rp
+        h_diag = [(quadratic_context%hess(i, i), i=1, n_param)]
+        obj_func_funptr => quadratic_obj_func
+        hess_x_funptr => quadratic_hess_x
+        do i_case = 1, 2
+            settings%grad_noise = i_case == 2
+            state%trust_radius = 10.0_rp
+            call truncated_conjugate_gradient( &
+                0.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+                hess_x_funptr, settings, state, solution, solution_norm, error)
+            if (error /= 0) then
+                write(stderr, *) "test_truncated_conjugate_gradient failed: "// &
+                    "Produced error "// &
+                    trim(merge("without", "with   ", i_case == 1))// &
+                    " gradient perturbation."
+                test_truncated_conjugate_gradient = .false.
+            end if
+            if ((maxval(abs(solution(2:))) > 0.0_rp) .neqv. settings%grad_noise) then
+                write(stderr, *) "test_truncated_conjugate_gradient failed: "// &
+                    "Solution "//trim(merge("left  ", "stayed", i_case == 1))// &
+                    " along the gradient "// &
+                    trim(merge("without", "with   ", i_case == 1))// &
+                    " gradient perturbation."
+                test_truncated_conjugate_gradient = .false.
+            end if
+            if (settings%grad_noise .and. abs(norm2( &
+                matmul(quadratic_context%hess, solution) + quadratic_context%grad) - &
+                settings%local_red_factor * norm2(quadratic_context%grad)) > tol) then
+                write(stderr, *) "test_truncated_conjugate_gradient failed: "// &
+                    "Gradient not perturbed by the reduction factor of the local "// &
+                    "region."
+                test_truncated_conjugate_gradient = .false.
+            end if
+        end do
+
+        ! run truncated conjugate gradient on the quadratic model with an identity
+        ! preconditioner, so that the micro iterations converge gradually, and with a
+        ! gradient perturbation of a tenth of the gradient norm, which a projection
+        ! that removes every random vector leaves out, so that only the floor the
+        ! perturbation sets on the convergence of the micro iterations remains, and
+        ! check that they stop once the relative residual falls below the size of the
+        ! perturbation instead of converging further
+        settings%precond => identity_precond
+        settings%project => vanishing_project
+        settings%local_red_factor = 0.1_rp
+        quadratic_context%grad = 1.0_rp
+        state%trust_radius = 10.0_rp
+        call truncated_conjugate_gradient( &
+            0.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+            hess_x_funptr, settings, state, solution, solution_norm, error)
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error with a large gradient perturbation."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (state%relative_residual > settings%local_red_factor) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Micro "// &
+                "iterations stopped above the relative size of the gradient "// &
+                "perturbation."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (state%relative_residual <= 1e-3_rp) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Micro "// &
+                "iterations converged below the relative size of the gradient "// &
+                "perturbation."
+            test_truncated_conjugate_gradient = .false.
+        end if
 
         ! run truncated conjugate gradient on a quadratic model with a gradient too
         ! small for its step to change the objective function, which does not change

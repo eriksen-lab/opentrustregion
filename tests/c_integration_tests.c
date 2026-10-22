@@ -565,6 +565,7 @@ bool test_settings_layout(void) {
   ok &= check_field((uintptr_t)ss.logger, "stability_settings.logger");
   ok &= check_field((uintptr_t)ss.context, "stability_settings.context");
   ok &= check_field(ss.conv_tol, "stability_settings.conv_tol");
+  ok &= check_field(ss.stability_thresh, "stability_settings.stability_thresh");
   ok &= check_field(ss.n_random_trial_vectors,
                     "stability_settings.n_random_trial_vectors");
   ok &=

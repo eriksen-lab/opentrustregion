@@ -429,7 +429,6 @@ contains
             case ("stability")
                 solver_settings%stability = .true.
             case ("non-symmetric Hessian")
-                solver_settings%subsystem_solver = "davidson_ls"
                 solver_settings%hess_symm = .false.
             case default
                 solver_settings%subsystem_solver = option
@@ -608,16 +607,16 @@ contains
 
     end function test_h2o_fb_solver_default
 
-    logical(c_bool) function test_h2o_fb_solver_davidson_ls() bind(C)
+    logical(c_bool) function test_h2o_fb_solver_davidson_ah() bind(C)
         !
         ! this function tests the solver for the Foster-Boys localization of the
-        ! occupied orbitals of water with the Davidson subsystem solver for linear
-        ! systems
+        ! occupied orbitals of water with the Davidson subsystem solver for the
+        ! augmented Hessian
         !
-        test_h2o_fb_solver_davidson_ls = logical(check_h2o_fb_solver( &
-            "h2o_fb_solver_davidson_ls", "davidson_ls"), kind=c_bool)
+        test_h2o_fb_solver_davidson_ah = logical(check_h2o_fb_solver( &
+            "h2o_fb_solver_davidson_ah", "davidson_ah"), kind=c_bool)
 
-    end function test_h2o_fb_solver_davidson_ls
+    end function test_h2o_fb_solver_davidson_ah
 
     logical(c_bool) function test_h2o_fb_solver_jacobi_davidson_ls() bind(C)
         !

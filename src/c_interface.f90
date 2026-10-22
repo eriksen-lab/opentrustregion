@@ -161,7 +161,7 @@ module c_interface
     type, bind(C) :: stability_settings_type_c
         type(c_funptr) :: precond, project, get_extra_trial_vectors, conv_check, logger
         logical(c_bool) :: hess_symm, stop_on_instability, initialized
-        real(c_rp) :: conv_tol
+        real(c_rp) :: conv_tol, stability_thresh
         integer(c_ip) :: n_random_trial_vectors, n_extra_trial_vectors, n_iter, &
                          jacobi_davidson_start, seed, verbose
         character(kind=c_char) :: diag_solver(kw_len + 1)
@@ -935,6 +935,7 @@ contains
 
             ! convert reals
             settings%conv_tol = real(settings_c%conv_tol, kind=rp)
+            settings%stability_thresh = real(settings_c%stability_thresh, kind=rp)
 
             ! convert integers
             settings%n_random_trial_vectors = &
@@ -1034,6 +1035,7 @@ contains
 
         ! convert reals
         settings_c%conv_tol = real(settings%conv_tol, kind=c_rp)
+        settings_c%stability_thresh = real(settings%stability_thresh, kind=c_rp)
 
         ! convert integers
         settings_c%n_random_trial_vectors = &

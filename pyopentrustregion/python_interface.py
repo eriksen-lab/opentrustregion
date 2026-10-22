@@ -380,6 +380,7 @@ class StabilitySettingsC(Structure):
         ("stop_on_instability", c_bool),
         ("initialized", c_bool),
         ("conv_tol", c_real),
+        ("stability_thresh", c_real),
         ("n_random_trial_vectors", c_int),
         ("n_extra_trial_vectors", c_int),
         ("n_iter", c_int),

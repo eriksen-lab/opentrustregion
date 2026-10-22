@@ -25,7 +25,7 @@ module opentrustregion
     ! define trust region parameters
     real(rp), parameter :: &
         trust_radius_shrink_ratio = 0.25_rp, trust_radius_expand_ratio = 0.75_rp, &
-        trust_radius_shrink_factor = 0.7_rp, trust_radius_expand_factor = 1.2_rp
+        trust_radius_shrink_factor = 0.5_rp, trust_radius_expand_factor = 2.0_rp
 
     ! define error codes
     integer(ip), parameter :: &
@@ -41,7 +41,7 @@ module opentrustregion
     real(rp), parameter :: numerical_zero = 1e-14_rp, precond_floor = 1e-10_rp, &
                            hess_symm_thres = 1e-12_rp, residual_norm_floor = 1e-12_rp, &
                            level_shift_local_thres = 1e-12_rp, &
-                           newton_eigval_thresh = -1e-5_rp, stability_thresh = -1e-2_rp
+                           newton_eigval_thresh = -1e-5_rp
 
     ! define verbosity levels
     integer(ip), parameter :: verbosity_silent = 0, verbosity_error = 1, &
@@ -245,20 +245,20 @@ module opentrustregion
 
     type, extends(settings_type) :: stability_settings_type
         logical :: stop_on_instability = .false.
-        real(rp) :: conv_tol = 1e-8_rp
-        integer(ip) :: n_random_trial_vectors = 20, n_iter = 100, &
+        real(rp) :: conv_tol = 1e-9_rp, stability_thresh = -1e-3_rp
+        integer(ip) :: n_random_trial_vectors = -1, n_iter = 100, &
                        jacobi_davidson_start = 50
         character(len=kw_len) :: diag_solver = "davidson"
         procedure(conv_check_type), pointer, nopass :: conv_check => null()
     end type
 
     type, extends(settings_type) :: solver_settings_type
-        logical :: stability = .false., line_search = .false., grad_noise = .false.
+        logical :: stability = .false., line_search = .false., grad_noise = .true.
         real(rp) :: conv_tol = 1e-5_rp, start_trust_radius = 0.4_rp, &
                     global_red_factor = 1e-3_rp, local_red_factor = 1e-4_rp
-        integer(ip) :: n_random_trial_vectors = 1, n_macro = 150, n_micro = 50, &
+        integer(ip) :: n_random_trial_vectors = 0, n_macro = 150, n_micro = 50, &
                        jacobi_davidson_start = 30
-        character(len=kw_len) :: subsystem_solver = "davidson_ah"
+        character(len=kw_len) :: subsystem_solver = "davidson_ls"
         type(stability_settings_type) :: stability_settings = stability_settings_type()
         procedure(conv_check_type), pointer, nopass :: conv_check => null()
     contains
@@ -270,6 +270,7 @@ module opentrustregion
         stability_settings_type()
     type(solver_settings_type), parameter :: default_solver_settings = &
         solver_settings_type()
+    integer(ip), parameter :: standalone_n_random_trial_vectors = 20
 
 contains
 
@@ -627,7 +628,7 @@ contains
         if (present(kappa)) kappa = eigvecs(:, 1)
 
         ! determine if saddle point
-        stable = eigval > stability_thresh
+        stable = eigval > local_settings%stability_thresh
         if (.not. stable) then
             write(msg, '(A, F0.4)') unstable_warning_msg, eigval
             call local_settings%log(msg, verbosity_warning)
@@ -677,10 +678,10 @@ contains
                                state%trust_radius, settings, kappa, kappa_norm)
 
         ! warn of the saddle point, advising to perturb the gradient where it is not
-        ! perturbed, which truncated conjugate gradient does in any case
+        ! perturbed
         if (imacro == 1) then
             call settings%log(started_at_saddle_point_warning_msg, verbosity_warning)
-        else if (settings%grad_noise .or. settings%subsystem_solver == "tcg") then
+        else if (settings%grad_noise) then
             call settings%log(reached_saddle_point_warning_msg, verbosity_warning)
         else
             call settings%log(reached_saddle_point_no_grad_noise_warning_msg, &
@@ -2047,7 +2048,7 @@ contains
                         ! requested
                         pair_converged = &
                             (settings%stop_on_instability .and. &
-                             red_eigvals(i) < stability_thresh) .or. &
+                             red_eigvals(i) < settings%stability_thresh) .or. &
                             dnrm2(n_param, residual(:, i), 1_ip) / &
                             sqrt(real(n_param, kind=rp)) < settings%conv_tol
                     end if
@@ -2091,8 +2092,8 @@ contains
                 ! vanishing eigenvalue of such a direction before reaching a negative
                 ! one; the shift bounds this amplification by the curvature the check
                 ! has to resolve anyway
-                call add_trial_vector(residual(:, i), stability_thresh, h_diag, &
-                                      jacobi_davidson_iter, solution(:, i), &
+                call add_trial_vector(residual(:, i), settings%stability_thresh, &
+                                      h_diag, jacobi_davidson_iter, solution(:, i), &
                                       red_eigvals(i), hess_x_funptr, red_space_basis, &
                                       h_basis, settings, state%n_hess_x, error)
                 if (error == error_gram_schmidt_lin_dep) then
@@ -3188,15 +3189,13 @@ contains
         real(rp) :: model_func, initial_residual_norm, curvature, step_size, &
                     solution_dot, solution_direction_dot, direction_dot, step_length, &
                     model_func_new, new_func
-        real(rp), allocatable :: h_solution(:), residual(:), precond_residual(:), &
-                                 direction(:), hess_direction(:), precond_solution(:), &
-                                 precond_direction(:), solution_new(:), &
-                                 h_solution_new(:), residual_new(:), &
-                                 precond_residual_new(:), random_vector(:), &
-                                 solutions(:, :), h_solutions(:, :)
+        real(rp), allocatable :: &
+            h_solution(:), residual(:), precond_residual(:), direction(:), &
+            hess_direction(:), precond_solution(:), precond_direction(:), &
+            solution_new(:), h_solution_new(:), residual_new(:), &
+            precond_residual_new(:), solutions(:, :), h_solutions(:, :)
         integer(ip) :: i, imicro
-        real(rp), parameter :: random_noise_scale = 1e-4_rp, &
-                               residual_norm_conv_red_factor = 1e-3_rp
+        real(rp), parameter :: residual_norm_conv_red_factor = 1e-3_rp
         real(rp), external :: ddot, dnrm2
 
         ! initialize error flag
@@ -3219,18 +3218,17 @@ contains
         h_solutions(:, 1) = h_solution
         model_func = 0.0_rp
 
-        ! initialize residual and add random noise, residual should include h_solution
-        ! if not starting at zero
+        ! initialize residual, which should include h_solution if not starting at zero,
+        ! and perturb it, if the gradient is perturbed, by a random vector whose
+        ! relative size is the reduction factor of the local region, which keeps the
+        ! solution from remaining exactly within a symmetry subspace of the current
+        ! point
         residual = grad
-        allocate(random_vector(n_param))
-        random_vector = 0.0_rp
-        do while (dnrm2(n_param, random_vector, 1_ip) < numerical_zero)
-            call random_number(random_vector)
-            random_vector = 2 * random_vector - 1
-        end do
-        residual = residual + random_noise_scale * dnrm2(n_param, residual, 1_ip) * &
-                   random_vector / dnrm2(n_param, random_vector, 1_ip)
-        deallocate(random_vector)
+        if (settings%grad_noise) then
+            call perturb_vector(residual, noise_level(settings, .true.), settings, &
+                                error)
+            if (error /= 0) return
+        end if
 
         ! get initial residual norm
         initial_residual_norm = dnrm2(n_param, residual, 1_ip)
@@ -3327,9 +3325,12 @@ contains
             state%relative_residual = dnrm2(n_param, residual_new, 1_ip) / &
                                       initial_residual_norm
 
-            ! check for linear or superlinear (in this case quadratic) convergence
-            if (dnrm2(n_param, residual_new, 1_ip) <= initial_residual_norm * &
-                min(residual_norm_conv_red_factor, initial_residual_norm)) then
+            ! check for linear or superlinear (in this case quadratic) convergence,
+            ! never below the relative size of the gradient perturbation, which the
+            ! micro iterations are not asked to resolve
+            if (dnrm2(n_param, residual_new, 1_ip) <= initial_residual_norm * max( &
+                min(residual_norm_conv_red_factor, initial_residual_norm), &
+                noise_level(settings, .true.))) then
                 micro_converged = .true.
                 exit
             end if
@@ -3512,7 +3513,10 @@ contains
         ! this subroutine resolves the defaults that depend on other settings: the
         ! nested stability check settings inherit the solver's preconditioning,
         ! projection and logging functions and its host context unless they provide
-        ! their own, its verbosity if higher and a non-symmetric Hessian
+        ! their own, its verbosity if higher and a non-symmetric Hessian, stop as soon
+        ! as an instability is certain for a symmetric Hessian unless they provide a
+        ! convergence check and use a single random trial vector unless their number
+        ! is set
         !
         type(solver_settings_type), intent(inout) :: settings
 
@@ -3530,6 +3534,13 @@ contains
             ! treat the Hessian as non-symmetric if the solver does, since the internal
             ! stability check diagonalizes the solver's Hessian
             nested%hess_symm = nested%hess_symm .and. settings%hess_symm
+
+            ! stop the check as soon as an instability is certain for a symmetric
+            ! Hessian unless a convergence check is provided, and use a single random
+            ! trial vector unless their number is set
+            if (.not. associated(nested%conv_check) .and. nested%hess_symm) &
+                nested%stop_on_instability = .true.
+            if (nested%n_random_trial_vectors < 0) nested%n_random_trial_vectors = 1
         end associate
 
     end subroutine init_defaults
@@ -3663,13 +3674,9 @@ contains
             return
         end if
 
-        ! check that number of random trial vectors is not negative
-        if (settings%n_random_trial_vectors < 0) then
-            call settings%log("Number of random trial vectors should not be "// &
-                              "negative.", verbosity_error, .true.)
-            error = 1
-            return
-        end if
+        ! resolve the automatic number of random trial vectors
+        if (settings%n_random_trial_vectors < 0) &
+            settings%n_random_trial_vectors = standalone_n_random_trial_vectors
 
         ! check that number of random trial vectors is below number of parameters
         if (settings%n_random_trial_vectors > n_param / 2) then
@@ -3714,6 +3721,14 @@ contains
         if (.not. settings%hess_symm .and. settings%stop_on_instability) then
             call settings%log("Stopping at an instability not supported with "// &
                               "non-symmetric Hessian.", verbosity_error, .true.)
+            error = 1
+            return
+        end if
+
+        ! check that the stability threshold does not count a minimum as unstable
+        if (settings%stability_thresh > 0.0_rp) then
+            call settings%log("Stability threshold should not be positive.", &
+                              verbosity_error, .true.)
             error = 1
             return
         end if

@@ -182,7 +182,7 @@ fortran_tests = {
         "update_orbs_f_wrapper",
     ],
     "opentrustregion_system_tests": [
-        "h2o_fb_solver_davidson_ls",
+        "h2o_fb_solver_davidson_ah",
         "h2o_fb_solver_default",
         "h2o_fb_solver_hess_symm",
         "h2o_fb_solver_jacobi_davidson_ah",

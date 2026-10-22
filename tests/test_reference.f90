@@ -59,9 +59,9 @@ module test_reference
         stability_settings_type( &
             precond=null(), project=null(), get_extra_trial_vectors=null(), &
             conv_check=null(), logger=null(), hess_symm=.false., &
-            stop_on_instability=.true., conv_tol=5e-6_rp, n_random_trial_vectors=6, &
-            n_extra_trial_vectors=14, n_iter=60, jacobi_davidson_start=13, seed=34, &
-            verbose=2, diag_solver="jacobi-davidson")
+            stop_on_instability=.true., conv_tol=5e-6_rp, stability_thresh=-6e-3_rp, &
+            n_random_trial_vectors=6, n_extra_trial_vectors=14, n_iter=60, &
+            jacobi_davidson_start=13, seed=34, verbose=2, diag_solver="jacobi-davidson")
     type(solver_settings_type), parameter :: ref_solver_settings = &
         solver_settings_type( &
             precond=null(), project=null(), get_extra_trial_vectors=null(), &
@@ -426,6 +426,7 @@ contains
         values_out%stop_on_instability = ref_stability_settings%stop_on_instability
         values_out%initialized = .true.
         values_out%conv_tol = ref_stability_settings%conv_tol
+        values_out%stability_thresh = ref_stability_settings%stability_thresh
         values_out%n_random_trial_vectors = &
             ref_stability_settings%n_random_trial_vectors
         values_out%n_extra_trial_vectors = ref_stability_settings%n_extra_trial_vectors
@@ -646,6 +647,8 @@ contains
                 merge(1.0_c_rp, 0.0_c_rp, values%stability_settings%initialized)
         case ("stability_settings.conv_tol")
             field_value = values%stability_settings%conv_tol
+        case ("stability_settings.stability_thresh")
+            field_value = values%stability_settings%stability_thresh
         case ("stability_settings.n_random_trial_vectors")
             field_value = values%stability_settings%n_random_trial_vectors
         case ("stability_settings.n_extra_trial_vectors")
@@ -867,6 +870,7 @@ contains
             (lhs%hess_symm .eqv. rhs%hess_symm) .and. &
             (lhs%stop_on_instability .eqv. rhs%stop_on_instability) .and. &
             abs(lhs%conv_tol - rhs%conv_tol) <= tol .and. &
+            abs(lhs%stability_thresh - rhs%stability_thresh) <= tol .and. &
             lhs%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
             lhs%n_extra_trial_vectors == rhs%n_extra_trial_vectors .and. &
             lhs%n_iter == rhs%n_iter .and. &
@@ -948,6 +952,7 @@ contains
             (lhs_c%stop_on_instability .eqv. &
              logical(rhs%stop_on_instability, kind=c_bool)) .and. &
             lhs_c%initialized .and. abs(lhs_c%conv_tol - rhs%conv_tol) <= tol .and. &
+            abs(lhs_c%stability_thresh - rhs%stability_thresh) <= tol .and. &
             lhs_c%n_random_trial_vectors == rhs%n_random_trial_vectors .and. &
             lhs_c%n_extra_trial_vectors == rhs%n_extra_trial_vectors .and. &
             lhs_c%n_iter == rhs%n_iter .and. &

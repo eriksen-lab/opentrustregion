@@ -88,6 +88,7 @@ typedef struct {
   c_bool initialized;
 
   c_real conv_tol;
+  c_real stability_thresh;
 
   c_int n_random_trial_vectors;
   c_int n_extra_trial_vectors;
