@@ -1648,23 +1648,6 @@ contains
 
     end subroutine logger
 
-    subroutine discarding_logger(message, context)
-        !
-        ! this subroutine is a mock logging subroutine which discards the messages
-        !
-        use test_reference, only: check_host_context
-
-        character(len=*), intent(in) :: message
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        ! discard the message
-        if (len(message) > 0) return
-
-    end subroutine discarding_logger
-
     function identity_matrix(n) result(matrix)
         !
         ! this function returns an identity matrix
@@ -2877,10 +2860,8 @@ contains
 
         real(rp), parameter :: points(n_param, 2) = &
             reshape([minimum1, saddle_point], [n_param, 2_ip])
-        character(len=*), parameter :: &
-            point_names(2) = [character(len=12) :: "minimum", "saddle point"], &
-            trial_space_names(3) = [character(len=25) :: "default trial space", &
-                                    "extra trial vectors", "purely random trial space"]
+        character(len=*), parameter :: point_names(2) = &
+            [character(len=12) :: "minimum", "saddle point"]
         integer(ip), parameter :: &
             fault_callbacks(5) = [fault_hess_x, fault_precond, fault_project, &
                                   fault_get_extra_trial_vectors, &
@@ -2891,7 +2872,7 @@ contains
                     hess_eigvecs(n_param, n_param)
         procedure(hess_x_type), pointer :: hess_x_funptr
         logical :: stable, expected_calls(n_fault_callbacks)
-        integer(ip) :: error, i, i_point, i_space, i_solver, callback, i_call, &
+        integer(ip) :: error, i, i_point, i_solver, callback, i_call, &
                        n_calls(n_fault_callbacks)
         character(len=300) :: msg
         character(len=20) :: call_number
@@ -2905,68 +2886,59 @@ contains
         ! assume tests pass
         test_stability_check = .true.
 
-        ! run the stability check at the minimum and at the saddle point with the
-        ! default trial space, with extra trial vectors and with a purely random trial
-        ! space, and check that it
-        ! classifies the point correctly and returns the lowest Hessian eigenvalue and
-        ! its eigenvector, which are determined independently, at the minimum as well,
-        ! that the state holds the iteration, this eigenvalue and its converged
+        ! run the stability check at the minimum and at the saddle point and check that
+        ! it classifies the point correctly and returns the lowest Hessian eigenvalue
+        ! and its eigenvector, which are determined independently, at the minimum as
+        ! well, that the state holds the iteration, this eigenvalue and its converged
         ! residual and that the reported number of Hessian linear transformations
         ! agrees with the calls, the state record is reused so that the counter must
         ! not include the previous calls
         hess_x_funptr => hess_x_fun
+        settings = stability_settings_type()
+        settings%context => context
         do i_point = 1, size(points, 2)
             context%hess = hartmann6d_hessian(points(:, i_point))
             call ref_symm_mat_diag(context%hess, hess_eigvals, hess_eigvecs)
             h_diag = [(context%hess(i, i), i=1, size(h_diag))]
-            do i_space = 1, size(trial_space_names)
-                settings = stability_settings_type()
-                settings%context => context
-                select case (i_space)
-                case (2)
-                    settings%n_extra_trial_vectors = n_extra_trial_vectors
-                    settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
-                case (3)
-                    settings%n_extra_trial_vectors = 0
-                    settings%n_random_trial_vectors = 3
-                end select
-                case_name = trim(trial_space_names(i_space))//" at "// &
-                            trim(point_names(i_point))
-                context%n_hess_x_calls = 0
-                call stability_check(h_diag, hess_x_funptr, stable, error, settings, &
-                                     state, direction)
-                if (error /= 0) then
-                    write(stderr, *) "test_stability_check failed: Produced error "// &
-                        "for "//trim(case_name)//"."
-                    test_stability_check = .false.
-                end if
-                if (stable .neqv. i_point == 1) then
-                    write(stderr, *) "test_stability_check failed: Stability "// &
-                        "incorrectly classified for "//trim(case_name)//"."
-                    test_stability_check = .false.
-                end if
-                if (abs(state%min_eigval - hess_eigvals(1)) > tol) then
-                    write(stderr, *) "test_stability_check failed: Lowest "// &
-                        "eigenvalue not held by the state for "//trim(case_name)//"."
-                    test_stability_check = .false.
-                end if
-                if (abs(abs(dot_product(direction, hess_eigvecs(:, 1))) - 1.0_rp) > &
-                    tol) then
-                    write(stderr, *) "test_stability_check failed: Eigenvector of "// &
-                        "the lowest eigenvalue not returned for "//trim(case_name)//"."
-                    test_stability_check = .false.
-                end if
-                if (state%iteration < 1 .or. state%residual_rms >= settings%conv_tol) &
-                    then
-                    write(stderr, *) "test_stability_check failed: Iteration or "// &
-                        "residual of the lowest eigenvalue not in the state for "// &
-                        trim(case_name)//"."
-                    test_stability_check = .false.
-                end if
-                if (.not. check_call_counts( &
-                    context, "stability_check", "for "//trim(case_name), &
-                    n_hess_x=state%n_hess_x)) test_stability_check = .false.
-            end do
+            case_name = point_names(i_point)
+            context%n_hess_x_calls = 0
+            call stability_check(h_diag, hess_x_funptr, stable, error, settings, &
+                                 state, direction)
+            if (error /= 0) then
+                write(stderr, *) "test_stability_check failed: Produced error for "// &
+                    trim(case_name)//"."
+                test_stability_check = .false.
+            end if
+            if (stable .neqv. i_point == 1) then
+                write(stderr, *) "test_stability_check failed: Stability "// &
+                    "incorrectly classified for "//trim(case_name)//"."
+                test_stability_check = .false.
+            end if
+            if (abs(state%min_eigval - hess_eigvals(1)) > tol) then
+                write(stderr, *) "test_stability_check failed: Lowest eigenvalue "// &
+                    "not held by the state for "//trim(case_name)//"."
+                test_stability_check = .false.
+            end if
+            if (abs(abs(dot_product(direction, hess_eigvecs(:, 1))) - 1.0_rp) > tol) &
+                then
+                write(stderr, *) "test_stability_check failed: Eigenvector of the "// &
+                    "lowest eigenvalue not returned for "//trim(case_name)//"."
+                test_stability_check = .false.
+            end if
+            if (state%iteration < 1) then
+                write(stderr, *) "test_stability_check failed: Iteration not in "// &
+                    "the state for "//trim(case_name)//"."
+                test_stability_check = .false.
+            end if
+            if (state%residual_rms >= settings%conv_tol) then
+                write(stderr, *) "test_stability_check failed: Converged residual "// &
+                    "of the lowest eigenvalue not in the state for "// &
+                    trim(case_name)//"."
+                test_stability_check = .false.
+            end if
+            if (.not. check_call_counts( &
+                context, "stability_check", "for "//trim(case_name), &
+                n_hess_x=state%n_hess_x)) test_stability_check = .false.
         end do
 
         ! check that a warning with the lowest eigenvalue is printed at the saddle point
@@ -5054,7 +5026,8 @@ contains
         ! this function tests the subroutine which returns the lowest eigenpairs of a
         ! matrix
         !
-        use opentrustregion, only: solver_settings_type, mat_lowest_eigpairs
+        use opentrustregion, only: solver_settings_type, mat_lowest_eigpairs, &
+                                   complex_eigval_warning_msg
 
         integer(ip), parameter :: n_target = 2
 
@@ -5111,6 +5084,50 @@ contains
                 test_mat_lowest_eigpairs = .false.
             end if
         end do
+        if (index(context%log_message, " "//complex_eigval_warning_msg) /= 0) then
+            write(stderr, *) "test_mat_lowest_eigpairs failed: Warning for a "// &
+                "complex conjugate pair printed for real eigenvalues."
+            test_mat_lowest_eigpairs = .false.
+        end if
+
+        ! determine whether the complex conjugate pair of lowest eigenvalues of a
+        ! rotation in the plane of the first two unit vectors, below the positive
+        ! diagonal elements of the other unit vectors, is returned by its real part and
+        ! normalized real vectors in this plane, the pair's invariant subspace, with a
+        ! warning
+        matrix = 0.0_rp
+        matrix(1, 2) = -1.0_rp
+        matrix(2, 1) = 1.0_rp
+        do i = 3, n_param
+            matrix(i, i) = real(i, kind=rp)
+        end do
+        context%log_message = ""
+        call mat_lowest_eigpairs(matrix, .false., eigvals, eigvecs, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_mat_lowest_eigpairs failed: Produced error for "// &
+                "complex conjugate pair."
+            test_mat_lowest_eigpairs = .false.
+        end if
+        if (any(abs(eigvals) > tol)) then
+            write(stderr, *) "test_mat_lowest_eigpairs failed: Real part of "// &
+                "complex conjugate pair not returned."
+            test_mat_lowest_eigpairs = .false.
+        end if
+        if (any(abs(norm2(eigvecs, dim=1) - 1.0_rp) > tol)) then
+            write(stderr, *) "test_mat_lowest_eigpairs failed: Vectors of complex "// &
+                "conjugate pair not normalized."
+            test_mat_lowest_eigpairs = .false.
+        end if
+        if (any(abs(eigvecs(3:, :)) > tol)) then
+            write(stderr, *) "test_mat_lowest_eigpairs failed: Vectors of complex "// &
+                "conjugate pair not in its invariant subspace."
+            test_mat_lowest_eigpairs = .false.
+        end if
+        if (index(context%log_message, " "//complex_eigval_warning_msg) == 0) then
+            write(stderr, *) "test_mat_lowest_eigpairs failed: Warning not printed "// &
+                "for complex conjugate pair."
+            test_mat_lowest_eigpairs = .false.
+        end if
 
     end function test_mat_lowest_eigpairs
 
@@ -7695,13 +7712,14 @@ contains
         test_init_defaults = .true.
 
         ! check that nested stability check settings without callback functions or a
-        ! context of their own and with a verbosity below the solver's inherit the
-        ! solver's preconditioning, projection and logging functions, context and
-        ! verbosity
+        ! context of their own, with a verbosity below the solver's and a symmetric
+        ! Hessian inherit the solver's preconditioning, projection and logging
+        ! functions, context, verbosity and non-symmetric Hessian
         call setup_settings(settings, context)
         settings%precond => identity_precond
         settings%project => identity_project
         settings%verbose = verbosity_debug
+        settings%hess_symm = .false.
         call init_defaults(settings)
         if (.not. associated(settings%stability_settings%precond, &
                              identity_precond) .or. &
@@ -7722,10 +7740,16 @@ contains
                 "settings did not inherit the solver's higher verbosity."
             test_init_defaults = .false.
         end if
+        if (settings%stability_settings%hess_symm) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings did not inherit the solver's non-symmetric Hessian."
+            test_init_defaults = .false.
+        end if
 
         ! check that nested stability check settings with callback functions and a
-        ! context of their own, a logging function while the solver has none and a
-        ! verbosity above the solver's keep all of these
+        ! context of their own, a logging function while the solver has none, a
+        ! verbosity above the solver's and a non-symmetric Hessian while the solver's
+        ! is symmetric keep all of these
         call setup_settings(settings, context)
         settings%precond => mock_precond
         settings%project => mock_project
@@ -7736,6 +7760,7 @@ contains
         settings%stability_settings%logger => logger
         settings%stability_settings%context => stability_context
         settings%stability_settings%verbose = verbosity_debug
+        settings%stability_settings%hess_symm = .false.
         call init_defaults(settings)
         if (.not. associated(settings%stability_settings%precond, &
                              identity_precond) .or. &
@@ -7757,6 +7782,11 @@ contains
                 "nested stability check settings replaced."
             test_init_defaults = .false.
         end if
+        if (settings%stability_settings%hess_symm) then
+            write(stderr, *) "test_init_defaults failed: Non-symmetric Hessian of "// &
+                "nested stability check settings replaced."
+            test_init_defaults = .false.
+        end if
 
     end function test_init_defaults
 
@@ -7769,12 +7799,16 @@ contains
             solver_settings_type, solver_sanity_check, project_warning_msg, &
             random_trial_vector_warning_msg, subsystem_solver_options
 
-        ! settings which the sanity check rejects
-        character(len=*), parameter :: error_case_names(5) = &
+        ! the subsystem solvers in mixed case and settings which the sanity check
+        ! rejects
+        character(len=*), parameter :: mixed_case_subsystem_solvers(5) = &
+            [character(len=18) :: "Davidson_LS", "Davidson_AH", "Jacobi-Davidson_LS", &
+             "Jacobi-Davidson_AH", "TCG"]
+        character(len=*), parameter :: error_case_names(6) = &
             [character(len=55) :: "vanishing number of parameters", &
              "negative number of parameters", "vanishing number of micro iterations", &
-             "extra trial vector function without extra trial vectors", &
-             "unknown subsystem solver"]
+             "negative number of random trial vectors", "extra trial vector "// &
+             "function without extra trial vectors", "unknown subsystem solver"]
         type(solver_settings_type) :: settings
         integer(ip) :: n_param, error, i_solver, i_case
         logical :: davidson
@@ -7783,19 +7817,26 @@ contains
         ! assume tests pass
         test_solver_sanity_check = .true.
 
-        ! check that every subsystem solver passes, and that the number of random trial
-        ! vectors is reduced to half the number of parameters with a warning for the
+        ! check that every subsystem solver passes when given in mixed case, which is
+        ! converted to lowercase, and that the number of random trial vectors is
+        ! reduced to half the number of parameters with a warning for the
         ! Davidson-based subsystem solvers, which use them, and left unchanged without
         ! any message for the others
         do i_solver = 1, size(subsystem_solver_options)
             davidson = index(subsystem_solver_options(i_solver), "davidson") > 0
             call setup_settings(settings, context)
-            settings%subsystem_solver = subsystem_solver_options(i_solver)
+            settings%subsystem_solver = mixed_case_subsystem_solvers(i_solver)
             settings%n_random_trial_vectors = 3
             call solver_sanity_check(settings, 4_ip, error)
             if (error /= 0) then
                 write(stderr, *) "test_solver_sanity_check failed: Error returned "// &
                     "for "//trim(subsystem_solver_options(i_solver))// &
+                    " subsystem solver."
+                test_solver_sanity_check = .false.
+            end if
+            if (settings%subsystem_solver /= subsystem_solver_options(i_solver)) then
+                write(stderr, *) "test_solver_sanity_check failed: Not converted "// &
+                    "to lowercase for "//trim(subsystem_solver_options(i_solver))// &
                     " subsystem solver."
                 test_solver_sanity_check = .false.
             end if
@@ -7829,9 +7870,11 @@ contains
             case (3)
                 settings%n_micro = 0
             case (4)
+                settings%n_random_trial_vectors = -1
+            case (5)
                 settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
                 settings%n_extra_trial_vectors = 0
-            case (5)
+            case (6)
                 settings%subsystem_solver = "unknown"
             end select
             call solver_sanity_check(settings, n_param, error)
@@ -7882,10 +7925,14 @@ contains
         call setup_settings(settings, context)
         settings%project => mock_project_out_pair
         call solver_sanity_check(settings, 4_ip, error)
-        if (error /= 0 .or. index(context%log_message, " "//project_warning_msg) == 0) &
-            then
+        if (error /= 0) then
+            write(stderr, *) "test_solver_sanity_check failed: Error returned when "// &
+                "a projection is passed."
+            test_solver_sanity_check = .false.
+        end if
+        if (index(context%log_message, " "//project_warning_msg) == 0) then
             write(stderr, *) "test_solver_sanity_check failed: Warning not printed "// &
-                "or error returned when a projection is passed."
+                "when a projection is passed."
             test_solver_sanity_check = .false.
         end if
 
@@ -7904,12 +7951,14 @@ contains
         ! rejects
         character(len=*), parameter :: mixed_case_diag_solvers(2) = &
             [character(len=15) :: "Davidson", "Jacobi-Davidson"]
-        character(len=*), parameter :: error_case_names(6) = &
+        character(len=*), parameter :: error_case_names(9) = &
             [character(len=55) :: "vanishing number of parameters", &
-             "extra trial vector function without extra trial vectors", &
-             "vanishing number of trial vectors", "no random and a negative number "// &
-             "of extra trial vectors", "unknown diagonalization solver", &
-             "non-symmetric Hessian with Jacobi-Davidson solver"]
+             "extra trial vector function without extra trial vectors", "negative "// &
+             "number of random trial vectors", "vanishing number of trial vectors", &
+             "no random and a negative number of extra trial vectors", "no extra "// &
+             "and no random trial vectors that fit", "unknown diagonalization solver", &
+             "non-symmetric Hessian with Jacobi-Davidson solver", &
+             "stopping at an instability with non-symmetric Hessian"]
         type(stability_settings_type) :: settings
         integer(ip) :: error, i_solver, i_case, n_param
         type(test_context_type), target :: context
@@ -7923,10 +7972,15 @@ contains
             call setup_settings(settings, context)
             settings%diag_solver = mixed_case_diag_solvers(i_solver)
             call stability_sanity_check(settings, 4_ip, error)
-            if (error /= 0 .or. settings%diag_solver /= diag_solver_options(i_solver)) &
-                then
+            if (error /= 0) then
                 write(stderr, *) "test_stability_sanity_check failed: Error "// &
-                    "returned or not converted to lowercase for "// &
+                    "returned for "//trim(diag_solver_options(i_solver))// &
+                    " diagonalization solver."
+                test_stability_sanity_check = .false.
+            end if
+            if (settings%diag_solver /= diag_solver_options(i_solver)) then
+                write(stderr, *) "test_stability_sanity_check failed: Not "// &
+                    "converted to lowercase for "// &
                     trim(diag_solver_options(i_solver))//" diagonalization solver."
                 test_stability_sanity_check = .false.
             end if
@@ -7937,10 +7991,19 @@ contains
         call setup_settings(settings, context)
         settings%n_random_trial_vectors = 3
         call stability_sanity_check(settings, 4_ip, error)
-        if (error /= 0 .or. settings%n_random_trial_vectors /= 2 .or. &
-            index(context%log_message, " "//random_trial_vector_warning_msg) == 0) then
+        if (error /= 0) then
+            write(stderr, *) "test_stability_sanity_check failed: Error returned "// &
+                "when number of random trial vectors is reduced."
+            test_stability_sanity_check = .false.
+        end if
+        if (settings%n_random_trial_vectors /= 2) then
             write(stderr, *) "test_stability_sanity_check failed: Number of random "// &
-                "trial vectors not reduced with a warning."
+                "trial vectors not reduced."
+            test_stability_sanity_check = .false.
+        end if
+        if (index(context%log_message, " "//random_trial_vector_warning_msg) == 0) then
+            write(stderr, *) "test_stability_sanity_check failed: Warning not "// &
+                "printed when number of random trial vectors is reduced."
             test_stability_sanity_check = .false.
         end if
 
@@ -7957,16 +8020,27 @@ contains
                 settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
                 settings%n_extra_trial_vectors = 0
             case (3)
+                settings%n_random_trial_vectors = -1
+            case (4)
                 settings%n_extra_trial_vectors = 0
                 settings%n_random_trial_vectors = 0
-            case (4)
+            case (5)
                 settings%n_extra_trial_vectors = -1
                 settings%n_random_trial_vectors = 0
-            case (5)
-                settings%diag_solver = "unknown"
             case (6)
+                ! a single parameter leaves no room for the requested random trial
+                ! vectors once their number is reduced to half the number of
+                ! parameters
+                n_param = 1
+                settings%n_extra_trial_vectors = 0
+            case (7)
+                settings%diag_solver = "unknown"
+            case (8)
                 settings%diag_solver = "jacobi-davidson"
                 settings%hess_symm = .false.
+            case (9)
+                settings%hess_symm = .false.
+                settings%stop_on_instability = .true.
             end select
             call stability_sanity_check(settings, n_param, error)
             if (error /= 1) then
@@ -7995,10 +8069,14 @@ contains
         call setup_settings(settings, context)
         settings%project => mock_project_out_pair
         call stability_sanity_check(settings, 4_ip, error)
-        if (error /= 0 .or. index(context%log_message, " "//project_warning_msg) == 0) &
-            then
+        if (error /= 0) then
+            write(stderr, *) "test_stability_sanity_check failed: Error returned "// &
+                "when a projection is passed."
+            test_stability_sanity_check = .false.
+        end if
+        if (index(context%log_message, " "//project_warning_msg) == 0) then
             write(stderr, *) "test_stability_sanity_check failed: Warning not "// &
-                "printed or error returned when a projection is passed."
+                "printed when a projection is passed."
             test_stability_sanity_check = .false.
         end if
 

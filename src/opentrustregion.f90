@@ -79,6 +79,11 @@ module opentrustregion
         bisection_imaginary_eigval_warning_msg = &
             "Bisection cannot reach trust region due to imaginary part of lowest "// &
             "eigenvalue. This is purely an artifact of using an asymmetric Hessian.", &
+        complex_eigval_warning_msg = &
+            "Lowest eigenvalues include a complex conjugate pair, for which "// &
+            "normalized real vectors of its invariant subspace are returned "// &
+            "instead of eigenvectors. This is purely an artifact of using an "// &
+            "asymmetric Hessian.", &
         lin_dep_trial_vector_warning_msg = &
             "Provided trial vector is linearly dependent and is being removed.", &
         minres_max_iter_warning_msg = "MINRES: The iteration limit was reached. "// &
@@ -1711,6 +1716,7 @@ contains
         real(rp), allocatable :: all_eigvals(:), right_eigvecs(:, :), left_eigvecs(:, :)
         complex(rp), allocatable :: gen_eigvals(:)
         logical, allocatable :: taken(:)
+        real(rp), external :: dnrm2
 
         ! initialize error flag
         error = 0
@@ -1732,13 +1738,20 @@ contains
             call general_mat_diag(matrix, gen_eigvals, right_eigvecs, left_eigvecs, &
                                   settings, error)
             if (error == 0) then
-                ! get eigenvalues with lowest real part
+                ! get eigenvalues with lowest real part, the column of a complex
+                ! conjugate pair holds the real or imaginary part of its complex
+                ! eigenvector, a real vector of the pair's invariant subspace which is
+                ! no eigenvector and is therefore normalized and reported
                 taken = .false.
                 do i = 1, n_target
                     idx = minloc(gen_eigvals%re, dim=1, mask=.not. taken)
                     taken(idx) = .true.
                     eigvals(i) = gen_eigvals(idx)%re
                     eigvecs(:, i) = right_eigvecs(:, idx)
+                    if (abs(gen_eigvals(idx)%im) > 0.0_rp) then
+                        eigvecs(:, i) = eigvecs(:, i) / dnrm2(n, eigvecs(:, i), 1_ip)
+                        call settings%log(complex_eigval_warning_msg, verbosity_warning)
+                    end if
                 end do
             end if
             deallocate(gen_eigvals, right_eigvecs, left_eigvecs, taken)
@@ -2026,10 +2039,12 @@ contains
                     if (present(res_tol)) then
                         pair_converged = dnrm2(n_param, residual(:, i), 1_ip) < res_tol
                     else
-                        ! a Ritz value is an upper bound on the true lowest eigenvalue,
-                        ! so once it has dropped below the instability threshold the
-                        ! sign is already certain and convergence can be declared
-                        ! regardless of the residual, when requested
+                        ! a Ritz value of a symmetric Hessian, the only one for which
+                        ! the sanity check allows it, is an upper bound on the true
+                        ! lowest eigenvalue, so once it has dropped below the
+                        ! instability threshold the sign is already certain and
+                        ! convergence can be declared regardless of the residual, when
+                        ! requested
                         pair_converged = &
                             (settings%stop_on_instability .and. &
                              red_eigvals(i) < stability_thresh) .or. &
@@ -3497,7 +3512,7 @@ contains
         ! this subroutine resolves the defaults that depend on other settings: the
         ! nested stability check settings inherit the solver's preconditioning,
         ! projection and logging functions and its host context unless they provide
-        ! their own and its verbosity if higher
+        ! their own, its verbosity if higher and a non-symmetric Hessian
         !
         type(solver_settings_type), intent(inout) :: settings
 
@@ -3511,6 +3526,10 @@ contains
 
             ! inherit the solver's verbosity if higher
             nested%verbose = max(nested%verbose, settings%verbose)
+
+            ! treat the Hessian as non-symmetric if the solver does, since the internal
+            ! stability check diagonalizes the solver's Hessian
+            nested%hess_symm = nested%hess_symm .and. settings%hess_symm
         end associate
 
     end subroutine init_defaults
@@ -3541,6 +3560,14 @@ contains
         if (settings%n_micro < 1) then
             call settings%log("Number of microiterations should be larger than 0.", &
                               verbosity_error, .true.)
+            error = 1
+            return
+        end if
+
+        ! check that number of random trial vectors is not negative
+        if (settings%n_random_trial_vectors < 0) then
+            call settings%log("Number of random trial vectors should not be "// &
+                              "negative.", verbosity_error, .true.)
             error = 1
             return
         end if
@@ -3628,12 +3655,10 @@ contains
             return
         end if
 
-        ! check that the trial space is not empty, also for a negative number of extra
-        ! trial vectors, which requests none
-        if (settings%n_extra_trial_vectors <= 0 .and. &
-            settings%n_random_trial_vectors == 0) then
-            call settings%log("Vanishing number of trial vectors for stability "// &
-                              "check.", verbosity_error, .true.)
+        ! check that number of random trial vectors is not negative
+        if (settings%n_random_trial_vectors < 0) then
+            call settings%log("Number of random trial vectors should not be "// &
+                              "negative.", verbosity_error, .true.)
             error = 1
             return
         end if
@@ -3644,6 +3669,17 @@ contains
             write(msg, '(A, I0, A)') random_trial_vector_warning_msg//" Setting to ", &
                 settings%n_random_trial_vectors, "."
             call settings%log(msg, verbosity_warning)
+        end if
+
+        ! check that the trial space is not empty, also for a negative number of extra
+        ! trial vectors, which requests none, and once the number of random trial
+        ! vectors is reduced
+        if (settings%n_extra_trial_vectors <= 0 .and. &
+            settings%n_random_trial_vectors == 0) then
+            call settings%log("Vanishing number of trial vectors for stability "// &
+                              "check.", verbosity_error, .true.)
+            error = 1
+            return
         end if
 
         ! check for character options
@@ -3661,6 +3697,15 @@ contains
             then
             call settings%log("Non-symmetric Hessian not supported with "// &
                               "Jacobi-Davidson solver.", verbosity_error, .true.)
+            error = 1
+            return
+        end if
+
+        ! check whether stopping at an instability is requested for a non-symmetric
+        ! Hessian, whose Ritz values are no upper bounds on its eigenvalues
+        if (.not. settings%hess_symm .and. settings%stop_on_instability) then
+            call settings%log("Stopping at an instability not supported with "// &
+                              "non-symmetric Hessian.", verbosity_error, .true.)
             error = 1
             return
         end if
