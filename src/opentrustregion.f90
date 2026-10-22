@@ -3616,8 +3616,10 @@ contains
             return
         end if
 
-        ! check whether projection functions is passed
-        if (associated(settings%project)) &
+        ! check whether projection functions is passed, unless the nested stability
+        ! check settings inherited it, whose check below prints the same warning
+        if (associated(settings%project) .and. &
+            .not. associated(settings%stability_settings%project, settings%project)) &
             call settings%log(project_warning_msg, verbosity_warning)
 
         ! check the nested stability check settings, with the defaults they inherit

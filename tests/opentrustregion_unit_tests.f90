@@ -7804,8 +7804,8 @@ contains
             solver_settings_type, solver_sanity_check, project_warning_msg, &
             random_trial_vector_warning_msg, subsystem_solver_options
 
-        ! the subsystem solvers in mixed case and settings which the sanity check
-        ! rejects
+        ! the subsystem solvers in mixed case, settings which the sanity check rejects
+        ! and the settings that carry a projection
         character(len=*), parameter :: mixed_case_subsystem_solvers(5) = &
             [character(len=18) :: "Davidson_LS", "Davidson_AH", "Jacobi-Davidson_LS", &
              "Jacobi-Davidson_AH", "TCG"]
@@ -7815,8 +7815,11 @@ contains
              "negative number of random trial vectors", &
              "extra trial vector function without extra trial vectors", &
              "unknown subsystem solver", "rejected nested stability check settings"]
+        character(len=*), parameter :: projection_case_names(2) = &
+            [character(len=42) :: "solver settings", &
+             "solver settings and inheriting nested ones"]
         type(solver_settings_type) :: settings
-        integer(ip) :: n_param, error, i_solver, i_case
+        integer(ip) :: n_param, error, i_solver, i_case, i_warning
         logical :: davidson
         type(test_context_type), target :: context
 
@@ -7931,20 +7934,39 @@ contains
             end if
         end do
 
-        ! check that a warning is printed when a projection is passed
-        call setup_settings(settings, context)
-        settings%project => mock_project_out_pair
-        call solver_sanity_check(settings, 4_ip, error)
-        if (error /= 0) then
-            write(stderr, *) "test_solver_sanity_check failed: Error returned when "// &
-                "a projection is passed."
-            test_solver_sanity_check = .false.
-        end if
-        if (index(context%log_message, " "//project_warning_msg) == 0) then
-            write(stderr, *) "test_solver_sanity_check failed: Warning not printed "// &
-                "when a projection is passed."
-            test_solver_sanity_check = .false.
-        end if
+        ! check that a warning is printed exactly once when a projection is passed,
+        ! also when the nested stability check settings carry it together with the
+        ! logging function, as they do once they inherit both, so that their check
+        ! prints the warning as well
+        do i_case = 1, size(projection_case_names)
+            call setup_settings(settings, context)
+            if (i_case == 2) then
+                call setup_settings(settings%stability_settings, context)
+                settings%stability_settings%project => mock_project_out_pair
+            end if
+            settings%project => mock_project_out_pair
+            call solver_sanity_check(settings, 4_ip, error)
+            if (error /= 0) then
+                write(stderr, *) "test_solver_sanity_check failed: Error returned "// &
+                    "when a projection is passed with "// &
+                    trim(projection_case_names(i_case))//"."
+                test_solver_sanity_check = .false.
+            end if
+            i_warning = index(context%log_message, " "//project_warning_msg)
+            if (i_warning == 0) then
+                write(stderr, *) "test_solver_sanity_check failed: Warning not "// &
+                    "printed when a projection is passed with "// &
+                    trim(projection_case_names(i_case))//"."
+                test_solver_sanity_check = .false.
+            end if
+            if (i_warning > 0 .and. index(context%log_message(i_warning + 1:), &
+                                          " "//project_warning_msg) /= 0) then
+                write(stderr, *) "test_solver_sanity_check failed: Warning printed "// &
+                    "twice when a projection is passed with "// &
+                    trim(projection_case_names(i_case))//"."
+                test_solver_sanity_check = .false.
+            end if
+        end do
 
     end function test_solver_sanity_check
 
