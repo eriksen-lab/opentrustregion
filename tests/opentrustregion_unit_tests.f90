@@ -2132,11 +2132,16 @@ contains
             test_solver = .false.
         end if
 
-        ! run solver with settings which the sanity check rejects and check that its
-        ! error is returned with the solver's origin before the orbitals are updated
+        ! run solver with settings which the sanity check rejects, nested settings for
+        ! the Jacobi-Davidson method, which are only rejected once they inherit the
+        ! solver's non-symmetric Hessian, which the level-shifted Davidson subsystem
+        ! solver supports, and check that its error is returned with the solver's
+        ! origin before the orbitals are updated
         context%vars = near_minimum
         settings = solver_settings_type()
-        settings%n_micro = 0
+        settings%subsystem_solver = "davidson_ls"
+        settings%hess_symm = .false.
+        settings%stability_settings%diag_solver = "jacobi-davidson"
         call setup_error_logging(settings, context)
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
                     state)
@@ -7804,11 +7809,12 @@ contains
         character(len=*), parameter :: mixed_case_subsystem_solvers(5) = &
             [character(len=18) :: "Davidson_LS", "Davidson_AH", "Jacobi-Davidson_LS", &
              "Jacobi-Davidson_AH", "TCG"]
-        character(len=*), parameter :: error_case_names(6) = &
+        character(len=*), parameter :: error_case_names(7) = &
             [character(len=55) :: "vanishing number of parameters", &
              "negative number of parameters", "vanishing number of micro iterations", &
-             "negative number of random trial vectors", "extra trial vector "// &
-             "function without extra trial vectors", "unknown subsystem solver"]
+             "negative number of random trial vectors", &
+             "extra trial vector function without extra trial vectors", &
+             "unknown subsystem solver", "rejected nested stability check settings"]
         type(solver_settings_type) :: settings
         integer(ip) :: n_param, error, i_solver, i_case
         logical :: davidson
@@ -7876,6 +7882,10 @@ contains
                 settings%n_extra_trial_vectors = 0
             case (6)
                 settings%subsystem_solver = "unknown"
+            case (7)
+                ! the nested settings print the error message of their own check
+                call setup_error_logging(settings%stability_settings, context)
+                settings%stability_settings%diag_solver = "unknown"
             end select
             call solver_sanity_check(settings, n_param, error)
             if (error /= 1) then
@@ -7959,6 +7969,10 @@ contains
              "and no random trial vectors that fit", "unknown diagonalization solver", &
              "non-symmetric Hessian with Jacobi-Davidson solver", &
              "stopping at an instability with non-symmetric Hessian"]
+        character(len=*), parameter :: accepted_case_names(3) = &
+            [character(len=49) :: "non-symmetric Hessian with Davidson solver", &
+             "stopping at an instability with symmetric Hessian", &
+             "no random but extra trial vectors"]
         type(stability_settings_type) :: settings
         integer(ip) :: error, i_solver, i_case, n_param
         type(test_context_type), target :: context
@@ -8055,15 +8069,24 @@ contains
             end if
         end do
 
-        ! check that a non-symmetric Hessian is accepted by the Davidson solver
-        call setup_settings(settings, context)
-        settings%hess_symm = .false.
-        call stability_sanity_check(settings, 4_ip, error)
-        if (error /= 0) then
-            write(stderr, *) "test_stability_sanity_check failed: Non-symmetric "// &
-                "Hessian rejected for Davidson solver."
-            test_stability_sanity_check = .false.
-        end if
+        ! check that settings close to rejected ones are accepted
+        do i_case = 1, size(accepted_case_names)
+            call setup_settings(settings, context)
+            select case (i_case)
+            case (1)
+                settings%hess_symm = .false.
+            case (2)
+                settings%stop_on_instability = .true.
+            case (3)
+                settings%n_random_trial_vectors = 0
+            end select
+            call stability_sanity_check(settings, 4_ip, error)
+            if (error /= 0) then
+                write(stderr, *) "test_stability_sanity_check failed: Error "// &
+                    "returned for "//trim(accepted_case_names(i_case))//"."
+                test_stability_sanity_check = .false.
+            end if
+        end do
 
         ! check that a warning is printed when a projection is passed
         call setup_settings(settings, context)

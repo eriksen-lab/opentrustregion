@@ -85,7 +85,7 @@ module opentrustregion
             "instead of eigenvectors. This is purely an artifact of using an "// &
             "asymmetric Hessian.", &
         lin_dep_trial_vector_warning_msg = &
-            "Provided trial vector is linearly dependent and is being removed.", &
+            "Extra trial vector is linearly dependent and is being removed.", &
         minres_max_iter_warning_msg = "MINRES: The iteration limit was reached. "// &
                                       "The approximate solution of the last "// &
                                       "iteration is used.", &
@@ -3619,6 +3619,12 @@ contains
         ! check whether projection functions is passed
         if (associated(settings%project)) &
             call settings%log(project_warning_msg, verbosity_warning)
+
+        ! check the nested stability check settings, with the defaults they inherit
+        ! from the solver already resolved, since the internal stability check also
+        ! runs without a requested stability check, so that settings it would reject
+        ! are reported before the optimization starts
+        call stability_sanity_check(settings%stability_settings, n_param, error)
 
     end subroutine solver_sanity_check
 
