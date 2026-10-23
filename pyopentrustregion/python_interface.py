@@ -479,11 +479,18 @@ class Settings:
                 setattr(self, field_name, None)
 
     def set_optional_callback(
-        self, attr_name, func, func_interface, func_interface_type, *args
+        self,
+        settings_c,
+        interfaces,
+        attr_name,
+        func,
+        func_interface,
+        func_interface_type,
+        *args,
     ):
         """
-        this function sets a callback in the C struct from a Python function while also
-        keeping the interface alive in the Python object
+        this function sets a callback in the C struct of a call from a Python function
+        and keeps the interface alive in the interfaces of the call
         """
         # create interface if function is not None
         interface = (
@@ -493,10 +500,10 @@ class Settings:
         )
 
         # create c_void_p pointer, points to NULL if func_interface is None
-        setattr(self.settings_c, attr_name, cast(interface, c_void_p))
+        setattr(settings_c, attr_name, cast(interface, c_void_p))
 
-        # keep interface alive
-        setattr(self.settings_c, attr_name + "_interface", interface)
+        # keep interface alive until the call returns
+        interfaces.append(interface)
 
 
 class SolverSettings(Settings):
@@ -509,11 +516,6 @@ class SolverSettings(Settings):
     get_extra_trial_vectors: Optional[Callable[[np.ndarray], None]]
     conv_check: Optional[Callable[[], bool]]
     logger: Optional[Callable[[str], None]]
-    precond_interface: Any
-    project_interface: Any
-    get_extra_trial_vectors_interface: Any
-    conv_check_interface: Any
-    logger_interface: Any
 
     def __init__(self):
         super().__init__()
@@ -522,14 +524,23 @@ class SolverSettings(Settings):
         )
 
     @property
-    def stability_settings(self) -> "StabilitySettings":
+    def stability_settings(self) -> StabilitySettings:
         return self._stability_settings
 
-    def set_optional_callbacks(self, n_param: int, exception: Dict[str, Exception]):
+    def set_optional_callbacks(
+        self,
+        settings_c: Structure,
+        interfaces: list,
+        n_param: int,
+        exception: Dict[str, Exception],
+    ):
         """
-        this function sets the interfaces for the optional callback functions
+        this function sets the interfaces for the optional callback functions in the C
+        struct of a call
         """
         self.set_optional_callback(
+            settings_c,
+            interfaces,
             "precond",
             self.precond,
             PrecondInterface,
@@ -538,6 +549,8 @@ class SolverSettings(Settings):
             exception,
         )
         self.set_optional_callback(
+            settings_c,
+            interfaces,
             "project",
             self.project,
             ProjectInterface,
@@ -546,6 +559,8 @@ class SolverSettings(Settings):
             exception,
         )
         self.set_optional_callback(
+            settings_c,
+            interfaces,
             "get_extra_trial_vectors",
             self.get_extra_trial_vectors,
             GetExtraTrialVectorsInterface,
@@ -554,6 +569,8 @@ class SolverSettings(Settings):
             exception,
         )
         self.set_optional_callback(
+            settings_c,
+            interfaces,
             "conv_check",
             self.conv_check,
             ConvCheckInterface,
@@ -561,9 +578,17 @@ class SolverSettings(Settings):
             exception,
         )
         self.set_optional_callback(
-            "logger", self.logger, LoggerInterface, logger_interface_type, exception
+            settings_c,
+            interfaces,
+            "logger",
+            self.logger,
+            LoggerInterface,
+            logger_interface_type,
+            exception,
         )
-        self.stability_settings.set_optional_callbacks(n_param, exception)
+        self.stability_settings.set_optional_callbacks(
+            settings_c.stability_settings, interfaces, n_param, exception
+        )
 
 
 class StabilitySettings(Settings):
@@ -576,17 +601,21 @@ class StabilitySettings(Settings):
     get_extra_trial_vectors: Optional[Callable[[np.ndarray], None]]
     conv_check: Optional[Callable[[], bool]]
     logger: Optional[Callable[[str], None]]
-    precond_interface: Any
-    project_interface: Any
-    get_extra_trial_vectors_interface: Any
-    conv_check_interface: Any
-    logger_interface: Any
 
-    def set_optional_callbacks(self, n_param: int, exception: Dict[str, Exception]):
+    def set_optional_callbacks(
+        self,
+        settings_c: Structure,
+        interfaces: list,
+        n_param: int,
+        exception: Dict[str, Exception],
+    ):
         """
-        this function sets the interfaces for the optional callback functions
+        this function sets the interfaces for the optional callback functions in the C
+        struct of a call
         """
         self.set_optional_callback(
+            settings_c,
+            interfaces,
             "precond",
             self.precond,
             PrecondInterface,
@@ -595,6 +624,8 @@ class StabilitySettings(Settings):
             exception,
         )
         self.set_optional_callback(
+            settings_c,
+            interfaces,
             "project",
             self.project,
             ProjectInterface,
@@ -603,6 +634,8 @@ class StabilitySettings(Settings):
             exception,
         )
         self.set_optional_callback(
+            settings_c,
+            interfaces,
             "get_extra_trial_vectors",
             self.get_extra_trial_vectors,
             GetExtraTrialVectorsInterface,
@@ -611,6 +644,8 @@ class StabilitySettings(Settings):
             exception,
         )
         self.set_optional_callback(
+            settings_c,
+            interfaces,
             "conv_check",
             self.conv_check,
             ConvCheckInterface,
@@ -618,7 +653,13 @@ class StabilitySettings(Settings):
             exception,
         )
         self.set_optional_callback(
-            "logger", self.logger, LoggerInterface, logger_interface_type, exception
+            settings_c,
+            interfaces,
+            "logger",
+            self.logger,
+            LoggerInterface,
+            logger_interface_type,
+            exception,
         )
 
 
@@ -789,11 +830,16 @@ def solver(
         UpdateOrbsInterface(update_orbs, n_param, exception)
     )
 
-    # set interfaces for optional callback functions, these need to be set here since
-    # the interface might need parameters that are not known when the attribute to
-    # settings is set (e.g. n_param)
+    # set interfaces for optional callback functions in a copy of the C struct of the
+    # settings, as the C entry points do, so that a call never writes into the settings
+    # object and calls running at the same time can share it, and keep them alive until
+    # the call returns, these need to be set here since the interface might need
+    # parameters that are not known when the attribute to settings is set (e.g. n_param)
+    settings_c = None
+    interfaces: list = []
     if settings is not None:
-        settings.set_optional_callbacks(n_param, exception)
+        settings_c = SolverSettingsC.from_buffer_copy(settings.settings_c)
+        settings.set_optional_callbacks(settings_c, interfaces, n_param, exception)
 
     # define result and argument types
     lib.solver.restype = c_int
@@ -810,7 +856,7 @@ def solver(
         update_orbs_interface,
         obj_func_interface,
         n_param,
-        byref(settings.settings_c) if settings is not None else None,
+        byref(settings_c) if settings_c is not None else None,
         byref(state.state_c) if state is not None else None,
     )
 
@@ -831,11 +877,16 @@ def stability_check(
     # define interfaces for callback functions
     hess_x_interface = hess_x_interface_type(HessXInterface(hess_x, n_param, exception))
 
-    # set interfaces for optional callback functions, these need to be set here since
-    # the interface might need parameters that are not known when the attribute to
-    # settings is set (e.g. n_param)
+    # set interfaces for optional callback functions in a copy of the C struct of the
+    # settings, as the C entry points do, so that a call never writes into the settings
+    # object and calls running at the same time can share it, and keep them alive until
+    # the call returns, these need to be set here since the interface might need
+    # parameters that are not known when the attribute to settings is set (e.g. n_param)
+    settings_c = None
+    interfaces: list = []
     if settings is not None:
-        settings.set_optional_callbacks(n_param, exception)
+        settings_c = StabilitySettingsC.from_buffer_copy(settings.settings_c)
+        settings.set_optional_callbacks(settings_c, interfaces, n_param, exception)
 
     # define result and argument types
     lib.stability_check.restype = c_int
@@ -846,10 +897,10 @@ def stability_check(
         POINTER(c_bool),
         POINTER(StabilitySettingsC),
         POINTER(StabilityStateC),
-        c_void_p,
+        POINTER(c_real),
     ]
 
-    # initialize return variables
+    # initialize return variable
     stable = c_bool(False)
 
     # call Fortran function
@@ -858,11 +909,11 @@ def stability_check(
         hess_x_interface,
         n_param,
         byref(stable),
-        byref(settings.settings_c) if settings is not None else None,
+        byref(settings_c) if settings_c is not None else None,
         byref(state.state_c) if state is not None else None,
-        kappa.ctypes.data_as(POINTER(c_real)) if kappa is not None else kappa,
+        kappa.ctypes.data_as(POINTER(c_real)) if kappa is not None else None,
     )
 
     raise_on_failure(error, exception, "stability check")
 
-    return bool(stable)
+    return stable.value

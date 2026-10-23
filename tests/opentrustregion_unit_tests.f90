@@ -181,6 +181,332 @@ module opentrustregion_unit_tests
 
 contains
 
+    subroutine identity_hess_x(x, hess_x, error, context)
+        !
+        ! this subroutine describes an identity Hessian linear transformation which
+        ! needs no test context
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: x(:)
+        real(rp), intent(out), target :: hess_x(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        hess_x = x
+
+    end subroutine identity_hess_x
+
+    function constant_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes an objective function evaluation that does not depend
+        ! on the displacement
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        func = 1.0_rp + 0.0_rp * sum(delta_vars)
+
+    end function constant_obj_func
+
+    subroutine mock_precond(residual, mu, precond_residual, error, context)
+        !
+        ! this subroutine is a test subroutine for the preconditioner subroutine
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: residual(:)
+        real(rp), intent(in) :: mu
+        real(rp), intent(out), target :: precond_residual(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        precond_residual = mu * residual
+
+        error = 0
+
+    end subroutine mock_precond
+
+    subroutine identity_precond(residual, mu, precond_residual, error, context)
+        !
+        ! this subroutine describes an identity preconditioner which needs no test
+        ! context
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: residual(:)
+        real(rp), intent(in) :: mu
+        real(rp), intent(out), target :: precond_residual(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        precond_residual = residual + 0.0_rp * mu
+
+        error = 0
+
+    end subroutine identity_precond
+
+    subroutine mock_precond_first_unit_vector(residual, mu, precond_residual, error, &
+                                              context)
+        !
+        ! this subroutine is a test subroutine for the preconditioner subroutine which
+        ! always returns the first unit vector
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: residual(:)
+        real(rp), intent(in) :: mu
+        real(rp), intent(out), target :: precond_residual(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        precond_residual = 0.0_rp * residual + 0.0_rp * mu
+        precond_residual(1) = 1.0_rp
+
+        error = 0
+
+    end subroutine mock_precond_first_unit_vector
+
+    subroutine mock_project(vector, error, context)
+        !
+        ! this subroutine is a test subroutine for the projection subroutine
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector = 2 * vector
+
+        error = 0
+
+    end subroutine mock_project
+
+    subroutine identity_project(vector, error, context)
+        !
+        ! this subroutine describes an identity projection which needs no test context
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector = vector + 0.0_rp
+
+        error = 0
+
+    end subroutine identity_project
+
+    subroutine vanishing_project(vector, error, context)
+        !
+        ! this subroutine describes a projection which removes every vector and needs
+        ! no test context
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector = 0.0_rp
+
+        error = 0
+
+    end subroutine vanishing_project
+
+    subroutine mock_project_out_pair(vector, error, context)
+        !
+        ! this subroutine is a test subroutine for the projection subroutine which
+        ! removes the component along the symmetric combination of the first two unit
+        ! vectors
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector(1:2) = vector(1:2) - 0.5_rp * sum(vector(1:2))
+
+        error = 0
+
+    end subroutine mock_project_out_pair
+
+    subroutine mock_project_first_component(vector, error, context)
+        !
+        ! this subroutine is a test subroutine for the projection subroutine which
+        ! keeps only the first component
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(inout), target :: vector(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        vector(2:) = 0.0_rp
+
+        error = 0
+
+    end subroutine mock_project_first_component
+
+    function mock_conv_check(error, context) result(converged)
+        !
+        ! this function describes a convergence check which always passes
+        !
+        use test_reference, only: check_host_context
+
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        logical :: converged
+
+        ! check host context
+        call check_host_context(context)
+
+        ! initialize error flag
+        error = 0
+
+        converged = .true.
+
+    end function mock_conv_check
+
+    function mock_stability_conv_check(error, context) result(converged)
+        !
+        ! this function describes a convergence check of the stability check which
+        ! reads the state of the stability check the test context points at, records
+        ! the RMS residual it sees there and accepts a residual that vanishes relative
+        ! to the lowest eigenvalue
+        !
+        use test_reference, only: check_host_context
+
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        logical :: converged
+
+        ! check host context
+        call check_host_context(context)
+
+        ! report a missing test context or state
+        converged = .false.
+        error = missing_context_error
+        if (.not. associated(context)) return
+
+        ! check the lowest eigenpair in the state
+        select type (context)
+        class is (test_context_type)
+            if (.not. associated(context%stability_state)) return
+            context%seen_residual_rms = context%stability_state%residual_rms
+            converged = context%stability_state%residual_rms < &
+                        tol * abs(context%stability_state%min_eigval)
+            error = 0
+        end select
+
+    end function mock_stability_conv_check
+
+    subroutine mock_get_extra_trial_vectors(trial_vectors, error, context)
+        !
+        ! this subroutine is a test subroutine for the extra trial vector subroutine
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(out), target :: trial_vectors(:, :)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        integer(ip) :: i
+
+        ! check host context
+        call check_host_context(context)
+
+        trial_vectors = 0.0_rp
+        do i = 1, size(trial_vectors, 2)
+            trial_vectors(i, i) = real(i, kind=rp)
+        end do
+
+        error = 0
+
+    end subroutine mock_get_extra_trial_vectors
+
+    subroutine mock_vanishing_extra_trial_vectors(trial_vectors, error, context)
+        !
+        ! this subroutine is a test subroutine for an extra trial vector subroutine
+        ! which has no direction to contribute
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(out), target :: trial_vectors(:, :)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        trial_vectors = 0.0_rp
+
+        error = 0
+
+    end subroutine mock_vanishing_extra_trial_vectors
+
+    subroutine logger(message, context)
+        !
+        ! this subroutine is a mock logging subroutine
+        !
+        use test_reference, only: check_host_context
+
+        character(len=*), intent(in) :: message
+        class(*), intent(in), pointer :: context
+
+        ! check host context
+        call check_host_context(context)
+
+        ! append message to the log of the test context
+        if (associated(context)) then
+            select type (context)
+            class is (test_context_type)
+                if (.not. allocated(context%log_message)) context%log_message = ""
+                context%log_message = context%log_message//trim(message)
+            end select
+        end if
+
+    end subroutine logger
+
     ! 6D Hartmann function definition
 
     function hartmann6d_func(vars) result(f)
@@ -346,43 +672,6 @@ contains
 
     end subroutine hess_x_fun_asymmetric
 
-    function obj_func(delta_vars, error, context) result(func)
-        !
-        ! this function describes the objective function evaluation for the Hartmann 6D
-        ! function
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: delta_vars(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        class(hartmann6d_context_type), pointer :: state
-        real(rp) :: func
-
-        ! check host context
-        call check_host_context(context)
-
-        ! initialize result in case the test problem state is missing
-        func = 0.0_rp
-
-        ! get Hartmann 6D state
-        state => resolve_hartmann6d_context(context, error)
-        if (error /= 0) return
-
-        ! count call
-        state%n_obj_func_calls = state%n_obj_func_calls + 1
-
-        ! record whether function is evaluated without displacement
-        select type (state)
-        class is (hartmann6d_recording_context_type)
-            if (maxval(abs(delta_vars)) <= 0.0_rp) state%obj_func_zero_step = .true.
-        end select
-
-        func = hartmann6d_func(state%vars + delta_vars)
-
-    end function obj_func
-
     subroutine update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, &
                            context)
         !
@@ -462,6 +751,97 @@ contains
 
     end subroutine update_orbs_hess_x_once
 
+    function obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes the objective function evaluation for the Hartmann 6D
+        ! function
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        class(hartmann6d_context_type), pointer :: state
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        ! initialize result in case the test problem state is missing
+        func = 0.0_rp
+
+        ! get Hartmann 6D state
+        state => resolve_hartmann6d_context(context, error)
+        if (error /= 0) return
+
+        ! count call
+        state%n_obj_func_calls = state%n_obj_func_calls + 1
+
+        ! record whether function is evaluated without displacement
+        select type (state)
+        class is (hartmann6d_recording_context_type)
+            if (maxval(abs(delta_vars)) <= 0.0_rp) state%obj_func_zero_step = .true.
+        end select
+
+        func = hartmann6d_func(state%vars + delta_vars)
+
+    end function obj_func
+
+    function mock_conv_check_without_update(error, context) result(converged)
+        !
+        ! this function describes a convergence check which only passes in a macro
+        ! iteration without an orbital update, which is the case once the maximum
+        ! precision is reached
+        !
+        use test_reference, only: check_host_context
+
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        class(hartmann6d_context_type), pointer :: state
+        logical :: converged
+
+        ! check host context
+        call check_host_context(context)
+
+        ! initialize result in case the test problem state is missing
+        converged = .false.
+
+        ! get Hartmann 6D state
+        state => resolve_hartmann6d_context(context, error)
+        if (error /= 0) return
+
+        converged = state%n_update_orbs_calls == state%n_update_orbs_at_conv_check
+        state%n_update_orbs_at_conv_check = state%n_update_orbs_calls
+
+    end function mock_conv_check_without_update
+
+    subroutine settingless_hess_x(x, hess_x, error, context)
+        !
+        ! this subroutine describes the Hessian linear transformation for the Hartmann
+        ! 6D function of a solver called without settings, which reaches the variables
+        ! through the module context since it receives no host context
+        !
+        real(rp), intent(in), target :: x(:)
+        real(rp), intent(out), target :: hess_x(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        class(*), pointer :: module_context
+
+        ! check that the solver or stability check handed no host context
+        if (associated(context)) then
+            error = unexpected_context_error
+            return
+        end if
+
+        ! apply the Hessian with the module context
+        module_context => settingless_context
+        call hess_x_fun(x, hess_x, error, module_context)
+
+    end subroutine settingless_hess_x
+
     subroutine settingless_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                        error, context)
         !
@@ -494,31 +874,6 @@ contains
         hess_x_funptr => settingless_hess_x
 
     end subroutine settingless_update_orbs
-
-    subroutine settingless_hess_x(x, hess_x, error, context)
-        !
-        ! this subroutine describes the Hessian linear transformation for the Hartmann
-        ! 6D function of a solver called without settings, which reaches the variables
-        ! through the module context since it receives no host context
-        !
-        real(rp), intent(in), target :: x(:)
-        real(rp), intent(out), target :: hess_x(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        class(*), pointer :: module_context
-
-        ! check that the solver or stability check handed no host context
-        if (associated(context)) then
-            error = unexpected_context_error
-            return
-        end if
-
-        ! apply the Hessian with the module context
-        module_context => settingless_context
-        call hess_x_fun(x, hess_x, error, module_context)
-
-    end subroutine settingless_hess_x
 
     function settingless_obj_func(delta_vars, error, context) result(func)
         !
@@ -565,6 +920,25 @@ contains
         end select
 
     end function inject_fault
+
+    subroutine faulty_hess_x(x, hess_x, error, context)
+        !
+        ! this subroutine describes the Hessian linear transformation of the
+        ! Hartmann 6D function into which a fault can be injected
+        !
+        real(rp), intent(in), target :: x(:)
+        real(rp), intent(out), target :: hess_x(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! perform Hessian linear transformation
+        call hess_x_fun(x, hess_x, error, context)
+        if (error /= 0) return
+
+        ! inject fault
+        if (inject_fault(context, fault_hess_x)) error = 1
+
+    end subroutine faulty_hess_x
 
     subroutine faulty_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                   error, context)
@@ -633,25 +1007,6 @@ contains
         end select
 
     end function first_step_rejecting_obj_func
-
-    subroutine faulty_hess_x(x, hess_x, error, context)
-        !
-        ! this subroutine describes the Hessian linear transformation of the
-        ! Hartmann 6D function into which a fault can be injected
-        !
-        real(rp), intent(in), target :: x(:)
-        real(rp), intent(out), target :: hess_x(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! perform Hessian linear transformation
-        call hess_x_fun(x, hess_x, error, context)
-        if (error /= 0) return
-
-        ! inject fault
-        if (inject_fault(context, fault_hess_x)) error = 1
-
-    end subroutine faulty_hess_x
 
     subroutine faulty_precond(residual, mu, precond_residual, error, context)
         !
@@ -726,24 +1081,6 @@ contains
 
     end function faulty_conv_check
 
-    subroutine faulty_get_extra_trial_vectors(trial_vectors, error, context)
-        !
-        ! this subroutine describes the extra trial vector function which returns
-        ! scaled unit vectors into which a fault can be injected
-        !
-        real(rp), intent(out), target :: trial_vectors(:, :)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! return extra trial vectors
-        call mock_get_extra_trial_vectors(trial_vectors, error, context)
-        if (error /= 0) return
-
-        ! inject fault
-        if (inject_fault(context, fault_get_extra_trial_vectors)) error = 1
-
-    end subroutine faulty_get_extra_trial_vectors
-
     function faulty_stability_conv_check(error, context) result(converged)
         !
         ! this function describes the convergence check of the stability check which
@@ -763,34 +1100,23 @@ contains
 
     end function faulty_stability_conv_check
 
-    function mock_conv_check_without_update(error, context) result(converged)
+    subroutine faulty_get_extra_trial_vectors(trial_vectors, error, context)
         !
-        ! this function describes a convergence check which only passes in a macro
-        ! iteration without an orbital update, which is the case once the maximum
-        ! precision is reached
+        ! this subroutine describes the extra trial vector function which returns
+        ! scaled unit vectors into which a fault can be injected
         !
-        use test_reference, only: check_host_context
-
+        real(rp), intent(out), target :: trial_vectors(:, :)
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        class(hartmann6d_context_type), pointer :: state
-        logical :: converged
-
-        ! check host context
-        call check_host_context(context)
-
-        ! initialize result in case the test problem state is missing
-        converged = .false.
-
-        ! get Hartmann 6D state
-        state => resolve_hartmann6d_context(context, error)
+        ! return extra trial vectors
+        call mock_get_extra_trial_vectors(trial_vectors, error, context)
         if (error /= 0) return
 
-        converged = state%n_update_orbs_calls == state%n_update_orbs_at_conv_check
-        state%n_update_orbs_at_conv_check = state%n_update_orbs_calls
+        ! inject fault
+        if (inject_fault(context, fault_get_extra_trial_vectors)) error = 1
 
-    end function mock_conv_check_without_update
+    end subroutine faulty_get_extra_trial_vectors
 
     function resolve_quadratic_context(context, error) result(state)
         !
@@ -901,30 +1227,12 @@ contains
 
     end subroutine mu_recording_precond
 
-    subroutine identity_hess_x(x, hess_x, error, context)
+    subroutine mock_precond_next_unit_vector(residual, mu, precond_residual, error, &
+                                             context)
         !
-        ! this subroutine describes an identity Hessian linear transformation which
-        ! needs no test context
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: x(:)
-        real(rp), intent(out), target :: hess_x(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        error = 0
-        hess_x = x
-
-    end subroutine identity_hess_x
-
-    subroutine identity_precond(residual, mu, precond_residual, error, context)
-        !
-        ! this subroutine describes an identity preconditioner which needs no test
-        ! context
+        ! this subroutine is a test subroutine for the preconditioner subroutine which
+        ! returns the next unit vector of the quadratic model on every call and the
+        ! last one once all have been returned
         !
         use test_reference, only: check_host_context
 
@@ -934,53 +1242,22 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        ! check host context
-        call check_host_context(context)
-
-        precond_residual = residual + 0.0_rp * mu
-
-        error = 0
-
-    end subroutine identity_precond
-
-    subroutine identity_project(vector, error, context)
-        !
-        ! this subroutine describes an identity projection which needs no test context
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(inout), target :: vector(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
+        class(quadratic_context_type), pointer :: state
 
         ! check host context
         call check_host_context(context)
 
-        vector = vector + 0.0_rp
+        ! initialize result in case the quadratic model state is missing
+        precond_residual = 0.0_rp * residual + 0.0_rp * mu
 
-        error = 0
+        ! get quadratic model state
+        state => resolve_quadratic_context(context, error)
+        if (error /= 0) return
 
-    end subroutine identity_project
+        state%next_unit_vector = min(state%next_unit_vector + 1, size(residual))
+        precond_residual(state%next_unit_vector) = 1.0_rp
 
-    function constant_obj_func(delta_vars, error, context) result(func)
-        !
-        ! this function describes an objective function evaluation that does not depend
-        ! on the displacement
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: delta_vars(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-        real(rp) :: func
-
-        ! check host context
-        call check_host_context(context)
-
-        error = 0
-        func = 1.0_rp + 0.0_rp * sum(delta_vars)
-
-    end function constant_obj_func
+    end subroutine mock_precond_next_unit_vector
 
     ! double well function definition
 
@@ -1047,35 +1324,6 @@ contains
 
     end subroutine double_well_hess_x
 
-    function double_well_obj_func(delta_vars, error, context) result(func)
-        !
-        ! this function describes the objective function evaluation for the double
-        ! well function
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: delta_vars(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-        real(rp) :: func
-
-        class(double_well_context_type), pointer :: state
-
-        ! initialize result in case the double well state is missing
-        func = 0.0_rp
-
-        ! check host context
-        call check_host_context(context)
-
-        ! get double well state
-        state => resolve_double_well_context(context, error)
-        if (error /= 0) return
-
-        state%n_obj_func_calls = state%n_obj_func_calls + 1
-        func = double_well_func(state%vars + delta_vars)
-
-    end function double_well_obj_func
-
     subroutine double_well_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                        error, context)
         !
@@ -1113,6 +1361,70 @@ contains
         hess_x_funptr => double_well_hess_x
 
     end subroutine double_well_update_orbs
+
+    function double_well_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes the objective function evaluation for the double
+        ! well function
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        class(double_well_context_type), pointer :: state
+
+        ! initialize result in case the double well state is missing
+        func = 0.0_rp
+
+        ! check host context
+        call check_host_context(context)
+
+        ! get double well state
+        state => resolve_double_well_context(context, error)
+        if (error /= 0) return
+
+        state%n_obj_func_calls = state%n_obj_func_calls + 1
+        func = double_well_func(state%vars + delta_vars)
+
+    end function double_well_obj_func
+
+    function double_well_conv_check(error, context) result(converged)
+        !
+        ! this function describes a convergence check of the double well function
+        ! which, like a host's check of the change of the objective function, reports
+        ! convergence once the objective function has changed by less than 1e-8 since
+        ! the previous check, so that it can not pass at a stationary point the solver
+        ! has just reached
+        !
+        use test_reference, only: check_host_context
+
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        logical :: converged
+
+        class(double_well_context_type), pointer :: state
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        ! initialize result in case the double well state is missing
+        converged = .false.
+
+        ! get double well state
+        state => resolve_double_well_context(context, error)
+        if (error /= 0) return
+
+        ! compare the objective function against that of the previous check and keep
+        ! it for the next check
+        func = double_well_func(state%vars)
+        converged = abs(func - state%last_conv_check_func) < 1e-8_rp
+        state%last_conv_check_func = func
+
+    end function double_well_conv_check
 
     subroutine state_reading_hess_x(x, hess_x, error, context)
         !
@@ -1178,41 +1490,6 @@ contains
         end select
 
     end subroutine state_reading_update_orbs
-
-    function double_well_conv_check(error, context) result(converged)
-        !
-        ! this function describes a convergence check of the double well function
-        ! which, like a host's check of the change of the objective function, reports
-        ! convergence once the objective function has changed by less than 1e-8 since
-        ! the previous check, so that it can not pass at a stationary point the solver
-        ! has just reached
-        !
-        use test_reference, only: check_host_context
-
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-        logical :: converged
-
-        class(double_well_context_type), pointer :: state
-        real(rp) :: func
-
-        ! check host context
-        call check_host_context(context)
-
-        ! initialize result in case the double well state is missing
-        converged = .false.
-
-        ! get double well state
-        state => resolve_double_well_context(context, error)
-        if (error /= 0) return
-
-        ! compare the objective function against that of the previous check and keep
-        ! it for the next check
-        func = double_well_func(state%vars)
-        converged = abs(func - state%last_conv_check_func) < 1e-8_rp
-        state%last_conv_check_func = func
-
-    end function double_well_conv_check
 
     function resolve_half_step_context(context, error) result(state)
         !
@@ -1370,283 +1647,6 @@ contains
         if (state%n_calls == state%fail_call) error = 1
 
     end function bracket_obj_func
-
-    subroutine mock_precond(residual, mu, precond_residual, error, context)
-        !
-        ! this subroutine is a test subroutine for the preconditioner subroutine
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: residual(:)
-        real(rp), intent(in) :: mu
-        real(rp), intent(out), target :: precond_residual(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        precond_residual = mu * residual
-
-        error = 0
-
-    end subroutine mock_precond
-
-    subroutine mock_precond_first_unit_vector(residual, mu, precond_residual, error, &
-                                              context)
-        !
-        ! this subroutine is a test subroutine for the preconditioner subroutine which
-        ! always returns the first unit vector
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: residual(:)
-        real(rp), intent(in) :: mu
-        real(rp), intent(out), target :: precond_residual(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        precond_residual = 0.0_rp * residual + 0.0_rp * mu
-        precond_residual(1) = 1.0_rp
-
-        error = 0
-
-    end subroutine mock_precond_first_unit_vector
-
-    subroutine mock_precond_next_unit_vector(residual, mu, precond_residual, error, &
-                                             context)
-        !
-        ! this subroutine is a test subroutine for the preconditioner subroutine which
-        ! returns the next unit vector of the quadratic model on every call and the
-        ! last one once all have been returned
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(in), target :: residual(:)
-        real(rp), intent(in) :: mu
-        real(rp), intent(out), target :: precond_residual(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        class(quadratic_context_type), pointer :: state
-
-        ! check host context
-        call check_host_context(context)
-
-        ! initialize result in case the quadratic model state is missing
-        precond_residual = 0.0_rp * residual + 0.0_rp * mu
-
-        ! get quadratic model state
-        state => resolve_quadratic_context(context, error)
-        if (error /= 0) return
-
-        state%next_unit_vector = min(state%next_unit_vector + 1, size(residual))
-        precond_residual(state%next_unit_vector) = 1.0_rp
-
-    end subroutine mock_precond_next_unit_vector
-
-    subroutine mock_project(vector, error, context)
-        !
-        ! this subroutine is a test subroutine for the projection subroutine
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(inout), target :: vector(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        vector = 2 * vector
-
-        error = 0
-
-    end subroutine mock_project
-
-    subroutine vanishing_project(vector, error, context)
-        !
-        ! this subroutine describes a projection which removes every vector and needs
-        ! no test context
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(inout), target :: vector(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        vector = 0.0_rp
-
-        error = 0
-
-    end subroutine vanishing_project
-
-    subroutine mock_project_out_pair(vector, error, context)
-        !
-        ! this subroutine is a test subroutine for the projection subroutine which
-        ! removes the component along the symmetric combination of the first two unit
-        ! vectors
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(inout), target :: vector(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        vector(1:2) = vector(1:2) - 0.5_rp * sum(vector(1:2))
-
-        error = 0
-
-    end subroutine mock_project_out_pair
-
-    subroutine mock_project_first_component(vector, error, context)
-        !
-        ! this subroutine is a test subroutine for the projection subroutine which
-        ! keeps only the first component
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(inout), target :: vector(:)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        vector(2:) = 0.0_rp
-
-        error = 0
-
-    end subroutine mock_project_first_component
-
-    function mock_conv_check(error, context) result(converged)
-        !
-        ! this function describes a convergence check which always passes
-        !
-        use test_reference, only: check_host_context
-
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-        logical :: converged
-
-        ! check host context
-        call check_host_context(context)
-
-        ! initialize error flag
-        error = 0
-
-        converged = .true.
-
-    end function mock_conv_check
-
-    subroutine mock_get_extra_trial_vectors(trial_vectors, error, context)
-        !
-        ! this subroutine is a test subroutine for the extra trial vector subroutine
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(out), target :: trial_vectors(:, :)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        integer(ip) :: i
-
-        ! check host context
-        call check_host_context(context)
-
-        trial_vectors = 0.0_rp
-        do i = 1, size(trial_vectors, 2)
-            trial_vectors(i, i) = real(i, kind=rp)
-        end do
-
-        error = 0
-
-    end subroutine mock_get_extra_trial_vectors
-
-    function mock_stability_conv_check(error, context) result(converged)
-        !
-        ! this function describes a convergence check of the stability check which
-        ! reads the state of the stability check the test context points at, records
-        ! the RMS residual it sees there and accepts a residual that vanishes relative
-        ! to the lowest eigenvalue
-        !
-        use test_reference, only: check_host_context
-
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-        logical :: converged
-
-        ! check host context
-        call check_host_context(context)
-
-        ! report a missing test context or state
-        converged = .false.
-        error = missing_context_error
-        if (.not. associated(context)) return
-
-        ! check the lowest eigenpair in the state
-        select type (context)
-        class is (test_context_type)
-            if (.not. associated(context%stability_state)) return
-            context%seen_residual_rms = context%stability_state%residual_rms
-            converged = context%stability_state%residual_rms < &
-                        tol * abs(context%stability_state%min_eigval)
-            error = 0
-        end select
-
-    end function mock_stability_conv_check
-
-    subroutine mock_vanishing_extra_trial_vectors(trial_vectors, error, context)
-        !
-        ! this subroutine is a test subroutine for an extra trial vector subroutine
-        ! which has no direction to contribute
-        !
-        use test_reference, only: check_host_context
-
-        real(rp), intent(out), target :: trial_vectors(:, :)
-        integer(ip), intent(out) :: error
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        trial_vectors = 0.0_rp
-
-        error = 0
-
-    end subroutine mock_vanishing_extra_trial_vectors
-
-    subroutine logger(message, context)
-        !
-        ! this subroutine is a mock logging subroutine
-        !
-        use test_reference, only: check_host_context
-
-        character(len=*), intent(in) :: message
-        class(*), intent(in), pointer :: context
-
-        ! check host context
-        call check_host_context(context)
-
-        ! append message to the log of the test context
-        if (associated(context)) then
-            select type (context)
-            class is (test_context_type)
-                if (.not. allocated(context%log_message)) context%log_message = ""
-                context%log_message = context%log_message//trim(message)
-            end select
-        end if
-
-    end subroutine logger
 
     function identity_matrix(n) result(matrix)
         !
@@ -2193,16 +2193,18 @@ contains
         end if
 
         ! force the maximum precision heuristic to trigger by requesting a convergence
-        ! tolerance that floating-point noise in the gradient can never satisfy
+        ! tolerance that floating-point noise in the gradient can never satisfy, with
+        ! the line search, which has to be skipped for the step that is not taken once
+        ! maximum precision is reached
         context%vars = near_minimum
         settings = solver_settings_type()
         settings%context => context
         settings%conv_tol = 0.0_rp
-        settings%subsystem_solver = "tcg"
+        settings%line_search = .true.
 
         ! run solver, check that it still returns without error while flagging this in
-        ! the state and that the reported number of orbital updates agrees with the
-        ! calls
+        ! the state, that the step that is not taken has no size and that the reported
+        ! number of orbital updates agrees with the calls
         context%n_update_orbs_calls = 0
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
                     state)
@@ -2214,6 +2216,11 @@ contains
         if (.not. state%max_precision_reached) then
             write(stderr, *) "test_solver failed: Did not flag that maximum "// &
                 "precision was reached when convergence tolerance could not be met."
+            test_solver = .false.
+        end if
+        if (abs(state%step_size) > 0.0_rp) then
+            write(stderr, *) "test_solver failed: Line search performed for the "// &
+                "step not taken once maximum precision is reached."
             test_solver = .false.
         end if
         if (.not. check_call_counts( &
@@ -7510,693 +7517,6 @@ contains
 
     end function test_split_string_by_space
 
-    logical(c_bool) function test_accept_trust_region_step() bind(C)
-        !
-        ! this function tests the subroutine which determines whether to accept a
-        ! trust-region step
-        !
-        use opentrustregion, only: &
-            solver_settings_type, accept_trust_region_step, trust_radius_shrink_ratio, &
-            trust_radius_expand_ratio, trust_radius_shrink_factor, &
-            trust_radius_expand_factor, function_unchanged_warning_msg
-        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_positive_inf, &
-                                                 ieee_quiet_nan
-
-        ! cases with the reason for accepting or rejecting the step, the size of the
-        ! first rotation, the norm of the step, the ratio of actual to predicted
-        ! function change, whether the micro iterations converged, and the expected
-        ! acceptance and trust radius, for a starting trust radius of one
-        character(len=*), parameter :: case_names(7) = &
-            [character(len=47) :: "micro iterations have not converged", "ratio is "// &
-             "negative", "individual rotations are too large", "ratio is too small", &
-             "ratio is acceptable", "ratio is too large at the trust region boundary", &
-             "ratio is too large within the trust region"]
-        real(rp), parameter :: &
-            case_rotations(7) = &
-                [0.3_rp, 0.3_rp, 1.0_rp, 0.3_rp, 0.3_rp, 0.3_rp, 0.3_rp], &
-            case_step_norms(7) = &
-                [0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 1.0_rp, 0.5_rp], &
-            case_ratios(7) = [ &
-                1.0_rp, -1.0_rp, 1.0_rp, 0.9_rp * trust_radius_shrink_ratio, 0.5_rp * &
-                (trust_radius_shrink_ratio + trust_radius_expand_ratio), 1.1_rp * &
-                trust_radius_expand_ratio, 1.1_rp * trust_radius_expand_ratio], &
-            case_trust_radii(7) = [ &
-                trust_radius_shrink_factor, trust_radius_shrink_factor, &
-                trust_radius_shrink_factor, trust_radius_shrink_factor, 1.0_rp, &
-                trust_radius_expand_factor, 1.0_rp]
-        logical, parameter :: &
-            case_converged(7) = &
-                [.false., .true., .true., .true., .true., .true., .true.], &
-            case_accepted(7) = &
-                [.false., .false., .false., .true., .true., .true., .true.]
-
-        ! cases with the objective function value, the actual and the predicted
-        ! function change, whether the micro iterations converged and whether maximum
-        ! precision is reached, which requires that the predicted change can not be
-        ! resolved relative to the objective function value and that the actual change
-        ! can not be resolved either or the step is rejected
-        character(len=*), parameter :: precision_case_names(9) = &
-            [character(len=68) :: "vanishing function changes", &
-             "changes below the resolution of a large function value", &
-             "changes above the resolution of a small function value", "vanishing "// &
-             "changes of a vanishing function value", "accepted step with only the "// &
-             "predicted change below the resolution", "rejected step with only the "// &
-             "predicted change below the resolution", "unconverged step with only "// &
-             "the predicted change below the resolution", "rejected step with a "// &
-             "huge function increase", "only the actual change below the resolution"]
-        real(rp), parameter :: &
-            precision_case_funcs(9) = [-1.0_rp, -2000.0_rp, -1.0_rp, 0.0_rp, -1.0_rp, &
-                                       -1.0_rp, -1.0_rp, -1.0_rp, -1.0_rp], &
-            precision_case_actual(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-3_rp, &
-                                        1e-3_rp, -1e-3_rp, 1e10_rp, 1e-20_rp], &
-            precision_case_predicted(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, &
-                                           1e-20_rp, -1e-20_rp, -1e-20_rp, -1e-6_rp, &
-                                           1e-3_rp]
-        logical, parameter :: &
-            precision_case_converged(9) = [.true., .true., .true., .true., .true., &
-                                           .true., .false., .true., .true.], &
-            precision_case_reached(9) = [.true., .true., .false., .true., .false., &
-                                         .true., .true., .false., .false.]
-
-        ! cases of an actual or predicted function change which is not finite, as for
-        ! an objective function or a Hessian linear transformation which overflows at
-        ! the step
-        character(len=*), parameter :: non_finite_case_names(3) = &
-            [character(len=23) :: "overflowing function", "function not a number", &
-             "overflowing prediction"]
-        real(rp) :: non_finite_actual(3), non_finite_predicted(3)
-
-        logical :: accept_step
-        real(rp) :: solution(3)
-        type(solver_state_type) :: state
-        type(solver_settings_type) :: settings
-        type(test_context_type), target :: context
-        integer(ip) :: i
-
-        ! assume tests pass
-        test_accept_trust_region_step = .true.
-
-        ! setup settings object
-        call setup_settings(settings, context)
-
-        solution = [0.3_rp, 0.3_rp, 0.3_rp]
-
-        ! check for every case whether the step is accepted and the trust radius is
-        ! reduced, kept or expanded, without maximum precision being reported as
-        ! reached, the flag starts set so that a flag which is not cleared is detected
-        do i = 1, size(case_names)
-            state%trust_radius = 1.0_rp
-            state%max_precision_reached = .true.
-            solution(1) = case_rotations(i)
-            accept_step = accept_trust_region_step(solution, case_step_norms(i), &
-                                                   -1.0_rp, case_ratios(i), 1.0_rp, &
-                                                   case_converged(i), settings, state)
-            if (accept_step .neqv. case_accepted(i)) then
-                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
-                    "acceptance incorrect when "//trim(case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-            if (abs(state%trust_radius - case_trust_radii(i)) > tol) then
-                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
-                    "radius not correctly updated when "//trim(case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-            if (state%max_precision_reached) then
-                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
-                    "precision reported as reached when "//trim(case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-        end do
-
-        ! check for every case of a function change which is not finite, with changes
-        ! of the same sign which would otherwise accept the step, that the step is
-        ! rejected and the trust radius reduced without maximum precision being
-        ! reported
-        non_finite_actual = [ieee_value(1.0_rp, ieee_positive_inf), &
-                             ieee_value(1.0_rp, ieee_quiet_nan), 1.0_rp]
-        non_finite_predicted = [1.0_rp, 1.0_rp, ieee_value(1.0_rp, ieee_positive_inf)]
-        do i = 1, size(non_finite_case_names)
-            state%trust_radius = 1.0_rp
-            accept_step = accept_trust_region_step( &
-                solution, 0.5_rp, -1.0_rp, non_finite_actual(i), &
-                non_finite_predicted(i), .true., settings, state)
-            if (accept_step) then
-                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
-                    "accepted for "//trim(non_finite_case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-            if (abs(state%trust_radius - trust_radius_shrink_factor) > tol) then
-                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
-                    "radius not reduced for "//trim(non_finite_case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-            if (state%max_precision_reached) then
-                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
-                    "precision reported as reached for "// &
-                    trim(non_finite_case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-        end do
-
-        ! check for every case whether maximum precision is reported as reached and,
-        ! if so, whether the step is rejected with the trust radius left unchanged and
-        ! a warning printed
-        solution(1) = 0.3_rp
-        do i = 1, size(precision_case_names)
-            state%trust_radius = 1.0_rp
-            context%log_message = ""
-            accept_step = accept_trust_region_step( &
-                solution, 0.5_rp, precision_case_funcs(i), precision_case_actual(i), &
-                precision_case_predicted(i), precision_case_converged(i), settings, &
-                state)
-            if (state%max_precision_reached .neqv. precision_case_reached(i)) then
-                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
-                    "precision detected incorrectly for "// &
-                    trim(precision_case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-            if (.not. precision_case_reached(i)) cycle
-            if (accept_step) then
-                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
-                    "accepted at maximum precision for "// &
-                    trim(precision_case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-            if (abs(state%trust_radius - 1.0_rp) > tol) then
-                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
-                    "radius changed at maximum precision for "// &
-                    trim(precision_case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-            if (index(context%log_message, " "//function_unchanged_warning_msg) == 0) &
-                then
-                write(stderr, *) "test_accept_trust_region_step failed: No warning "// &
-                    "printed at maximum precision for "// &
-                    trim(precision_case_names(i))//"."
-                test_accept_trust_region_step = .false.
-            end if
-        end do
-
-    end function test_accept_trust_region_step
-
-    logical(c_bool) function test_init_defaults() bind(C)
-        !
-        ! this function tests the subroutine that resolves settings defaults that
-        ! depend on other settings
-        !
-        use opentrustregion, only: solver_settings_type, init_defaults, &
-                                   verbosity_info, verbosity_debug
-
-        ! the settings of the cases for the symmetry of the Hessian of the nested
-        ! stability check settings
-        character(len=*), parameter :: hess_symm_case_names(2) = &
-            [character(len=44) :: "non-symmetric Hessian of the solver", &
-             "non-symmetric Hessian of the nested settings"]
-        type(solver_settings_type) :: settings
-        type(test_context_type), target :: context, stability_context
-        integer(ip) :: i_case
-
-        ! assume tests pass
-        test_init_defaults = .true.
-
-        ! check that nested stability check settings without callback functions, a
-        ! convergence check or a context of their own, with a verbosity below the
-        ! solver's and an unset number of random trial vectors inherit the solver's
-        ! preconditioning, projection and logging functions, context and verbosity,
-        ! stop as soon as an instability is certain and use a single random trial
-        ! vector
-        call setup_settings(settings, context)
-        settings%precond => identity_precond
-        settings%project => identity_project
-        settings%verbose = verbosity_debug
-        settings%stability_settings%stop_on_instability = .false.
-        settings%stability_settings%n_random_trial_vectors = -1
-        call init_defaults(settings)
-        if (.not. associated(settings%stability_settings%precond, &
-                             identity_precond) .or. &
-            .not. associated(settings%stability_settings%project, &
-                             identity_project) .or. &
-            .not. associated(settings%stability_settings%logger, logger)) then
-            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
-                "settings did not inherit the solver's callback functions."
-            test_init_defaults = .false.
-        end if
-        if (.not. associated(settings%stability_settings%context, context)) then
-            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
-                "settings did not inherit the solver's context."
-            test_init_defaults = .false.
-        end if
-        if (settings%stability_settings%verbose /= verbosity_debug) then
-            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
-                "settings did not inherit the solver's higher verbosity."
-            test_init_defaults = .false.
-        end if
-        if (.not. settings%stability_settings%stop_on_instability) then
-            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
-                "settings without convergence check do not stop on instability."
-            test_init_defaults = .false.
-        end if
-        if (settings%stability_settings%n_random_trial_vectors /= 1) then
-            write(stderr, *) "test_init_defaults failed: Unset number of random "// &
-                "trial vectors of nested stability check settings not set to one."
-            test_init_defaults = .false.
-        end if
-
-        ! check that nested stability check settings with callback functions, a
-        ! convergence check and a context of their own, a logging function while the
-        ! solver has none, a verbosity above the solver's and no random trial vectors
-        ! keep all of these and do not stop as soon as an instability is certain
-        call setup_settings(settings, context)
-        settings%precond => mock_precond
-        settings%project => mock_project
-        settings%logger => null()
-        settings%verbose = verbosity_info
-        settings%stability_settings%precond => identity_precond
-        settings%stability_settings%project => identity_project
-        settings%stability_settings%logger => logger
-        settings%stability_settings%conv_check => mock_stability_conv_check
-        settings%stability_settings%context => stability_context
-        settings%stability_settings%verbose = verbosity_debug
-        settings%stability_settings%stop_on_instability = .false.
-        settings%stability_settings%n_random_trial_vectors = 0
-        call init_defaults(settings)
-        if (.not. associated(settings%stability_settings%precond, &
-                             identity_precond) .or. &
-            .not. associated(settings%stability_settings%project, &
-                             identity_project) .or. &
-            .not. associated(settings%stability_settings%logger, logger)) then
-            write(stderr, *) "test_init_defaults failed: Callback functions of "// &
-                "nested stability check settings replaced."
-            test_init_defaults = .false.
-        end if
-        if (.not. associated(settings%stability_settings%context, stability_context)) &
-            then
-            write(stderr, *) "test_init_defaults failed: Context of nested "// &
-                "stability check settings replaced."
-            test_init_defaults = .false.
-        end if
-        if (settings%stability_settings%verbose /= verbosity_debug) then
-            write(stderr, *) "test_init_defaults failed: Higher verbosity of "// &
-                "nested stability check settings replaced."
-            test_init_defaults = .false.
-        end if
-        if (settings%stability_settings%stop_on_instability) then
-            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
-                "settings with convergence check stop on instability."
-            test_init_defaults = .false.
-        end if
-        if (settings%stability_settings%n_random_trial_vectors /= 0) then
-            write(stderr, *) "test_init_defaults failed: Vanishing number of "// &
-                "random trial vectors of nested stability check settings replaced."
-            test_init_defaults = .false.
-        end if
-
-        ! check that nested stability check settings without a convergence check of
-        ! their own treat the Hessian as non-symmetric if the solver or they do so and
-        ! then do not stop as soon as an instability is certain, which only the Ritz
-        ! values of a symmetric Hessian establish
-        do i_case = 1, size(hess_symm_case_names)
-            call setup_settings(settings, context)
-            settings%stability_settings%stop_on_instability = .false.
-            select case (i_case)
-            case (1)
-                settings%hess_symm = .false.
-            case (2)
-                settings%stability_settings%hess_symm = .false.
-            end select
-            call init_defaults(settings)
-            if (settings%stability_settings%hess_symm) then
-                write(stderr, *) "test_init_defaults failed: Nested stability "// &
-                    "check settings treat the Hessian as symmetric for "// &
-                    trim(hess_symm_case_names(i_case))//"."
-                test_init_defaults = .false.
-            end if
-            if (settings%stability_settings%stop_on_instability) then
-                write(stderr, *) "test_init_defaults failed: Nested stability "// &
-                    "check settings stop on instability for "// &
-                    trim(hess_symm_case_names(i_case))//"."
-                test_init_defaults = .false.
-            end if
-        end do
-
-    end function test_init_defaults
-
-    logical(c_bool) function test_solver_sanity_check() bind(C)
-        !
-        ! this function tests the subroutine which performs a sanity check for the
-        ! solver
-        !
-        use opentrustregion, only: &
-            solver_settings_type, solver_sanity_check, project_warning_msg, &
-            random_trial_vector_warning_msg, subsystem_solver_options
-
-        ! the subsystem solvers in mixed case, settings which the sanity check rejects
-        ! and the settings that carry a projection
-        character(len=*), parameter :: mixed_case_subsystem_solvers(5) = &
-            [character(len=18) :: "Davidson_LS", "Davidson_AH", "Jacobi-Davidson_LS", &
-             "Jacobi-Davidson_AH", "TCG"]
-        character(len=*), parameter :: error_case_names(7) = &
-            [character(len=55) :: "vanishing number of parameters", &
-             "negative number of parameters", "vanishing number of micro iterations", &
-             "negative number of random trial vectors", &
-             "extra trial vector function without extra trial vectors", &
-             "unknown subsystem solver", "rejected nested stability check settings"]
-        character(len=*), parameter :: projection_case_names(2) = &
-            [character(len=42) :: "solver settings", &
-             "solver settings and inheriting nested ones"]
-        type(solver_settings_type) :: settings
-        integer(ip) :: n_param, error, i_solver, i_case, i_warning
-        logical :: davidson
-        type(test_context_type), target :: context
-
-        ! assume tests pass
-        test_solver_sanity_check = .true.
-
-        ! check that every subsystem solver passes when given in mixed case, which is
-        ! converted to lowercase, and that the number of random trial vectors is
-        ! reduced to half the number of parameters with a warning for the
-        ! Davidson-based subsystem solvers, which use them, and left unchanged without
-        ! any message for the others
-        do i_solver = 1, size(subsystem_solver_options)
-            davidson = index(subsystem_solver_options(i_solver), "davidson") > 0
-            call setup_settings(settings, context)
-            settings%subsystem_solver = mixed_case_subsystem_solvers(i_solver)
-            settings%n_random_trial_vectors = 3
-            call solver_sanity_check(settings, 4_ip, error)
-            if (error /= 0) then
-                write(stderr, *) "test_solver_sanity_check failed: Error returned "// &
-                    "for "//trim(subsystem_solver_options(i_solver))// &
-                    " subsystem solver."
-                test_solver_sanity_check = .false.
-            end if
-            if (settings%subsystem_solver /= subsystem_solver_options(i_solver)) then
-                write(stderr, *) "test_solver_sanity_check failed: Not converted "// &
-                    "to lowercase for "//trim(subsystem_solver_options(i_solver))// &
-                    " subsystem solver."
-                test_solver_sanity_check = .false.
-            end if
-            if (settings%n_random_trial_vectors /= merge(2_ip, 3_ip, davidson)) then
-                write(stderr, *) "test_solver_sanity_check failed: Number of "// &
-                    "random trial vectors wrong for "// &
-                    trim(subsystem_solver_options(i_solver))//" subsystem solver."
-                test_solver_sanity_check = .false.
-            end if
-            if ((davidson .and. &
-                 index(context%log_message, " "//random_trial_vector_warning_msg) == &
-                 0) .or. (.not. davidson .and. len_trim(context%log_message) > 0)) then
-                write(stderr, *) "test_solver_sanity_check failed: Warning for the "// &
-                    "number of random trial vectors wrong for "// &
-                    trim(subsystem_solver_options(i_solver))//" subsystem solver."
-                test_solver_sanity_check = .false.
-            end if
-        end do
-
-        ! check that every rejected setting returns an error and prints an error
-        ! message
-        do i_case = 1, size(error_case_names)
-            call setup_settings(settings, context)
-            call setup_error_logging(settings, context)
-            n_param = 4
-            select case (i_case)
-            case (1)
-                n_param = 0
-            case (2)
-                n_param = -1
-            case (3)
-                settings%n_micro = 0
-            case (4)
-                settings%n_random_trial_vectors = -1
-            case (5)
-                settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
-                settings%n_extra_trial_vectors = 0
-            case (6)
-                settings%subsystem_solver = "unknown"
-            case (7)
-                ! the nested settings print the error message of their own check
-                call setup_error_logging(settings%stability_settings, context)
-                settings%stability_settings%diag_solver = "unknown"
-            end select
-            call solver_sanity_check(settings, n_param, error)
-            if (error /= 1) then
-                write(stderr, *) "test_solver_sanity_check failed: No error "// &
-                    "returned for "//trim(error_case_names(i_case))//"."
-                test_solver_sanity_check = .false.
-            end if
-            if (len_trim(context%log_message) == 0) then
-                write(stderr, *) "test_solver_sanity_check failed: No error "// &
-                    "message printed for "//trim(error_case_names(i_case))//"."
-                test_solver_sanity_check = .false.
-            end if
-        end do
-
-        ! check that a non-symmetric Hessian is accepted by the level-shifted Davidson
-        ! subsystem solver and rejected with an error message by every other
-        do i_solver = 1, size(subsystem_solver_options)
-            call setup_settings(settings, context)
-            call setup_error_logging(settings, context)
-            settings%subsystem_solver = subsystem_solver_options(i_solver)
-            settings%hess_symm = .false.
-            call solver_sanity_check(settings, 4_ip, error)
-            if (subsystem_solver_options(i_solver) == "davidson_ls") then
-                if (error /= 0) then
-                    write(stderr, *) "test_solver_sanity_check failed: "// &
-                        "Non-symmetric Hessian rejected for davidson_ls subsystem "// &
-                        "solver."
-                    test_solver_sanity_check = .false.
-                end if
-            else
-                if (error /= 1) then
-                    write(stderr, *) "test_solver_sanity_check failed: "// &
-                        "Non-symmetric Hessian not rejected for "// &
-                        trim(subsystem_solver_options(i_solver))//" subsystem solver."
-                    test_solver_sanity_check = .false.
-                end if
-                if (len_trim(context%log_message) == 0) then
-                    write(stderr, *) "test_solver_sanity_check failed: No error "// &
-                        "message printed for non-symmetric Hessian with "// &
-                        trim(subsystem_solver_options(i_solver))//" subsystem solver."
-                    test_solver_sanity_check = .false.
-                end if
-            end if
-        end do
-
-        ! check that a warning is printed exactly once when a projection is passed,
-        ! also when the nested stability check settings carry it together with the
-        ! logging function, as they do once they inherit both, so that their check
-        ! prints the warning as well
-        do i_case = 1, size(projection_case_names)
-            call setup_settings(settings, context)
-            if (i_case == 2) then
-                call setup_settings(settings%stability_settings, context)
-                settings%stability_settings%project => mock_project_out_pair
-            end if
-            settings%project => mock_project_out_pair
-            call solver_sanity_check(settings, 4_ip, error)
-            if (error /= 0) then
-                write(stderr, *) "test_solver_sanity_check failed: Error returned "// &
-                    "when a projection is passed with "// &
-                    trim(projection_case_names(i_case))//"."
-                test_solver_sanity_check = .false.
-            end if
-            i_warning = index(context%log_message, " "//project_warning_msg)
-            if (i_warning == 0) then
-                write(stderr, *) "test_solver_sanity_check failed: Warning not "// &
-                    "printed when a projection is passed with "// &
-                    trim(projection_case_names(i_case))//"."
-                test_solver_sanity_check = .false.
-            end if
-            if (i_warning > 0 .and. index(context%log_message(i_warning + 1:), &
-                                          " "//project_warning_msg) /= 0) then
-                write(stderr, *) "test_solver_sanity_check failed: Warning printed "// &
-                    "twice when a projection is passed with "// &
-                    trim(projection_case_names(i_case))//"."
-                test_solver_sanity_check = .false.
-            end if
-        end do
-
-    end function test_solver_sanity_check
-
-    logical(c_bool) function test_stability_sanity_check() bind(C)
-        !
-        ! this function tests the subroutine which performs a sanity check for the
-        ! stability check
-        !
-        use opentrustregion, only: &
-            stability_settings_type, stability_sanity_check, project_warning_msg, &
-            random_trial_vector_warning_msg, diag_solver_options, &
-            standalone_n_random_trial_vectors
-
-        ! the diagonalization solvers in mixed case and settings which the sanity check
-        ! rejects
-        character(len=*), parameter :: mixed_case_diag_solvers(2) = &
-            [character(len=15) :: "Davidson", "Jacobi-Davidson"]
-        character(len=*), parameter :: error_case_names(9) = &
-            [character(len=55) :: "vanishing number of parameters", &
-             "extra trial vector function without extra trial vectors", &
-             "vanishing number of trial vectors", &
-             "no random and a negative number of extra trial vectors", "no extra "// &
-             "and no random trial vectors that fit", "unknown diagonalization solver", &
-             "non-symmetric Hessian with Jacobi-Davidson solver", "stopping at an "// &
-             "instability with non-symmetric Hessian", "positive stability threshold"]
-        character(len=*), parameter :: accepted_case_names(4) = &
-            [character(len=49) :: "non-symmetric Hessian with Davidson solver", &
-             "stopping at an instability with symmetric Hessian", &
-             "no random but extra trial vectors", "vanishing stability threshold"]
-        type(stability_settings_type) :: settings
-        integer(ip) :: error, i_solver, i_case, n_param
-        type(test_context_type), target :: context
-
-        ! assume tests pass
-        test_stability_sanity_check = .true.
-
-        ! check that every diagonalization solver passes when given in mixed case,
-        ! which is converted to lowercase, and that an unset number of random trial
-        ! vectors resolves to the default of a stability check outside the solver
-        ! without any message
-        do i_solver = 1, size(diag_solver_options)
-            call setup_settings(settings, context)
-            settings%diag_solver = mixed_case_diag_solvers(i_solver)
-            call stability_sanity_check(settings, &
-                                        4_ip * standalone_n_random_trial_vectors, error)
-            if (error /= 0) then
-                write(stderr, *) "test_stability_sanity_check failed: Error "// &
-                    "returned for "//trim(diag_solver_options(i_solver))// &
-                    " diagonalization solver."
-                test_stability_sanity_check = .false.
-            end if
-            if (settings%diag_solver /= diag_solver_options(i_solver)) then
-                write(stderr, *) "test_stability_sanity_check failed: Not "// &
-                    "converted to lowercase for "// &
-                    trim(diag_solver_options(i_solver))//" diagonalization solver."
-                test_stability_sanity_check = .false.
-            end if
-            if (settings%n_random_trial_vectors /= standalone_n_random_trial_vectors) &
-                then
-                write(stderr, *) "test_stability_sanity_check failed: Unset number "// &
-                    "of random trial vectors not resolved for "// &
-                    trim(diag_solver_options(i_solver))//" diagonalization solver."
-                test_stability_sanity_check = .false.
-            end if
-            if (len_trim(context%log_message) > 0) then
-                write(stderr, *) "test_stability_sanity_check failed: Message "// &
-                    "printed for "//trim(diag_solver_options(i_solver))// &
-                    " diagonalization solver."
-                test_stability_sanity_check = .false.
-            end if
-        end do
-
-        ! check that the number of random trial vectors is reduced to half the number
-        ! of parameters with a warning
-        call setup_settings(settings, context)
-        settings%n_random_trial_vectors = 3
-        call stability_sanity_check(settings, 4_ip, error)
-        if (error /= 0) then
-            write(stderr, *) "test_stability_sanity_check failed: Error returned "// &
-                "when number of random trial vectors is reduced."
-            test_stability_sanity_check = .false.
-        end if
-        if (settings%n_random_trial_vectors /= 2) then
-            write(stderr, *) "test_stability_sanity_check failed: Number of random "// &
-                "trial vectors not reduced."
-            test_stability_sanity_check = .false.
-        end if
-        if (index(context%log_message, " "//random_trial_vector_warning_msg) == 0) then
-            write(stderr, *) "test_stability_sanity_check failed: Warning not "// &
-                "printed when number of random trial vectors is reduced."
-            test_stability_sanity_check = .false.
-        end if
-
-        ! check that every rejected setting returns an error and prints an error
-        ! message
-        do i_case = 1, size(error_case_names)
-            call setup_settings(settings, context)
-            call setup_error_logging(settings, context)
-            n_param = 4
-            select case (i_case)
-            case (1)
-                n_param = 0
-            case (2)
-                settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
-                settings%n_extra_trial_vectors = 0
-            case (3)
-                settings%n_extra_trial_vectors = 0
-                settings%n_random_trial_vectors = 0
-            case (4)
-                settings%n_extra_trial_vectors = -1
-                settings%n_random_trial_vectors = 0
-            case (5)
-                ! a single parameter leaves no room for the requested random trial
-                ! vectors once their number is reduced to half the number of
-                ! parameters
-                n_param = 1
-                settings%n_extra_trial_vectors = 0
-            case (6)
-                settings%diag_solver = "unknown"
-            case (7)
-                settings%diag_solver = "jacobi-davidson"
-                settings%hess_symm = .false.
-            case (8)
-                settings%hess_symm = .false.
-                settings%stop_on_instability = .true.
-            case (9)
-                settings%stability_thresh = 1e-3_rp
-            end select
-            call stability_sanity_check(settings, n_param, error)
-            if (error /= 1) then
-                write(stderr, *) "test_stability_sanity_check failed: No error "// &
-                    "returned for "//trim(error_case_names(i_case))//"."
-                test_stability_sanity_check = .false.
-            end if
-            if (len_trim(context%log_message) == 0) then
-                write(stderr, *) "test_stability_sanity_check failed: No error "// &
-                    "message printed for "//trim(error_case_names(i_case))//"."
-                test_stability_sanity_check = .false.
-            end if
-        end do
-
-        ! check that settings close to rejected ones are accepted
-        do i_case = 1, size(accepted_case_names)
-            call setup_settings(settings, context)
-            select case (i_case)
-            case (1)
-                settings%hess_symm = .false.
-            case (2)
-                settings%stop_on_instability = .true.
-            case (3)
-                settings%n_random_trial_vectors = 0
-            case (4)
-                settings%stability_thresh = 0.0_rp
-            end select
-            call stability_sanity_check(settings, 4_ip, error)
-            if (error /= 0) then
-                write(stderr, *) "test_stability_sanity_check failed: Error "// &
-                    "returned for "//trim(accepted_case_names(i_case))//"."
-                test_stability_sanity_check = .false.
-            end if
-            if (i_case == 3 .and. settings%n_random_trial_vectors /= 0) then
-                write(stderr, *) "test_stability_sanity_check failed: Vanishing "// &
-                    "number of random trial vectors replaced."
-                test_stability_sanity_check = .false.
-            end if
-        end do
-
-        ! check that a warning is printed when a projection is passed
-        call setup_settings(settings, context)
-        settings%project => mock_project_out_pair
-        call stability_sanity_check(settings, 4_ip, error)
-        if (error /= 0) then
-            write(stderr, *) "test_stability_sanity_check failed: Error returned "// &
-                "when a projection is passed."
-            test_stability_sanity_check = .false.
-        end if
-        if (index(context%log_message, " "//project_warning_msg) == 0) then
-            write(stderr, *) "test_stability_sanity_check failed: Warning not "// &
-                "printed when a projection is passed."
-            test_stability_sanity_check = .false.
-        end if
-
-    end function test_stability_sanity_check
-
     logical(c_bool) function test_level_shifted_davidson() bind(C)
         !
         ! this function tests the level-shifted Davidson subroutine
@@ -9295,6 +8615,700 @@ contains
         end if
 
     end function test_truncated_conjugate_gradient
+
+    logical(c_bool) function test_accept_trust_region_step() bind(C)
+        !
+        ! this function tests the subroutine which determines whether to accept a
+        ! trust-region step
+        !
+        use opentrustregion, only: &
+            solver_settings_type, accept_trust_region_step, trust_radius_shrink_ratio, &
+            trust_radius_expand_ratio, trust_radius_shrink_factor, &
+            trust_radius_expand_factor, function_unchanged_warning_msg
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_positive_inf, &
+                                                 ieee_quiet_nan
+
+        ! cases with the reason for accepting or rejecting the step, the size of the
+        ! first rotation, the norm of the step, the ratio of actual to predicted
+        ! function change, whether the micro iterations converged, and the expected
+        ! acceptance and trust radius, for a starting trust radius of one
+        character(len=*), parameter :: case_names(7) = &
+            [character(len=47) :: "micro iterations have not converged", "ratio is "// &
+             "negative", "individual rotations are too large", "ratio is too small", &
+             "ratio is acceptable", "ratio is too large at the trust region boundary", &
+             "ratio is too large within the trust region"]
+        real(rp), parameter :: &
+            case_rotations(7) = &
+                [0.3_rp, 0.3_rp, 1.0_rp, 0.3_rp, 0.3_rp, 0.3_rp, 0.3_rp], &
+            case_step_norms(7) = &
+                [0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 1.0_rp, 0.5_rp], &
+            case_ratios(7) = [ &
+                1.0_rp, -1.0_rp, 1.0_rp, 0.9_rp * trust_radius_shrink_ratio, 0.5_rp * &
+                (trust_radius_shrink_ratio + trust_radius_expand_ratio), 1.1_rp * &
+                trust_radius_expand_ratio, 1.1_rp * trust_radius_expand_ratio], &
+            case_trust_radii(7) = [ &
+                trust_radius_shrink_factor, trust_radius_shrink_factor, &
+                trust_radius_shrink_factor, trust_radius_shrink_factor, 1.0_rp, &
+                trust_radius_expand_factor, 1.0_rp]
+        logical, parameter :: &
+            case_converged(7) = &
+                [.false., .true., .true., .true., .true., .true., .true.], &
+            case_accepted(7) = &
+                [.false., .false., .false., .true., .true., .true., .true.]
+
+        ! cases with the objective function value, the actual and the predicted
+        ! function change, whether the micro iterations converged and whether maximum
+        ! precision is reached, which requires that the predicted change can not be
+        ! resolved relative to the objective function value and that the actual change
+        ! can not be resolved either or the step is rejected
+        character(len=*), parameter :: precision_case_names(9) = &
+            [character(len=68) :: "vanishing function changes", &
+             "changes below the resolution of a large function value", &
+             "changes above the resolution of a small function value", "vanishing "// &
+             "changes of a vanishing function value", "accepted step with only the "// &
+             "predicted change below the resolution", "rejected step with only the "// &
+             "predicted change below the resolution", "unconverged step with only "// &
+             "the predicted change below the resolution", "rejected step with a "// &
+             "huge function increase", "only the actual change below the resolution"]
+        real(rp), parameter :: &
+            precision_case_funcs(9) = [-1.0_rp, -2000.0_rp, -1.0_rp, 0.0_rp, -1.0_rp, &
+                                       -1.0_rp, -1.0_rp, -1.0_rp, -1.0_rp], &
+            precision_case_actual(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-3_rp, &
+                                        1e-3_rp, -1e-3_rp, 1e10_rp, 1e-20_rp], &
+            precision_case_predicted(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, &
+                                           1e-20_rp, -1e-20_rp, -1e-20_rp, -1e-6_rp, &
+                                           1e-3_rp]
+        logical, parameter :: &
+            precision_case_converged(9) = [.true., .true., .true., .true., .true., &
+                                           .true., .false., .true., .true.], &
+            precision_case_reached(9) = [.true., .true., .false., .true., .false., &
+                                         .true., .true., .false., .false.]
+
+        ! cases of an actual or predicted function change which is not finite, as for
+        ! an objective function or a Hessian linear transformation which overflows at
+        ! the step
+        character(len=*), parameter :: non_finite_case_names(3) = &
+            [character(len=23) :: "overflowing function", "function not a number", &
+             "overflowing prediction"]
+        real(rp) :: non_finite_actual(3), non_finite_predicted(3)
+
+        logical :: accept_step
+        real(rp) :: solution(3)
+        type(solver_state_type) :: state
+        type(solver_settings_type) :: settings
+        type(test_context_type), target :: context
+        integer(ip) :: i
+
+        ! assume tests pass
+        test_accept_trust_region_step = .true.
+
+        ! setup settings object
+        call setup_settings(settings, context)
+
+        solution = [0.3_rp, 0.3_rp, 0.3_rp]
+
+        ! check for every case whether the step is accepted and the trust radius is
+        ! reduced, kept or expanded, without maximum precision being reported as
+        ! reached, the flag starts set so that a flag which is not cleared is detected
+        do i = 1, size(case_names)
+            state%trust_radius = 1.0_rp
+            state%max_precision_reached = .true.
+            solution(1) = case_rotations(i)
+            accept_step = accept_trust_region_step(solution, case_step_norms(i), &
+                                                   -1.0_rp, case_ratios(i), 1.0_rp, &
+                                                   case_converged(i), settings, state)
+            if (accept_step .neqv. case_accepted(i)) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "acceptance incorrect when "//trim(case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (abs(state%trust_radius - case_trust_radii(i)) > tol) then
+                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
+                    "radius not correctly updated when "//trim(case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (state%max_precision_reached) then
+                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
+                    "precision reported as reached when "//trim(case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+        end do
+
+        ! check for every case of a function change which is not finite, with changes
+        ! of the same sign which would otherwise accept the step, that the step is
+        ! rejected and the trust radius reduced without maximum precision being
+        ! reported
+        non_finite_actual = [ieee_value(1.0_rp, ieee_positive_inf), &
+                             ieee_value(1.0_rp, ieee_quiet_nan), 1.0_rp]
+        non_finite_predicted = [1.0_rp, 1.0_rp, ieee_value(1.0_rp, ieee_positive_inf)]
+        do i = 1, size(non_finite_case_names)
+            state%trust_radius = 1.0_rp
+            accept_step = accept_trust_region_step( &
+                solution, 0.5_rp, -1.0_rp, non_finite_actual(i), &
+                non_finite_predicted(i), .true., settings, state)
+            if (accept_step) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "accepted for "//trim(non_finite_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (abs(state%trust_radius - trust_radius_shrink_factor) > tol) then
+                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
+                    "radius not reduced for "//trim(non_finite_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (state%max_precision_reached) then
+                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
+                    "precision reported as reached for "// &
+                    trim(non_finite_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+        end do
+
+        ! check for every case whether maximum precision is reported as reached and,
+        ! if so, whether the step is rejected with the trust radius left unchanged and
+        ! a warning printed
+        solution(1) = 0.3_rp
+        do i = 1, size(precision_case_names)
+            state%trust_radius = 1.0_rp
+            context%log_message = ""
+            accept_step = accept_trust_region_step( &
+                solution, 0.5_rp, precision_case_funcs(i), precision_case_actual(i), &
+                precision_case_predicted(i), precision_case_converged(i), settings, &
+                state)
+            if (state%max_precision_reached .neqv. precision_case_reached(i)) then
+                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
+                    "precision detected incorrectly for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (.not. precision_case_reached(i)) cycle
+            if (accept_step) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "accepted at maximum precision for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (abs(state%trust_radius - 1.0_rp) > tol) then
+                write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
+                    "radius changed at maximum precision for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (index(context%log_message, " "//function_unchanged_warning_msg) == 0) &
+                then
+                write(stderr, *) "test_accept_trust_region_step failed: No warning "// &
+                    "printed at maximum precision for "// &
+                    trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+        end do
+
+    end function test_accept_trust_region_step
+
+    logical(c_bool) function test_init_defaults() bind(C)
+        !
+        ! this function tests the subroutine that resolves settings defaults that
+        ! depend on other settings
+        !
+        use opentrustregion, only: solver_settings_type, init_defaults, &
+                                   verbosity_info, verbosity_debug
+
+        ! the settings of the cases for the symmetry of the Hessian of the nested
+        ! stability check settings
+        character(len=*), parameter :: hess_symm_case_names(2) = &
+            [character(len=44) :: "non-symmetric Hessian of the solver", &
+             "non-symmetric Hessian of the nested settings"]
+        type(solver_settings_type) :: settings
+        type(test_context_type), target :: context, stability_context
+        integer(ip) :: i_case
+
+        ! assume tests pass
+        test_init_defaults = .true.
+
+        ! check that nested stability check settings without callback functions, a
+        ! convergence check or a context of their own, with a verbosity below the
+        ! solver's and an unset number of random trial vectors inherit the solver's
+        ! preconditioning, projection and logging functions, context and verbosity, but
+        ! not its convergence check, which judges the convergence of the optimization,
+        ! stop as soon as an instability is certain and use a single random trial
+        ! vector
+        call setup_settings(settings, context)
+        settings%precond => identity_precond
+        settings%project => identity_project
+        settings%conv_check => mock_conv_check
+        settings%verbose = verbosity_debug
+        settings%stability_settings%stop_on_instability = .false.
+        settings%stability_settings%n_random_trial_vectors = -1
+        call init_defaults(settings)
+        if (.not. associated(settings%stability_settings%precond, &
+                             identity_precond) .or. &
+            .not. associated(settings%stability_settings%project, &
+                             identity_project) .or. &
+            .not. associated(settings%stability_settings%logger, logger)) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings did not inherit the solver's callback functions."
+            test_init_defaults = .false.
+        end if
+        if (associated(settings%stability_settings%conv_check)) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings inherited the solver's convergence check."
+            test_init_defaults = .false.
+        end if
+        if (.not. associated(settings%stability_settings%context, context)) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings did not inherit the solver's context."
+            test_init_defaults = .false.
+        end if
+        if (settings%stability_settings%verbose /= verbosity_debug) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings did not inherit the solver's higher verbosity."
+            test_init_defaults = .false.
+        end if
+        if (.not. settings%stability_settings%stop_on_instability) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings without convergence check do not stop on instability."
+            test_init_defaults = .false.
+        end if
+        if (settings%stability_settings%n_random_trial_vectors /= 1) then
+            write(stderr, *) "test_init_defaults failed: Unset number of random "// &
+                "trial vectors of nested stability check settings not set to one."
+            test_init_defaults = .false.
+        end if
+
+        ! check that nested stability check settings with callback functions, a
+        ! convergence check and a context of their own, a logging function while the
+        ! solver has none, a verbosity above the solver's and no random trial vectors
+        ! keep all of these and do not stop as soon as an instability is certain
+        call setup_settings(settings, context)
+        settings%precond => mock_precond
+        settings%project => mock_project
+        settings%logger => null()
+        settings%verbose = verbosity_info
+        settings%stability_settings%precond => identity_precond
+        settings%stability_settings%project => identity_project
+        settings%stability_settings%logger => logger
+        settings%stability_settings%conv_check => mock_stability_conv_check
+        settings%stability_settings%context => stability_context
+        settings%stability_settings%verbose = verbosity_debug
+        settings%stability_settings%stop_on_instability = .false.
+        settings%stability_settings%n_random_trial_vectors = 0
+        call init_defaults(settings)
+        if (.not. associated(settings%stability_settings%precond, &
+                             identity_precond) .or. &
+            .not. associated(settings%stability_settings%project, &
+                             identity_project) .or. &
+            .not. associated(settings%stability_settings%logger, logger)) then
+            write(stderr, *) "test_init_defaults failed: Callback functions of "// &
+                "nested stability check settings replaced."
+            test_init_defaults = .false.
+        end if
+        if (.not. associated(settings%stability_settings%context, stability_context)) &
+            then
+            write(stderr, *) "test_init_defaults failed: Context of nested "// &
+                "stability check settings replaced."
+            test_init_defaults = .false.
+        end if
+        if (settings%stability_settings%verbose /= verbosity_debug) then
+            write(stderr, *) "test_init_defaults failed: Higher verbosity of "// &
+                "nested stability check settings replaced."
+            test_init_defaults = .false.
+        end if
+        if (settings%stability_settings%stop_on_instability) then
+            write(stderr, *) "test_init_defaults failed: Nested stability check "// &
+                "settings with convergence check stop on instability."
+            test_init_defaults = .false.
+        end if
+        if (settings%stability_settings%n_random_trial_vectors /= 0) then
+            write(stderr, *) "test_init_defaults failed: Vanishing number of "// &
+                "random trial vectors of nested stability check settings replaced."
+            test_init_defaults = .false.
+        end if
+
+        ! check that nested stability check settings without a convergence check of
+        ! their own treat the Hessian as non-symmetric if the solver or they do so and
+        ! then do not stop as soon as an instability is certain, which only the Ritz
+        ! values of a symmetric Hessian establish
+        do i_case = 1, size(hess_symm_case_names)
+            call setup_settings(settings, context)
+            settings%stability_settings%stop_on_instability = .false.
+            select case (i_case)
+            case (1)
+                settings%hess_symm = .false.
+            case (2)
+                settings%stability_settings%hess_symm = .false.
+            end select
+            call init_defaults(settings)
+            if (settings%stability_settings%hess_symm) then
+                write(stderr, *) "test_init_defaults failed: Nested stability "// &
+                    "check settings treat the Hessian as symmetric for "// &
+                    trim(hess_symm_case_names(i_case))//"."
+                test_init_defaults = .false.
+            end if
+            if (settings%stability_settings%stop_on_instability) then
+                write(stderr, *) "test_init_defaults failed: Nested stability "// &
+                    "check settings stop on instability for "// &
+                    trim(hess_symm_case_names(i_case))//"."
+                test_init_defaults = .false.
+            end if
+        end do
+
+    end function test_init_defaults
+
+    logical(c_bool) function test_solver_sanity_check() bind(C)
+        !
+        ! this function tests the subroutine which performs a sanity check for the
+        ! solver
+        !
+        use opentrustregion, only: &
+            solver_settings_type, solver_sanity_check, project_warning_msg, &
+            random_trial_vector_warning_msg, subsystem_solver_options
+
+        ! the subsystem solvers in mixed case, settings which the sanity check rejects
+        ! and the settings that carry a projection
+        character(len=*), parameter :: mixed_case_subsystem_solvers(5) = &
+            [character(len=18) :: "Davidson_LS", "Davidson_AH", "Jacobi-Davidson_LS", &
+             "Jacobi-Davidson_AH", "TCG"]
+        character(len=*), parameter :: error_case_names(7) = &
+            [character(len=55) :: "vanishing number of parameters", &
+             "negative number of parameters", "vanishing number of micro iterations", &
+             "negative number of random trial vectors", &
+             "extra trial vector function without extra trial vectors", &
+             "unknown subsystem solver", "rejected nested stability check settings"]
+        character(len=*), parameter :: projection_case_names(2) = &
+            [character(len=42) :: "solver settings", &
+             "solver settings and inheriting nested ones"]
+        type(solver_settings_type) :: settings
+        integer(ip) :: n_param, error, i_solver, i_case, i_warning
+        logical :: davidson
+        type(test_context_type), target :: context
+
+        ! assume tests pass
+        test_solver_sanity_check = .true.
+
+        ! check that every subsystem solver passes when given in mixed case, which is
+        ! converted to lowercase, and that the number of random trial vectors is
+        ! reduced to half the number of parameters with a warning for the
+        ! Davidson-based subsystem solvers, which use them, and left unchanged without
+        ! any message for the others
+        do i_solver = 1, size(subsystem_solver_options)
+            davidson = index(subsystem_solver_options(i_solver), "davidson") > 0
+            call setup_settings(settings, context)
+            settings%subsystem_solver = mixed_case_subsystem_solvers(i_solver)
+            settings%n_random_trial_vectors = 3
+            call solver_sanity_check(settings, 4_ip, error)
+            if (error /= 0) then
+                write(stderr, *) "test_solver_sanity_check failed: Error returned "// &
+                    "for "//trim(subsystem_solver_options(i_solver))// &
+                    " subsystem solver."
+                test_solver_sanity_check = .false.
+            end if
+            if (settings%subsystem_solver /= subsystem_solver_options(i_solver)) then
+                write(stderr, *) "test_solver_sanity_check failed: Not converted "// &
+                    "to lowercase for "//trim(subsystem_solver_options(i_solver))// &
+                    " subsystem solver."
+                test_solver_sanity_check = .false.
+            end if
+            if (settings%n_random_trial_vectors /= merge(2_ip, 3_ip, davidson)) then
+                write(stderr, *) "test_solver_sanity_check failed: Number of "// &
+                    "random trial vectors wrong for "// &
+                    trim(subsystem_solver_options(i_solver))//" subsystem solver."
+                test_solver_sanity_check = .false.
+            end if
+            if ((davidson .and. &
+                 index(context%log_message, " "//random_trial_vector_warning_msg) == &
+                 0) .or. (.not. davidson .and. len_trim(context%log_message) > 0)) then
+                write(stderr, *) "test_solver_sanity_check failed: Warning for the "// &
+                    "number of random trial vectors wrong for "// &
+                    trim(subsystem_solver_options(i_solver))//" subsystem solver."
+                test_solver_sanity_check = .false.
+            end if
+        end do
+
+        ! check that every rejected setting returns an error and prints an error
+        ! message
+        do i_case = 1, size(error_case_names)
+            call setup_settings(settings, context)
+            call setup_error_logging(settings, context)
+            n_param = 4
+            select case (i_case)
+            case (1)
+                n_param = 0
+            case (2)
+                n_param = -1
+            case (3)
+                settings%n_micro = 0
+            case (4)
+                settings%n_random_trial_vectors = -1
+            case (5)
+                settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
+                settings%n_extra_trial_vectors = 0
+            case (6)
+                settings%subsystem_solver = "unknown"
+            case (7)
+                ! the nested settings print the error message of their own check
+                call setup_error_logging(settings%stability_settings, context)
+                settings%stability_settings%diag_solver = "unknown"
+            end select
+            call solver_sanity_check(settings, n_param, error)
+            if (error /= 1) then
+                write(stderr, *) "test_solver_sanity_check failed: No error "// &
+                    "returned for "//trim(error_case_names(i_case))//"."
+                test_solver_sanity_check = .false.
+            end if
+            if (len_trim(context%log_message) == 0) then
+                write(stderr, *) "test_solver_sanity_check failed: No error "// &
+                    "message printed for "//trim(error_case_names(i_case))//"."
+                test_solver_sanity_check = .false.
+            end if
+        end do
+
+        ! check that a non-symmetric Hessian is accepted by the level-shifted Davidson
+        ! subsystem solver and rejected with an error message by every other
+        do i_solver = 1, size(subsystem_solver_options)
+            call setup_settings(settings, context)
+            call setup_error_logging(settings, context)
+            settings%subsystem_solver = subsystem_solver_options(i_solver)
+            settings%hess_symm = .false.
+            call solver_sanity_check(settings, 4_ip, error)
+            if (subsystem_solver_options(i_solver) == "davidson_ls") then
+                if (error /= 0) then
+                    write(stderr, *) "test_solver_sanity_check failed: "// &
+                        "Non-symmetric Hessian rejected for davidson_ls subsystem "// &
+                        "solver."
+                    test_solver_sanity_check = .false.
+                end if
+            else
+                if (error /= 1) then
+                    write(stderr, *) "test_solver_sanity_check failed: "// &
+                        "Non-symmetric Hessian not rejected for "// &
+                        trim(subsystem_solver_options(i_solver))//" subsystem solver."
+                    test_solver_sanity_check = .false.
+                end if
+                if (len_trim(context%log_message) == 0) then
+                    write(stderr, *) "test_solver_sanity_check failed: No error "// &
+                        "message printed for non-symmetric Hessian with "// &
+                        trim(subsystem_solver_options(i_solver))//" subsystem solver."
+                    test_solver_sanity_check = .false.
+                end if
+            end if
+        end do
+
+        ! check that a warning is printed exactly once when a projection is passed,
+        ! also when the nested stability check settings carry it together with the
+        ! logging function, as they do once they inherit both, so that their check
+        ! prints the warning as well
+        do i_case = 1, size(projection_case_names)
+            call setup_settings(settings, context)
+            if (i_case == 2) then
+                call setup_settings(settings%stability_settings, context)
+                settings%stability_settings%project => mock_project_out_pair
+            end if
+            settings%project => mock_project_out_pair
+            call solver_sanity_check(settings, 4_ip, error)
+            if (error /= 0) then
+                write(stderr, *) "test_solver_sanity_check failed: Error returned "// &
+                    "when a projection is passed with "// &
+                    trim(projection_case_names(i_case))//"."
+                test_solver_sanity_check = .false.
+            end if
+            i_warning = index(context%log_message, " "//project_warning_msg)
+            if (i_warning == 0) then
+                write(stderr, *) "test_solver_sanity_check failed: Warning not "// &
+                    "printed when a projection is passed with "// &
+                    trim(projection_case_names(i_case))//"."
+                test_solver_sanity_check = .false.
+            end if
+            if (i_warning > 0 .and. index(context%log_message(i_warning + 1:), &
+                                          " "//project_warning_msg) /= 0) then
+                write(stderr, *) "test_solver_sanity_check failed: Warning printed "// &
+                    "twice when a projection is passed with "// &
+                    trim(projection_case_names(i_case))//"."
+                test_solver_sanity_check = .false.
+            end if
+        end do
+
+    end function test_solver_sanity_check
+
+    logical(c_bool) function test_stability_sanity_check() bind(C)
+        !
+        ! this function tests the subroutine which performs a sanity check for the
+        ! stability check
+        !
+        use opentrustregion, only: &
+            stability_settings_type, stability_sanity_check, project_warning_msg, &
+            random_trial_vector_warning_msg, diag_solver_options, &
+            standalone_n_random_trial_vectors
+
+        ! the diagonalization solvers in mixed case and settings which the sanity check
+        ! rejects
+        character(len=*), parameter :: mixed_case_diag_solvers(2) = &
+            [character(len=15) :: "Davidson", "Jacobi-Davidson"]
+        character(len=*), parameter :: error_case_names(9) = &
+            [character(len=55) :: "vanishing number of parameters", &
+             "extra trial vector function without extra trial vectors", &
+             "vanishing number of trial vectors", &
+             "no random and a negative number of extra trial vectors", "no extra "// &
+             "and no random trial vectors that fit", "unknown diagonalization solver", &
+             "non-symmetric Hessian with Jacobi-Davidson solver", "stopping at an "// &
+             "instability with non-symmetric Hessian", "positive stability threshold"]
+        character(len=*), parameter :: accepted_case_names(4) = &
+            [character(len=49) :: "non-symmetric Hessian with Davidson solver", &
+             "stopping at an instability with symmetric Hessian", &
+             "no random but extra trial vectors", "vanishing stability threshold"]
+        type(stability_settings_type) :: settings
+        integer(ip) :: error, i_solver, i_case, n_param
+        type(test_context_type), target :: context
+
+        ! assume tests pass
+        test_stability_sanity_check = .true.
+
+        ! check that every diagonalization solver passes when given in mixed case,
+        ! which is converted to lowercase, and that an unset number of random trial
+        ! vectors resolves to the default of a stability check outside the solver
+        ! without any message
+        do i_solver = 1, size(diag_solver_options)
+            call setup_settings(settings, context)
+            settings%diag_solver = mixed_case_diag_solvers(i_solver)
+            call stability_sanity_check(settings, &
+                                        4_ip * standalone_n_random_trial_vectors, error)
+            if (error /= 0) then
+                write(stderr, *) "test_stability_sanity_check failed: Error "// &
+                    "returned for "//trim(diag_solver_options(i_solver))// &
+                    " diagonalization solver."
+                test_stability_sanity_check = .false.
+            end if
+            if (settings%diag_solver /= diag_solver_options(i_solver)) then
+                write(stderr, *) "test_stability_sanity_check failed: Not "// &
+                    "converted to lowercase for "// &
+                    trim(diag_solver_options(i_solver))//" diagonalization solver."
+                test_stability_sanity_check = .false.
+            end if
+            if (settings%n_random_trial_vectors /= standalone_n_random_trial_vectors) &
+                then
+                write(stderr, *) "test_stability_sanity_check failed: Unset number "// &
+                    "of random trial vectors not resolved for "// &
+                    trim(diag_solver_options(i_solver))//" diagonalization solver."
+                test_stability_sanity_check = .false.
+            end if
+            if (len_trim(context%log_message) > 0) then
+                write(stderr, *) "test_stability_sanity_check failed: Message "// &
+                    "printed for "//trim(diag_solver_options(i_solver))// &
+                    " diagonalization solver."
+                test_stability_sanity_check = .false.
+            end if
+        end do
+
+        ! check that the number of random trial vectors is reduced to half the number
+        ! of parameters with a warning
+        call setup_settings(settings, context)
+        settings%n_random_trial_vectors = 3
+        call stability_sanity_check(settings, 4_ip, error)
+        if (error /= 0) then
+            write(stderr, *) "test_stability_sanity_check failed: Error returned "// &
+                "when number of random trial vectors is reduced."
+            test_stability_sanity_check = .false.
+        end if
+        if (settings%n_random_trial_vectors /= 2) then
+            write(stderr, *) "test_stability_sanity_check failed: Number of random "// &
+                "trial vectors not reduced."
+            test_stability_sanity_check = .false.
+        end if
+        if (index(context%log_message, " "//random_trial_vector_warning_msg) == 0) then
+            write(stderr, *) "test_stability_sanity_check failed: Warning not "// &
+                "printed when number of random trial vectors is reduced."
+            test_stability_sanity_check = .false.
+        end if
+
+        ! check that every rejected setting returns an error and prints an error
+        ! message
+        do i_case = 1, size(error_case_names)
+            call setup_settings(settings, context)
+            call setup_error_logging(settings, context)
+            n_param = 4
+            select case (i_case)
+            case (1)
+                n_param = 0
+            case (2)
+                settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
+                settings%n_extra_trial_vectors = 0
+            case (3)
+                settings%n_extra_trial_vectors = 0
+                settings%n_random_trial_vectors = 0
+            case (4)
+                settings%n_extra_trial_vectors = -1
+                settings%n_random_trial_vectors = 0
+            case (5)
+                ! a single parameter leaves no room for the requested random trial
+                ! vectors once their number is reduced to half the number of
+                ! parameters
+                n_param = 1
+                settings%n_extra_trial_vectors = 0
+            case (6)
+                settings%diag_solver = "unknown"
+            case (7)
+                settings%diag_solver = "jacobi-davidson"
+                settings%hess_symm = .false.
+            case (8)
+                settings%hess_symm = .false.
+                settings%stop_on_instability = .true.
+            case (9)
+                settings%stability_thresh = 1e-3_rp
+            end select
+            call stability_sanity_check(settings, n_param, error)
+            if (error /= 1) then
+                write(stderr, *) "test_stability_sanity_check failed: No error "// &
+                    "returned for "//trim(error_case_names(i_case))//"."
+                test_stability_sanity_check = .false.
+            end if
+            if (len_trim(context%log_message) == 0) then
+                write(stderr, *) "test_stability_sanity_check failed: No error "// &
+                    "message printed for "//trim(error_case_names(i_case))//"."
+                test_stability_sanity_check = .false.
+            end if
+        end do
+
+        ! check that settings close to rejected ones are accepted
+        do i_case = 1, size(accepted_case_names)
+            call setup_settings(settings, context)
+            select case (i_case)
+            case (1)
+                settings%hess_symm = .false.
+            case (2)
+                settings%stop_on_instability = .true.
+            case (3)
+                settings%n_random_trial_vectors = 0
+            case (4)
+                settings%stability_thresh = 0.0_rp
+            end select
+            call stability_sanity_check(settings, 4_ip, error)
+            if (error /= 0) then
+                write(stderr, *) "test_stability_sanity_check failed: Error "// &
+                    "returned for "//trim(accepted_case_names(i_case))//"."
+                test_stability_sanity_check = .false.
+            end if
+            if (i_case == 3 .and. settings%n_random_trial_vectors /= 0) then
+                write(stderr, *) "test_stability_sanity_check failed: Vanishing "// &
+                    "number of random trial vectors replaced."
+                test_stability_sanity_check = .false.
+            end if
+        end do
+
+        ! check that a warning is printed when a projection is passed
+        call setup_settings(settings, context)
+        settings%project => mock_project_out_pair
+        call stability_sanity_check(settings, 4_ip, error)
+        if (error /= 0) then
+            write(stderr, *) "test_stability_sanity_check failed: Error returned "// &
+                "when a projection is passed."
+            test_stability_sanity_check = .false.
+        end if
+        if (index(context%log_message, " "//project_warning_msg) == 0) then
+            write(stderr, *) "test_stability_sanity_check failed: Warning not "// &
+                "printed when a projection is passed."
+            test_stability_sanity_check = .false.
+        end if
+
+    end function test_stability_sanity_check
 
     logical(c_bool) function test_add_error_origin() bind(C)
         !

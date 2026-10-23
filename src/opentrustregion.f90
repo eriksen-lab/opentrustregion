@@ -291,8 +291,8 @@ contains
         integer(ip) :: imacro
         character(len=300) :: msg
         procedure(hess_x_type), pointer :: hess_x_funptr
-        type(solver_state_type), target :: local_state
         type(solver_settings_type) :: local_settings
+        type(solver_state_type), target :: local_state
         type(solver_state_type), pointer :: current_state
         real(rp), external :: dnrm2
 
@@ -3566,8 +3566,8 @@ contains
             return
         end if
 
-        ! check that number of microiterations is positive since the subsystem
-        ! solvers assume that at least one microiteration is performed
+        ! check that number of microiterations is positive since the subsystem solvers
+        ! assume that at least one microiteration is performed
         if (settings%n_micro < 1) then
             call settings%log("Number of microiterations should be larger than 0.", &
                               verbosity_error, .true.)
@@ -3627,7 +3627,7 @@ contains
             return
         end if
 
-        ! check whether projection functions is passed, unless the nested stability
+        ! check whether projection function is passed, unless the nested stability
         ! check settings inherited it, whose check below prints the same warning
         if (associated(settings%project) .and. &
             .not. associated(settings%stability_settings%project, settings%project)) &
@@ -3733,7 +3733,7 @@ contains
             return
         end if
 
-        ! check whether projection functions is passed
+        ! check whether projection function is passed
         if (associated(settings%project)) &
             call settings%log(project_warning_msg, verbosity_warning)
 

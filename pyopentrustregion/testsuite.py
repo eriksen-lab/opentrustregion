@@ -27,7 +27,7 @@ from unittest.mock import patch
 from pathlib import Path
 import numpy as np
 
-# check if pyopentrustregion is installed or import module in same directory
+# check if pyopentrustregion is installed or import it from the source tree
 try:
     from pyopentrustregion.python_interface import (
         SolverSettings,
@@ -43,13 +43,14 @@ try:
         UpdateOrbsInterface,
         PrecondInterface,
         ProjectInterface,
+        GetExtraTrialVectorsInterface,
         ConvCheckInterface,
         LoggerInterface,
         raise_on_failure,
         hess_x_interface_type,
     )
 except ImportError:
-    sys.path.insert(0, str(Path(__file__).parent.absolute()))
+    sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
     from pyopentrustregion.python_interface import (
         SolverSettings,
         StabilitySettings,
@@ -64,6 +65,7 @@ except ImportError:
         UpdateOrbsInterface,
         PrecondInterface,
         ProjectInterface,
+        GetExtraTrialVectorsInterface,
         ConvCheckInterface,
         LoggerInterface,
         raise_on_failure,
@@ -442,12 +444,20 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
 
         # call solver python interface with optional arguments, the result of the mock
-        # is cleared before and read right after the call
+        # is cleared before and read right after the call, and check that the call
+        # leaves the settings object unchanged, so that calls running at the same time
+        # can share it
         interface_flag = c_bool.in_dll(lib, "test_solver_interface")
         interface_flag.value = False
         state = SolverState()
+        settings_c_before = bytes(settings.settings_c)
         solver(mock_update_orbs, mock_obj_func, n_param, settings, state=state)
         interface_passed = interface_flag.value
+        settings_kept = bytes(settings.settings_c) == settings_c_before
+        if not settings_kept:
+            print(
+                " test_solver_py_interface failed: Settings object written by the call."
+            )
 
         # check that the state is passed, which the mock fills with the reference
         # values
@@ -530,6 +540,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
 
         self.assertTrue(
             interface_passed
+            and settings_kept
             and state_passed
             and test_logger
             and callbacks_called
@@ -577,14 +588,23 @@ class PyInterfaceUnitTests(unittest.TestCase):
         kappa = np.zeros(n_param, dtype=np.float64)
 
         # call stability check python interface with optional arguments, the result of
-        # the mock is cleared before and read right after the call
+        # the mock is cleared before and read right after the call, and check that the
+        # call leaves the settings object unchanged, so that calls running at the same
+        # time can share it
         interface_flag = c_bool.in_dll(lib, "test_stability_check_interface")
         interface_flag.value = False
         state = StabilityState()
+        settings_c_before = bytes(settings.settings_c)
         stable = stability_check(
             h_diag, mock_hess_x, n_param, settings, kappa=kappa, state=state
         )
         interface_passed = interface_flag.value
+        settings_kept = bytes(settings.settings_c) == settings_c_before
+        if not settings_kept:
+            print(
+                " test_stability_check_py_interface failed: Settings object written by "
+                "the call."
+            )
 
         # check that the state is passed, which the mock fills with the reference
         # values
@@ -689,6 +709,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
 
         self.assertTrue(
             interface_passed
+            and settings_kept
             and state_passed
             and test_logger
             and stable
@@ -824,6 +845,11 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "projection",
                 lambda exc: ProjectInterface(raising, n_param, exc),
                 (vector_ptr,),
+            ),
+            (
+                "extra trial vector function",
+                lambda exc: GetExtraTrialVectorsInterface(raising, n_param, exc),
+                (vector_ptr, 1),
             ),
             (
                 "convergence check",
@@ -1004,12 +1030,21 @@ class PyInterfaceUnitTests(unittest.TestCase):
         def dummy_precond():
             return dummy_error_code
 
+        # an optional callback function is set in the C struct of a call and its
+        # interface is kept in the interfaces of the call
+        settings_c = settings.c_struct()
+        interfaces = []
         settings.set_optional_callback(
-            "precond", dummy_precond, lambda x: x, CFUNCTYPE(c_int)
+            settings_c,
+            interfaces,
+            "precond",
+            dummy_precond,
+            lambda x: x,
+            CFUNCTYPE(c_int),
         )
 
-        c_ptr = getattr(settings.settings_c, "precond")
-        c_interface = getattr(settings.settings_c, "precond_interface", None)
+        c_ptr = settings_c.precond
+        c_interface = interfaces[-1] if interfaces else None
 
         if (
             c_ptr is None
@@ -1023,11 +1058,10 @@ class PyInterfaceUnitTests(unittest.TestCase):
             test_passed = False
 
         # an unset optional callback function leaves its C function pointer null
-        settings.set_optional_callback("precond", None, lambda x: x, CFUNCTYPE(c_int))
-        if (
-            settings.settings_c.precond is not None
-            or settings.settings_c.precond_interface is not None
-        ):
+        settings.set_optional_callback(
+            settings_c, interfaces, "precond", None, lambda x: x, CFUNCTYPE(c_int)
+        )
+        if settings_c.precond is not None or interfaces[-1] is not None:
             print(
                 " test_solver_settings failed: Unset optional callback does not "
                 "leave a null function pointer."

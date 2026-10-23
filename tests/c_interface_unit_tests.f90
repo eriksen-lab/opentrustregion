@@ -664,10 +664,10 @@ contains
                                    default_stability_settings
         use c_interface, only: stability_settings_type_c, stability_state_type_c, &
                                stability_check, stability_check_c_wrapper
-        use opentrustregion_mock, only: mock_stability_check, test_passed, mock_error, &
-                                        mock_stability_state, mock_stable, &
-                                        received_stability_settings, &
-                                        received_callbacks, stability_state_bundled
+        use opentrustregion_mock, only: &
+            mock_stability_check, test_passed, mock_error, mock_stability_state, &
+            mock_stable, received_stability_settings, received_callbacks, &
+            kappa_received, stability_state_bundled
         use test_reference, only: get_reference_stability_values, &
                                   get_reference_stability_state_values, host_context, &
                                   arm_host_context_c, host_context_reached, &
@@ -765,6 +765,14 @@ contains
             if (i_case == 2 .and. any(abs(kappa - 1.0_c_rp) > tol_c)) then
                 write(stderr, *) "test_stability_check_c_wrapper failed: Returned "// &
                     "direction wrong "//trim(case_names(i_case))//"."
+                test_stability_check_c_wrapper = .false.
+            end if
+
+            ! check that the direction is only requested from the stability check where
+            ! the caller provides memory for it
+            if (kappa_received .neqv. c_associated(kappa_c_ptr)) then
+                write(stderr, *) "test_stability_check_c_wrapper failed: Direction "// &
+                    "requested wrongly "//trim(case_names(i_case))//"."
                 test_stability_check_c_wrapper = .false.
             end if
 
@@ -1978,6 +1986,43 @@ contains
 
     end function test_assign_stability_state_c_f
 
+    logical(c_bool) function test_character_from_c() bind(C)
+        !
+        ! this function tests conversion of a C null-terminated character array to a
+        ! Fortran character string
+        !
+        use c_interface, only: character_from_c
+
+        character(kind=c_char), parameter :: test_array(5) = &
+            ["t", "e", "s", "t", c_null_char]
+        character(len=:), allocatable :: char_f
+        integer(ip) :: i
+
+        ! assume tests pass
+        test_character_from_c = .true.
+
+        ! perform conversion
+        char_f = character_from_c(test_array)
+
+        ! check equality
+        if (len(char_f) /= size(test_array) - 1) then
+            write(stderr, *) "test_character_from_c failed: Converted string has "// &
+                "wrong length."
+            test_character_from_c = .false.
+            return
+        end if
+
+        ! check characters
+        do i = 1, len(char_f)
+            if (test_array(i) /= char_f(i:i)) then
+                write(stderr, *) "test_character_from_c failed: String mismatch at "// &
+                    "character ", i, "."
+                test_character_from_c = .false.
+            end if
+        end do
+
+    end function test_character_from_c
+
     logical(c_bool) function test_character_to_c() bind(C)
         !
         ! this function tests conversion of a Fortran character string to a C
@@ -2015,42 +2060,5 @@ contains
         end if
 
     end function test_character_to_c
-
-    logical(c_bool) function test_character_from_c() bind(C)
-        !
-        ! this function tests conversion of a C null-terminated character array to a
-        ! Fortran character string
-        !
-        use c_interface, only: character_from_c
-
-        character(kind=c_char), parameter :: test_array(5) = &
-            ["t", "e", "s", "t", c_null_char]
-        character(len=:), allocatable :: char_f
-        integer(ip) :: i
-
-        ! assume tests pass
-        test_character_from_c = .true.
-
-        ! perform conversion
-        char_f = character_from_c(test_array)
-
-        ! check equality
-        if (len(char_f) /= size(test_array) - 1) then
-            write(stderr, *) "test_character_from_c failed: Converted string has "// &
-                "wrong length."
-            test_character_from_c = .false.
-            return
-        end if
-
-        ! check characters
-        do i = 1, len(char_f)
-            if (test_array(i) /= char_f(i:i)) then
-                write(stderr, *) "test_character_from_c failed: String mismatch at "// &
-                    "character ", i, "."
-                test_character_from_c = .false.
-            end if
-        end do
-
-    end function test_character_from_c
 
 end module c_interface_unit_tests

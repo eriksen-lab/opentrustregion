@@ -47,6 +47,11 @@ module opentrustregion_mock
     ! wrappers copy this record into the host's
     logical :: solver_state_bundled, stability_state_bundled
 
+    ! whether the mock stability check received the optional direction, so that a test
+    ! can check that the C wrapper passes it on only where the caller provides memory
+    ! for it
+    logical :: kappa_received
+
     ! create function pointers to ensure that routines comply with interface
     procedure(solver), pointer :: mock_solver_ptr => mock_solver
     procedure(stability_check), pointer :: mock_stability_check_ptr => &
@@ -235,13 +240,15 @@ contains
         end if
         if (associated(settings%logger)) call settings%logger("test", settings%context)
 
-        ! record the settings and their callback bundle
+        ! record the settings, their callback bundle and which optional outputs were
+        ! requested
         received_stability_settings = settings
         received_callbacks = c_callbacks_type()
         select type (callbacks => settings%context)
         type is (c_callbacks_type)
             received_callbacks = callbacks
         end select
+        kappa_received = present(kappa)
 
         ! record whether the callback bundle refers to the state record
         stability_state_bundled = .false.
