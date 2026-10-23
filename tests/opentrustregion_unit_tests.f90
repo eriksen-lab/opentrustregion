@@ -598,6 +598,26 @@ contains
 
     end function resolve_hartmann6d_context
 
+    logical function inject_fault(context, callback)
+        !
+        ! this function counts a call of a callback function in a fault injection
+        ! context and returns whether this call has to fail
+        !
+        class(*), intent(in), pointer :: context
+        integer(ip), intent(in) :: callback
+
+        ! count call and determine whether it fails
+        inject_fault = .false.
+        if (.not. associated(context)) return
+        select type (context)
+        class is (hartmann6d_fault_context_type)
+            context%n_callback_calls(callback) = context%n_callback_calls(callback) + 1
+            inject_fault = callback == context%fault_callback .and. &
+                           context%n_callback_calls(callback) == context%fault_call
+        end select
+
+    end function inject_fault
+
     subroutine hess_x_fun(x, hess_x, error, context)
         !
         ! this subroutine describes the Hessian linear transformation operation for the
@@ -900,26 +920,6 @@ contains
         func = obj_func(delta_vars, error, module_context)
 
     end function settingless_obj_func
-
-    logical function inject_fault(context, callback)
-        !
-        ! this function counts a call of a callback function in a fault injection
-        ! context and returns whether this call has to fail
-        !
-        class(*), intent(in), pointer :: context
-        integer(ip), intent(in) :: callback
-
-        ! count call and determine whether it fails
-        inject_fault = .false.
-        if (.not. associated(context)) return
-        select type (context)
-        class is (hartmann6d_fault_context_type)
-            context%n_callback_calls(callback) = context%n_callback_calls(callback) + 1
-            inject_fault = callback == context%fault_callback .and. &
-                           context%n_callback_calls(callback) == context%fault_call
-        end select
-
-    end function inject_fault
 
     subroutine faulty_hess_x(x, hess_x, error, context)
         !
@@ -2195,17 +2195,21 @@ contains
         ! force the maximum precision heuristic to trigger by requesting a convergence
         ! tolerance that floating-point noise in the gradient can never satisfy, with
         ! the line search, which has to be skipped for the step that is not taken once
-        ! maximum precision is reached
-        context%vars = near_minimum
+        ! maximum precision is reached, starting at the minimum, where the change the
+        ! step of the first subproblem predicts already lies below the resolution of
+        ! the objective function, so that no line search precedes maximum precision
+        context%vars = minimum1
         settings = solver_settings_type()
         settings%context => context
         settings%conv_tol = 0.0_rp
         settings%line_search = .true.
 
         ! run solver, check that it still returns without error while flagging this in
-        ! the state, that the step that is not taken has no size and that the reported
-        ! number of orbital updates agrees with the calls
+        ! the state, that the line search, which first evaluates the objective function
+        ! without a step, is not performed, that the step that is not taken has no size
+        ! and that the reported number of orbital updates agrees with the calls
         context%n_update_orbs_calls = 0
+        context%obj_func_zero_step = .false.
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
                     state)
         if (error /= 0) then
@@ -2218,9 +2222,14 @@ contains
                 "precision was reached when convergence tolerance could not be met."
             test_solver = .false.
         end if
-        if (abs(state%step_size) > 0.0_rp) then
+        if (context%obj_func_zero_step) then
             write(stderr, *) "test_solver failed: Line search performed for the "// &
                 "step not taken once maximum precision is reached."
+            test_solver = .false.
+        end if
+        if (abs(state%step_size) > 0.0_rp) then
+            write(stderr, *) "test_solver failed: Step not taken once maximum "// &
+                "precision is reached has a size."
             test_solver = .false.
         end if
         if (.not. check_call_counts( &
