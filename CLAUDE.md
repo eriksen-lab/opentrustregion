@@ -10,7 +10,7 @@ OpenTrustRegion is a Fortran library implementing a second-order trust-region op
 
 **Formatting.** Fortran lines max 88 columns. Layout, spacing, keyword spelling, string literals, comments and blank lines of Fortran code are defined by `tools/f90_layout.py`, whose docstring is the authoritative rule list; don't restate its rules here or apply them by hand. Run `python3 tools/f90_layout.py` after every Fortran edit: by default it checks only statements touched relative to `HEAD`, `--fix` applies the fixes, and `--all` checks whole files (with `--fix` it requires explicit paths, e.g. `git ls-files '*.f90' | xargs python3 tools/f90_layout.py --all --fix`). CI runs `--all` on every tracked `.f90` file. The default mode also checks every untracked, non-ignored `.f90` file in full, so a bare `--fix` rewrites scratch copies of Fortran files left in the tree too; move them out first. Statements containing a comment, a `;` or a continuation line starting with `&` are never reflowed (their spacing and indentation are still fixed), so shorten an overlong one by hand. Every procedure opens with a `!`-delimited comment block describing what it does; each logical step inside gets a lowercase `!` comment. Unit tests: assume success (`test_<name> = .true.`), then one `if (...) then` / `write(stderr, *) "test_<name> failed: ..."` / `test_<name> = .false.` block per assertion, no early returns except where a later assertion would crash or has nothing to check because a call it depends on already failed.
 
-**Python formatting.** All Python (`pyopentrustregion/`, `setup.py`, `tools/`) is `black`-formatted, default settings. Run `black pyopentrustregion setup.py tools` before considering Python changes done.
+**Python formatting.** All Python (`pyopentrustregion/`, `tools/`) is `black`-formatted, default settings. Run `black pyopentrustregion tools` before considering Python changes done.
 
 **C formatting.** All C headers and test sources (`include/`, `tests/*.c`) are `clang-format`-formatted per the repo-root `.clang-format` (LLVM style, 88-column limit to match the Fortran convention above). Run `clang-format -i` on touched C/H files before considering C changes done.
 
@@ -69,15 +69,20 @@ mkdir build && cd build
 cmake ..              # add -DBUILD_SHARED_LIBS=ON for shared
 cmake --build .
 
-# Python install (invokes CMake under the hood via setup.py)
+# Python install (scikit-build-core drives CMake, see pyproject.toml; CMake options
+# are passed as -C cmake.define.<OPTION>=<VALUE>)
 pip install .
 pip install -e .       # editable
 ```
 
 ```sh
 # full suite (Python driver calling into libotrtestsuite: unit, integration and system tests)
-python3 -m pyopentrustregion.testsuite                  # from an installed/editable build
+python3 -m pyopentrustregion.testsuite                  # from an installed/editable build, run outside the checkout
 python3 pyopentrustregion/testsuite.py                  # from the source tree against ./build
+
+# quick check that an installed library solves correctly (works against a published
+# wheel, which has no libotrtestsuite and therefore cannot run the testsuite above)
+python3 -m pyopentrustregion.verify_install
 
 # single test class or method (stdlib unittest)
 python3 -m unittest pyopentrustregion.testsuite.OpenTrustRegionSystemTests
@@ -144,7 +149,8 @@ Because a routine's cases live behind one entry, a silently-skipped case is invi
 - `INTEGER_SIZE` (`4` or `8`): library integer width. Unset → CMake autodetects, trying 32-bit BLAS/LAPACK first. Output library named `libopentrustregion_32.*` / `_64.*`. `USE_ILP64` (set whenever the BLAS/LAPACK integer size is 8, including autodetection's 64-bit fallback) switches the Fortran kinds `ip` and `c_ip` to 64-bit as a private definition of the library target, which exports `OTR_ILP64` instead to switch the header's `c_int`, so that C programs linking it see the same width without a generic macro leaking into their sources, and remaps BLAS/LAPACK symbols to `_64` variants when `check_fortran_function_exists` finds them.
 - `BLAS_LIBRARIES` / `LAPACK_LIBRARIES`: overriding autodetection requires `INTEGER_SIZE` as well — providing the libraries without it is a fatal error. `OpenTrustRegion_HOST_PROVIDES_BLAS` (the host links BLAS/LAPACK) likewise requires `INTEGER_SIZE` and skips building the testsuite.
 - `OpenTrustRegion_BUILD_TESTING` (default `ON` when top-level): builds `libotrtestsuite`, which Python loads to drive the Fortran tests. It carries the library's objects itself (`$<TARGET_OBJECTS:opentrustregion>`) rather than only linking a shared `libopentrustregion`: Flang gives every shared library its own copy of a derived type's descriptor, so a `c_callbacks_type` bundle a test constructs would fail the wrappers' `select type` in a separate library. The library itself only inspects bundles it built, so hosts are unaffected.
-- `CONDA_BUILD=1` env var: `setup.py` skips the embedded CMake invocation (the conda recipe builds the C library separately).
+- `CONDA_BUILD=1` env var (set automatically by conda-build): selects an override that sets `wheel.cmake = false`, so scikit-build-core skips CMake entirely and emits a pure-Python wheel. The conda-forge recipe builds the Fortran library as its own `opentrustregion` package and `python_interface.py` loads it from the conda prefix at run time, so `pyopentrustregion` must not compile or ship a second copy.
+- `OTR_RELEASE_WHEEL=1` env var: selects the release-wheel overrides in `pyproject.toml`, which pin `INTEGER_SIZE=4`, set `OpenTrustRegion_BUILD_TESTING=OFF`, exclude `testsuite.py`/`test_data` from the wheel and, on macOS, link Accelerate and a static Fortran runtime. Every pip build without it keeps the testsuite, so `python -m pyopentrustregion.testsuite` works from a source or editable install. An override replaces a table such as `cmake.define` unless it sets `inherit.cmake.define = "append"`, which the release overrides do, so they name only the defines they add.
 
 ### Preprocessing and integer kinds
 
@@ -174,7 +180,7 @@ The check prints every BLAS/LAPACK symbol referenced without the `_64` suffix. O
 - **`gfortran -fsyntax-only -I<moddir>` gives false confidence.** It checks only the pointed-to file against whatever `.mod` files already exist — it doesn't re-verify those `.mod`s. Editing a `type` whose fields are used across modules can leave a stale consumer `.mod` "passing" syntax-only checks while a real build breaks with `Fatal Error: Mismatch in components of derived type '...': expecting 'X', but got 'Y'`. Always confirm interface changes with `cmake --build`, not `-fsyntax-only`.
 - **Intel stores `.true.` as -1 unless built with `-fpscomp logicals`.** C's `bool` only accepts 0 and 1, so every `logical(c_bool)` the library hands to C would hold an invalid value, which the C compiler may or may not happen to read as true. The Intel branch of `CMakeLists.txt` therefore adds the flag for every build type, and the C integration tests read the bytes of the bools the library writes (`is_c_bool`) rather than trusting a comparison.
 - **Flang rejects code gfortran and Intel accept.** A component of derived type needs an explicit initializer (`= stability_settings_type()`) for the type's default structure constructor to be valid, even when every component of its own type has one, and an `X` edit descriptor needs its count (`1X`). Neither shows up without the Flang build.
-- **A `build/` directory created by `pip install` can't be rebuilt directly later.** pip's ephemeral `cmake` path gets baked into `build/CMakeCache.txt` (`CMAKE_COMMAND`) and generated Makefile stamp rules. Once pip's temp env is gone, `cmake --build build` fails with `<temp-path>/cmake: No such file or directory`. Diagnose with `grep CMAKE_COMMAND build/CMakeCache.txt`. Fix: re-run `pip install -e .`, or maintain a separate manually-configured build directory with the system `cmake`.
+- **`pip install` does not write into the source tree.** scikit-build-core configures CMake in a temporary directory, so a `build/` left in the repo is always one you created yourself (or a pip build passed `-C build-dir=build`, as the coverage job does) and stays rebuildable with the system `cmake`. It also means that a run from the checkout's root after `pip install .` imports the checkout's `pyopentrustregion` directory, which holds no library, and fails with `FileNotFoundError: Cannot find either opentrustregion or testsuite library` unless `<repo>/build` holds one, which it then loads instead of the installed library; run an installed build from another directory, as the CI jobs do (`working-directory: ${{ runner.temp }}`).
 - **The Python driver only finds a development build in `<repo>/build`.** `python_interface.py` searches the conda prefix, then the installed package, then the `pyopentrustregion/` directory, then `<repo>/build` — a manually-configured `build_manual/` is invisible to it, and it silently loads whatever's in `build/` instead. To drive a custom build directory, run from a scratch directory with symlinks named `pyopentrustregion` and `build`:
 
   ```sh

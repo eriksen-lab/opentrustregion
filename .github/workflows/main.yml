@@ -31,7 +31,7 @@ jobs:
       run: pip install black
 
     - name: Check Python formatting
-      run: black --check --diff pyopentrustregion setup.py tools
+      run: black --check --diff pyopentrustregion tools
 
     - name: Install clang-format
       run: sudo apt-get update && sudo apt-get install -y clang-format
@@ -162,14 +162,15 @@ jobs:
             integer-size: "32"
 
           # test coverage, which also runs the testsuite with gnu compilers under linux on
-          # x86 processors
+          # x86 processors and with the newest python, while every other job runs the
+          # oldest python that pyproject.toml supports
           - os: linux
             arch: x86_64
             compiler: gnu
             blas: openblas
             runs-on: ubuntu-latest
             build-type: coverage
-            python-version: "3.10"
+            python-version: "3.x"
             integer-size: "32"
 
     name: "Repo • 🐍 ${{ matrix.python-version }} • OS ${{ matrix.os }} ${{ matrix.arch }} • Compiler ${{ matrix.compiler }}${{ matrix.compiler-version && format(' {0}', matrix.compiler-version) || '' }} • BLAS ${{ matrix.blas }} • Build Type ${{ matrix.build-type }}${{ matrix.scenario && format(' ({0})', matrix.scenario) || '' }} • ${{ matrix.integer-size }}-bit integers"
@@ -185,7 +186,7 @@ jobs:
     - name: Setup Python
       uses: actions/setup-python@v7
       with:
-        python-version: 3.x
+        python-version: ${{ matrix.python-version }}
 
     - name: Install GNU compilers on MacOS
       if: ${{ matrix.os == 'macos' && matrix.compiler == 'gnu' }}
@@ -239,9 +240,10 @@ jobs:
       if: ${{ matrix.os == 'macos' && matrix.blas == 'openblas' }}
       run: |
         brew install openblas
-        echo "PKG_CONFIG_PATH=/usr/local/opt/openblas/lib/pkgconfig" >> $GITHUB_ENV
-        echo "LDFLAGS=-L/opt/homebrew/opt/openblas/lib" >> $GITHUB_ENV
-        echo "CPPFLAGS=-I/opt/homebrew/opt/openblas/include" >> $GITHUB_ENV
+        BREW_PREFIX=$(brew --prefix)
+        echo "PKG_CONFIG_PATH=${BREW_PREFIX}/opt/openblas/lib/pkgconfig" >> $GITHUB_ENV
+        echo "LDFLAGS=-L${BREW_PREFIX}/opt/openblas/lib" >> $GITHUB_ENV
+        echo "CPPFLAGS=-I${BREW_PREFIX}/opt/openblas/include" >> $GITHUB_ENV
 
     - name: Install OpenBLAS on Linux
       if: ${{ matrix.os == 'linux' && matrix.blas == 'openblas' }}
@@ -263,7 +265,7 @@ jobs:
     # the libraries the autodetection finds
     - name: Build & Install OpenTrustRegion
       if: ${{ matrix.build-type == 'test' }}
-      run: CMAKE_FLAGS="-DINTEGER_SIZE=${{ matrix.integer-size == '64' && '8' || '4' }} ${{ matrix.blas == 'netlib' && '-DBLA_VENDOR=Generic' || matrix.blas == 'accelerate' && '-DBLA_VENDOR=Apple' || '' }}" pip install ${{github.workspace}}
+      run: pip install -C cmake.define.INTEGER_SIZE=${{ matrix.integer-size == '64' && '8' || '4' }} ${{ matrix.blas == 'netlib' && '-C cmake.define.BLA_VENDOR=Generic' || matrix.blas == 'accelerate' && '-C cmake.define.BLA_VENDOR=Apple' || '' }} ${{github.workspace}}
 
     - name: Build & Install OpenTrustRegion (editable)
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'editable' }}
@@ -282,8 +284,11 @@ jobs:
         cmake --install .
         cd $GITHUB_WORKSPACE
 
+    # run from outside the checkout, or the pyopentrustregion directory in the working
+    # directory shadows the installed package
     - name: Testing pip installation
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'editable' }}
+      working-directory: ${{ runner.temp }}
       run: python -c "import pyopentrustregion.testsuite"
 
     - name: Testing dev installation
@@ -294,6 +299,7 @@ jobs:
 
     - name: Testing OpenTrustRegion
       if: ${{ matrix.build-type == 'test' }}
+      working-directory: ${{ runner.temp }}
       run: python -m pyopentrustregion.testsuite
 
     - name: Testing find_package Consumption
@@ -330,10 +336,14 @@ jobs:
       if: ${{ matrix.build-type == 'coverage' }}
       run: pip install coverage
 
+    # the build directory is kept in the checkout, where the coverage run below finds the
+    # libraries and the coverage report their data
     - name: Build & Install OpenTrustRegion with Coverage Flags
       if: ${{ matrix.build-type == 'coverage' }}
       run: |
-        CMAKE_FLAGS="-DCMAKE_BUILD_TYPE=Debug -DCMAKE_Fortran_FLAGS='--coverage -g'" pip install ${{github.workspace}}
+        pip install -C cmake.build-type=Debug \
+                    -C "cmake.define.CMAKE_Fortran_FLAGS=--coverage -g" \
+                    -C build-dir=build ${{github.workspace}}
 
     - name: Testing OpenTrustRegion with Coverage
       if: ${{ matrix.build-type == 'coverage' }}
