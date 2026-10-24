@@ -1060,11 +1060,28 @@ contains
             test_update_orbs_f_wrapper = .false.
         end if
 
+        ! without the bundle of an internal stability check, the returned Hessian
+        ! linear transformation is only kept in the bundle of the call
+        callbacks%stability => null()
+        callbacks%hess_x => null()
+        kappa = 1.0_rp
+        call update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x_funptr, error, &
+                                   context)
+        if (error /= 0) then
+            write(stderr, *) "test_update_orbs_f_wrapper failed: Produced error "// &
+                "without bundle of internal stability check."
+            test_update_orbs_f_wrapper = .false.
+        end if
+        if (.not. associated(callbacks%hess_x, mock_hess_x)) then
+            write(stderr, *) "test_update_orbs_f_wrapper failed: Hessian linear "// &
+                "transformation not kept without bundle of internal stability check."
+            test_update_orbs_f_wrapper = .false.
+        end if
+
         ! an orbital update that succeeds without providing a Hessian linear
         ! transformation leaves the Hessian linear transformation disassociated, even
         ! if it was associated before, so that the solver reports the missing one
         callbacks%update_orbs => mock_update_orbs_no_hess_x
-        kappa = 1.0_rp
         hess_x_funptr => hess_x_f_wrapper
         call update_orbs_f_wrapper(kappa, func, grad, h_diag, hess_x_funptr, error, &
                                    context)
