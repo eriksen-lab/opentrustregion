@@ -61,7 +61,7 @@ python3 -m pyopentrustregion.verify_install
 
 #### Integer Size
 
-The PyPI wheels are built with 32-bit integers (LP64), matching NumPy and PySCF. The Python interface reads the integer width out of the compiled library at import time, so no Python-side change is needed to use a 64-bit build; it only requires compiling the library accordingly. Since a wheel tag cannot express the BLAS integer width, a 64-bit (ILP64) build has to come from source and needs a Fortran compiler, CMake and an ILP64 BLAS/LAPACK:
+The PyPI wheels are built with 32-bit integers (LP64). The Python interface reads the integer width out of the compiled library at import time, so no Python-side change is needed to use a 64-bit build; it only requires compiling the library accordingly. Since a wheel tag cannot express the BLAS integer width, a 64-bit (ILP64) build has to come from source and needs a Fortran compiler, CMake and an ILP64 BLAS/LAPACK:
 
 ```sh
 pip install --no-binary=pyopentrustregion -C cmake.define.INTEGER_SIZE=8 pyopentrustregion
