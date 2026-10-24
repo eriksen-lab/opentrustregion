@@ -353,6 +353,12 @@ if(SKBUILD)
     set_property(TARGET opentrustregion PROPERTY VERSION)
     set_property(TARGET opentrustregion PROPERTY SOVERSION)
 
+    # keep the directories of the linked libraries outside the system's, such as a
+    # BLAS/LAPACK installed elsewhere, in the installed libraries, as in the build
+    # tree, so that a source install finds them without LD_LIBRARY_PATH; the wheels
+    # link system libraries only, which CMake leaves out
+    set_property(TARGET opentrustregion PROPERTY INSTALL_RPATH_USE_LINK_PATH TRUE)
+
     # install the solver library
     install(TARGETS opentrustregion
             RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # Windows (.dll)
@@ -363,6 +369,7 @@ if(SKBUILD)
     # source install keeps "python -m pyopentrustregion.testsuite" working; release
     # wheels switch the testsuite off instead of excluding it here
     if(${otr}_BUILD_TESTING AND NOT ${otr}_HOST_PROVIDES_BLAS)
+        set_property(TARGET otrtestsuite PROPERTY INSTALL_RPATH_USE_LINK_PATH TRUE)
         install(TARGETS otrtestsuite
                 RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # Windows (.dll)
                 LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # shared libraries (.so, .dylib)
