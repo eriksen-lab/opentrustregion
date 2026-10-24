@@ -4,14 +4,18 @@ on:
   # build and check the distributions on demand, e.g. before a release, without
   # publishing them
   workflow_dispatch:
+  # every pull request, since the source distribution packs nearly every file of the
+  # repository and the wheels are built from the sources and tested with the package
   pull_request:
-    paths:
-      - "pyproject.toml"
-      - "CMakeLists.txt"
-      - ".github/workflows/wheels.yml"
+    branches:
+      - main
   # publish the distributions of every release
   release:
     types: [published]
+
+# the jobs only read the repository, the publish job requests the token it needs itself
+permissions:
+  contents: read
 
 # one run at a time per ref: a new commit to a pull request cancels the run of its
 # previous commit, while other runs queue
@@ -98,14 +102,16 @@ jobs:
     - name: Install GNU compilers and OpenBLAS
       run: sudo apt update && sudo apt install -y gcc gfortran libopenblas-dev
 
-    - name: Verify the sdist builds and solves
+    # the sdist is installed as a source install is, with the testsuite, so running it
+    # checks that the sdist carries everything a source install needs
+    - name: Verify the sdist builds and passes the testsuite
       run: |
         set -e
         python -m venv /tmp/sdist-venv
         /tmp/sdist-venv/bin/pip install dist/*.tar.gz
         # run from outside the checkout, or the pyopentrustregion directory in the
         # working directory shadows the installed package
-        cd /tmp && /tmp/sdist-venv/bin/python -m pyopentrustregion.verify_install
+        cd /tmp && /tmp/sdist-venv/bin/python -m pyopentrustregion.testsuite
 
     - name: Upload sdist
       uses: actions/upload-artifact@v7
