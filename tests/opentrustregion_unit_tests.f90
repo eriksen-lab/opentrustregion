@@ -420,6 +420,8 @@ contains
         class(*), intent(in), pointer :: context
         logical :: converged
 
+        class(test_context_type), pointer :: test_context
+
         ! check host context
         call check_host_context(context)
 
@@ -431,10 +433,11 @@ contains
         ! check the lowest eigenpair in the state
         select type (context)
         class is (test_context_type)
-            if (.not. associated(context%stability_state)) return
-            context%seen_residual_rms = context%stability_state%residual_rms
-            converged = context%stability_state%residual_rms < &
-                        tol * abs(context%stability_state%min_eigval)
+            test_context => context
+            if (.not. associated(test_context%stability_state)) return
+            test_context%seen_residual_rms = test_context%stability_state%residual_rms
+            converged = test_context%stability_state%residual_rms < &
+                        tol * abs(test_context%stability_state%min_eigval)
             error = 0
         end select
 
@@ -493,6 +496,8 @@ contains
         character(len=*), intent(in) :: message
         class(*), intent(in), pointer :: context
 
+        class(test_context_type), pointer :: test_context
+
         ! check host context
         call check_host_context(context)
 
@@ -500,8 +505,10 @@ contains
         if (associated(context)) then
             select type (context)
             class is (test_context_type)
-                if (.not. allocated(context%log_message)) context%log_message = ""
-                context%log_message = context%log_message//trim(message)
+                test_context => context
+                if (.not. allocated(test_context%log_message)) &
+                    test_context%log_message = ""
+                test_context%log_message = test_context%log_message//trim(message)
             end select
         end if
 
@@ -606,14 +613,19 @@ contains
         class(*), intent(in), pointer :: context
         integer(ip), intent(in) :: callback
 
+        class(hartmann6d_fault_context_type), pointer :: fault_context
+
         ! count call and determine whether it fails
         inject_fault = .false.
         if (.not. associated(context)) return
         select type (context)
         class is (hartmann6d_fault_context_type)
-            context%n_callback_calls(callback) = context%n_callback_calls(callback) + 1
-            inject_fault = callback == context%fault_callback .and. &
-                           context%n_callback_calls(callback) == context%fault_call
+            fault_context => context
+            fault_context%n_callback_calls(callback) = &
+                fault_context%n_callback_calls(callback) + 1
+            inject_fault = &
+                callback == fault_context%fault_callback .and. &
+                fault_context%n_callback_calls(callback) == fault_context%fault_call
         end select
 
     end function inject_fault
@@ -1437,6 +1449,8 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
+        class(double_well_state_context_type), pointer :: state_context
+
         ! apply the Hessian of the double well function
         call double_well_hess_x(x, hess_x, error, context)
         if (error /= 0) return
@@ -1444,10 +1458,11 @@ contains
         ! record the state
         select type (context)
         class is (double_well_state_context_type)
-            if (.not. allocated(context%seen_states)) &
-                allocate(context%seen_states(0), context%step_norms(0), &
-                         context%precond_step_norms(0))
-            context%seen_states = [context%seen_states, context%state]
+            state_context => context
+            if (.not. allocated(state_context%seen_states)) &
+                allocate(state_context%seen_states(0), state_context%step_norms(0), &
+                         state_context%precond_step_norms(0))
+            state_context%seen_states = [state_context%seen_states, state_context%state]
         end select
 
     end subroutine state_reading_hess_x
@@ -1469,6 +1484,8 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
+        class(double_well_state_context_type), pointer :: state_context
+
         ! update the orbitals of the double well function
         call double_well_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
                                      error, context)
@@ -1478,15 +1495,16 @@ contains
         ! Hessian diagonal for the norm of the next step
         select type (context)
         class is (double_well_state_context_type)
-            if (.not. allocated(context%seen_states)) &
-                allocate(context%seen_states(0), context%step_norms(0), &
-                         context%precond_step_norms(0))
-            context%seen_states = [context%seen_states, context%state]
-            context%step_norms = [context%step_norms, norm2(delta_vars)]
-            context%precond_step_norms = [ &
-                context%precond_step_norms, &
-                sqrt(sum(delta_vars**2 / max(abs(context%h_diag), precond_floor)))]
-            context%h_diag = h_diag
+            state_context => context
+            if (.not. allocated(state_context%seen_states)) &
+                allocate(state_context%seen_states(0), state_context%step_norms(0), &
+                         state_context%precond_step_norms(0))
+            state_context%seen_states = [state_context%seen_states, state_context%state]
+            state_context%step_norms = [state_context%step_norms, norm2(delta_vars)]
+            state_context%precond_step_norms = [ &
+                state_context%precond_step_norms, sqrt( &
+                    sum(delta_vars**2 / max(abs(state_context%h_diag), precond_floor)))]
+            state_context%h_diag = h_diag
         end select
 
     end subroutine state_reading_update_orbs

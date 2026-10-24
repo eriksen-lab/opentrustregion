@@ -64,6 +64,8 @@ typedef struct {
   int stability_logger_called;
   int nested_check_ran;
   int nested_check_error;
+  int nested_solve_ran;
+  int nested_solve_error;
   int in_nested;
   int outer_used_inner_hess_x;
   int get_extra_trial_vectors_called;
@@ -283,8 +285,10 @@ static c_int inner_hess_x(const c_real *x, c_real *hx, void *context) {
   return hess_x_fun(x, hx, context);
 }
 
-/* Convergence check that runs a whole stability check from inside the running solve,
- * with its own settings object; only nest once, and report convergence by the gradient
+/* Convergence check that runs a whole stability check and a whole solve from inside the
+ * running solve, each with its own settings object, the solve also with its own host
+ * data, so that it re-enters the procedures of the running solve, which only a library
+ * compiled for recursion allows; only nest once, and report convergence by the gradient
  * criterion with the default threshold it replaces, so the outer solve is
  * unaffected. */
 static c_int conv_check_nested(c_bool *converged, void *context) {
@@ -308,6 +312,14 @@ static c_int conv_check_nested(c_bool *converged, void *context) {
     ctx->nested_check_error =
         stability_check(h_diag, inner_hess_x, N_PARAM, &stable, &inner, NULL, NULL);
     ctx->in_nested = 0;
+
+    hartmann_context inner_ctx = {0};
+    memcpy(inner_ctx.curr_vars, hartmann6d_near_minimum, sizeof(inner_ctx.curr_vars));
+    solver_settings_type inner_settings = solver_settings_init();
+    inner_settings.context = &inner_ctx;
+    ctx->nested_solve_error =
+        solver(update_orbs, obj_func, N_PARAM, &inner_settings, NULL);
+    ctx->nested_solve_ran = inner_ctx.n_update_orbs_calls > 0;
   }
   return 0;
 }
@@ -793,6 +805,16 @@ bool test_solver_c(void) {
   if (ctx.nested_check_error != 0) {
     fprintf(stderr, "test_solver_c failed: A stability check nested inside the "
                     "running solve produced an error.\n");
+    ok = false;
+  }
+  if (!ctx.nested_solve_ran) {
+    fprintf(stderr, "test_solver_c failed: A solve nested inside the running solve "
+                    "did not run.\n");
+    ok = false;
+  }
+  if (ctx.nested_solve_error != 0) {
+    fprintf(stderr, "test_solver_c failed: A solve nested inside the running solve "
+                    "produced an error.\n");
     ok = false;
   }
   if (ctx.outer_used_inner_hess_x) {

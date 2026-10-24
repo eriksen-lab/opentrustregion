@@ -12,6 +12,7 @@ set(otr OpenTrustRegion)
 # set components
 set(runtime_component runtime)
 set(test_component testsuite)
+set(python_component python)
 
 # ====  Options  ================================================================
 
@@ -54,6 +55,10 @@ endif()
 if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     set(CMAKE_Fortran_FLAGS_DEBUG "-g -Wall -Wextra -fcheck=all -fbacktrace")
 
+    # compile every procedure for recursion in every build type, so that a call can be
+    # nested in a callback function of another call or run concurrently in a thread
+    add_compile_options("$<$<COMPILE_LANGUAGE:Fortran>:-frecursive>")
+
     if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
     else()
@@ -67,6 +72,10 @@ elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
     # value of the C bool that logical(c_bool) is passed to
     add_compile_options("$<$<COMPILE_LANGUAGE:Fortran>:SHELL:-fpscomp logicals>")
 
+    # compile every procedure for recursion in every build type, so that a call can be
+    # nested in a callback function of another call or run concurrently in a thread
+    add_compile_options("$<$<COMPILE_LANGUAGE:Fortran>:-recursive>")
+
     if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
     else()
@@ -75,6 +84,9 @@ elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
 
 elseif(CMAKE_Fortran_COMPILER_ID MATCHES "LLVMFlang")
     set(CMAKE_Fortran_FLAGS_DEBUG "-g")
+
+    # Flang compiles every procedure for recursion by default, as Fortran 2018 asks, so
+    # nested and concurrent calls need no flag
 
     if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
@@ -210,8 +222,9 @@ set_target_properties(
     POSITION_INDEPENDENT_CODE ON
 )
 
-# allow undefined symbols at link time on macOS for shared libraries
-if(${BUILD_SHARED_LIBS} AND APPLE)
+# allow undefined symbols at link time on macOS only when the host program supplies
+# BLAS/LAPACK at runtime
+if(${BUILD_SHARED_LIBS} AND APPLE AND ${otr}_HOST_PROVIDES_BLAS)
     set_target_properties(opentrustregion PROPERTIES LINK_FLAGS "-Wl,-undefined,dynamic_lookup")
 endif()
 
@@ -328,3 +341,38 @@ install(FILES
         DESTINATION ${${otr}_INSTALL_CMAKEDIR}
         COMPONENT ${runtime_component}
 )
+
+# ====  Python wheel  ==========================================================
+
+# when the build is driven by scikit-build-core, install the compiled libraries
+# directly into the Python package directory so that ctypes finds them next to
+# python_interface.py
+if(SKBUILD)
+    # a wheel stores plain files, so unset the version properties to drop the versioned
+    # symlink chain and emit a single library named exactly as the ctypes loader expects
+    set_property(TARGET opentrustregion PROPERTY VERSION)
+    set_property(TARGET opentrustregion PROPERTY SOVERSION)
+
+    # keep the directories of the linked libraries outside the system's, such as a
+    # BLAS/LAPACK installed elsewhere, in the installed libraries, as in the build
+    # tree, so that a source install finds them without LD_LIBRARY_PATH; the wheels
+    # link system libraries only, which CMake leaves out
+    set_property(TARGET opentrustregion PROPERTY INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+    # install the solver library
+    install(TARGETS opentrustregion
+            RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # Windows (.dll)
+            LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # shared libraries (.so, .dylib)
+    )
+
+    # install the testsuite library whenever it was built, so that an editable or
+    # source install keeps "python -m pyopentrustregion.testsuite" working; release
+    # wheels switch the testsuite off instead of excluding it here
+    if(${otr}_BUILD_TESTING AND NOT ${otr}_HOST_PROVIDES_BLAS)
+        set_property(TARGET otrtestsuite PROPERTY INSTALL_RPATH_USE_LINK_PATH TRUE)
+        install(TARGETS otrtestsuite
+                RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # Windows (.dll)
+                LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # shared libraries (.so, .dylib)
+        )
+    endif()
+endif()

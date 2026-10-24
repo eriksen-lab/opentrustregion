@@ -19,6 +19,8 @@ testsuite
 
 # Distribution / packaging
 build/
+dist/
+wheelhouse/
 *.egg-info/
 
 # Environment files

@@ -1,16 +1,91 @@
 [build-system]
-requires = ["setuptools>=60.0.0", "wheel", "cmake"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.11"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "pyopentrustregion"
-version = "3.0.0"
-description = "Python interface to OpenTrustRegion Fortran library"
+dynamic = ["version"]
+description = "Python interface to OpenTrustRegion, a Reusable Library for Second-Order Trust Region Orbital Optimization"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MPL-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Jonas Greiner", email = "jongr@kemi.dtu.dk" }]
+keywords = [
+    "optimization",
+    "trust-region",
+    "orbital-optimization",
+    "quantum-chemistry",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Fortran",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 dependencies = ["numpy"]
 
-[tool.setuptools.package-data]
-"pyopentrustregion" = ["test_data/*"]
+[project.urls]
+Homepage = "https://github.com/eriksen-lab/opentrustregion"
+Repository = "https://github.com/eriksen-lab/opentrustregion"
+Issues = "https://github.com/eriksen-lab/opentrustregion/issues"
 
-[tool.setuptools.packages.find]
-include = ["pyopentrustregion*"]
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+cmake.version = ">=3.24"
+# the compiled library is loaded through ctypes and never links libpython, so a single
+# wheel per platform serves every supported Python version
+wheel.py-api = "py3"
+wheel.packages = ["pyopentrustregion"]
+# only the "python" component is installed into the wheel
+install.components = ["python"]
+
+# pip caches the wheels it builds and may install them on another machine, so they are
+# not optimized for the instruction set of the building machine
+[tool.scikit-build.cmake.define]
+BUILD_SHARED_LIBS = "ON"
+OpenTrustRegion_ENABLE_XHOST = "OFF"
+
+# release wheels ship the solver alone: setting OTR_RELEASE_WHEEL=1 switches the
+# Fortran testsuite off and leaves the Python testsuite and its data out of the wheel
+[[tool.scikit-build.overrides]]
+if.env.OTR_RELEASE_WHEEL = true
+inherit.cmake.define = "append"
+cmake.define.OpenTrustRegion_BUILD_TESTING = "OFF"
+# pin LP64 rather than letting CMake autodetect, so a build host that happens to
+# offer only a 64-bit BLAS cannot silently produce an ILP64 wheel
+cmake.define.INTEGER_SIZE = "4"
+wheel.exclude = [
+    "pyopentrustregion/testsuite.py",
+    "pyopentrustregion/test_data/**",
+]
+
+# macOS release wheels link Apple's Accelerate and a static Fortran runtime
+[[tool.scikit-build.overrides]]
+if.env.OTR_RELEASE_WHEEL = true
+if.platform-system = "darwin"
+inherit.cmake.define = "append"
+cmake.define.BLA_VENDOR = "Apple"
+cmake.define.CMAKE_Fortran_FLAGS = "-static-libgfortran -static-libgcc -static-libquadmath"
+
+# conda-build sets CONDA_BUILD=1 automatically; the conda-forge recipe builds the
+# Fortran library as its own "opentrustregion" package and expects "pyopentrustregion"
+# to contain Python files only, so skip CMake entirely and emit a pure-Python wheel
+[[tool.scikit-build.overrides]]
+if.env.CONDA_BUILD = true
+wheel.cmake = false
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "CMakeLists.txt"
+regex = '''(?s)project\s*\(\s*OpenTrustRegion.*?VERSION\s+(?P<value>[0-9]+(?:\.[0-9]+)*)'''
+
+[tool.scikit-build.sdist]
+# scikit-build-core honours .gitignore, so only directories that are kept in the
+# repository but deliberately not shipped need to be named here
+exclude = ["/.github"]

@@ -154,6 +154,8 @@ contains
         !
         class(*), intent(in), pointer :: context
 
+        class(host_context_type), pointer :: received_context
+
         ! a callback function reached without a context is only a failure while a test
         ! has armed one
         if (.not. associated(context)) then
@@ -163,7 +165,8 @@ contains
 
         select type (context)
         class is (host_context_type)
-            context%n_calls = context%n_calls + 1
+            received_context => context
+            received_context%n_calls = received_context%n_calls + 1
         class default
             host_context_wrong = .true.
         end select
