@@ -55,6 +55,10 @@ endif()
 if(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     set(CMAKE_Fortran_FLAGS_DEBUG "-g -Wall -Wextra -fcheck=all -fbacktrace")
 
+    # compile every procedure for recursion in every build type, so that a call can be
+    # nested in a callback function of another call or run concurrently in a thread
+    add_compile_options("$<$<COMPILE_LANGUAGE:Fortran>:-frecursive>")
+
     if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
     else()
@@ -68,6 +72,10 @@ elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
     # value of the C bool that logical(c_bool) is passed to
     add_compile_options("$<$<COMPILE_LANGUAGE:Fortran>:SHELL:-fpscomp logicals>")
 
+    # compile every procedure for recursion in every build type, so that a call can be
+    # nested in a callback function of another call or run concurrently in a thread
+    add_compile_options("$<$<COMPILE_LANGUAGE:Fortran>:-recursive>")
+
     if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")
     else()
@@ -76,6 +84,9 @@ elseif(CMAKE_Fortran_COMPILER_ID MATCHES "Intel")
 
 elseif(CMAKE_Fortran_COMPILER_ID MATCHES "LLVMFlang")
     set(CMAKE_Fortran_FLAGS_DEBUG "-g")
+
+    # Flang compiles every procedure for recursion by default, as Fortran 2018 asks, so
+    # nested and concurrent calls need no flag
 
     if(CMAKE_CROSSCOMPILING OR NOT ${otr}_ENABLE_XHOST)
         set(CMAKE_Fortran_FLAGS_RELEASE "-O2")

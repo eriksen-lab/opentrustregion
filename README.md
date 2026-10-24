@@ -88,12 +88,7 @@ The build process can be customized using the following CMake options:
 
 ### Nested and Concurrent Calls
 
-The library keeps no state of its own between calls, so a solver or stability check call can be nested inside a callback function of another call, or run concurrently with another call in a different thread, as long as each call is given its own state record. A nested call re-enters procedures of the library that are still running, which Fortran only permits for procedures compiled for recursion, and a concurrent call needs their local variables on its own thread's stack. The library then has to be built with `-frecursive` for gfortran (implied by `-fopenmp`) or `-recursive` for Intel:
-
-```sh
-cmake .. -DCMAKE_Fortran_FLAGS=-frecursive                     # Fortran or C
-pip install -C cmake.define.CMAKE_Fortran_FLAGS=-frecursive .  # Python
-```
+The library keeps no state of its own between calls, so a solver or stability check call can be nested inside a callback function of another call, or run concurrently with another call in a different thread, as long as each call is given its own state record. A nested call re-enters procedures of the library that are still running, which Fortran only permits for procedures compiled for recursion, and a concurrent call needs their local variables on its own thread's stack. The CMake build therefore compiles the library for recursion with every compiler (`-frecursive` for gfortran, `-recursive` for Intel, the default of LLVM Flang), so every build through it, the published wheels included, allows nested and concurrent calls. A program that compiles the sources with its own build system has to pass these flags itself.
 
 Every call also reseeds the random number generator of the Fortran runtime, which the whole program shares, so a nested or concurrent call changes the random trial vectors, and with them the iterations, of the other call, though not its correctness.
 
