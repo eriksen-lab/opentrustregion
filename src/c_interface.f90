@@ -805,7 +805,7 @@ contains
         !
         ! this subroutine initializes the C solver settings
         !
-        type(solver_settings_type_c), intent(inout) :: settings
+        type(solver_settings_type_c), intent(out) :: settings
 
         settings = default_solver_settings
 
@@ -816,7 +816,7 @@ contains
         !
         ! this subroutine initializes the C stability settings
         !
-        type(stability_settings_type_c), intent(inout) :: settings
+        type(stability_settings_type_c), intent(out) :: settings
 
         settings = default_stability_settings
 

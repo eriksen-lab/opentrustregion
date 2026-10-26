@@ -301,7 +301,7 @@ contains
         use c_interface, only: solver_settings_type_c
         use test_reference, only: get_reference_solver_values, unset_callbacks
 
-        type(solver_settings_type_c), intent(inout) :: settings
+        type(solver_settings_type_c), intent(out) :: settings
 
         ! set reference values without callback functions and host contexts
         call get_reference_solver_values(settings)
@@ -320,7 +320,7 @@ contains
         use c_interface, only: stability_settings_type_c
         use test_reference, only: get_reference_stability_values, unset_callbacks
 
-        type(stability_settings_type_c), intent(inout) :: settings
+        type(stability_settings_type_c), intent(out) :: settings
 
         ! set reference values without callback functions and host context
         call get_reference_stability_values(settings)

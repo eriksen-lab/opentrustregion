@@ -222,16 +222,17 @@ c_int stability_check(const c_real *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_pa
 #endif
 
 /* ------------------------------------------------------------------
- * Small C helper functions to mimic Fortran settings%init()
+ * Small C helper functions returning the default settings, which a declared Fortran
+ * settings object holds
  * ------------------------------------------------------------------ */
 static inline solver_settings_type solver_settings_init(void) {
-  solver_settings_type s = {0};
+  solver_settings_type s;
   init_solver_settings(&s);
   return s;
 }
 
 static inline stability_settings_type stability_settings_init(void) {
-  stability_settings_type s = {0};
+  stability_settings_type s;
   init_stability_settings(&s);
   return s;
 }
