@@ -6,6 +6,7 @@
 
 import os
 import sys
+import copy
 import unittest
 import warnings
 from importlib import resources
@@ -16,6 +17,8 @@ from ctypes import (
     c_char_p,
     c_void_p,
     sizeof,
+    memset,
+    addressof,
     Array,
     byref,
     CFUNCTYPE,
@@ -23,6 +26,7 @@ from ctypes import (
     POINTER,
 )
 from unittest.mock import patch
+from functools import partial
 from types import SimpleNamespace
 from pathlib import Path
 import numpy as np
@@ -40,6 +44,8 @@ try:
         c_real,
         ext,
         conda_prefix,
+        ObjFuncInterface,
+        HessXInterface,
         UpdateOrbsInterface,
         PrecondInterface,
         ProjectInterface,
@@ -63,6 +69,8 @@ except ImportError:
         c_real,
         ext,
         conda_prefix,
+        ObjFuncInterface,
+        HessXInterface,
         UpdateOrbsInterface,
         PrecondInterface,
         ProjectInterface,
@@ -731,12 +739,13 @@ class PyInterfaceUnitTests(unittest.TestCase):
         this function checks that the optional callback functions of a settings object
         are unset and that every other field holds its reference value, the names of
         the stability check settings carry the prefix "stability_settings.", the host
-        context is skipped since the Python wrapper never writes it
+        context and the initialization flag are skipped since the Python wrapper
+        exposes neither
         """
         test_passed = True
         for field_info in settings.c_struct._fields_:
             field_name, field_type = field_info[:2]
-            if field_name == "context":
+            if field_name in ("context", "initialized"):
                 continue
             if field_type == c_void_p:
                 if getattr(settings, field_name) is not None:
@@ -767,6 +776,69 @@ class PyInterfaceUnitTests(unittest.TestCase):
                     test_passed = False
         return test_passed
 
+    def _settings_safeguarded(self, test_name, settings):
+        """
+        this function checks that a settings object accepts no attribute that is not a
+        setting or a callback function and that its copies hold the settings in a C
+        struct of their own, a copy sharing the callback functions and a deep copy
+        copying them, also for the nested stability check settings
+        """
+        test_passed = True
+
+        # neither the initialization flag nor the host context nor a misspelled
+        # setting can be set
+        for name in ["initialized", "context", "conv_tl"]:
+            try:
+                setattr(settings, name, 0)
+                print(f" {test_name} failed: Attribute {name} could be set.")
+                test_passed = False
+            except AttributeError:
+                pass
+
+        # change a setting, so that only a copy of the values holds it, and set a
+        # callback function that a deep copy copies, on the nested settings too
+        all_settings = [settings]
+        if hasattr(settings, "stability_settings"):
+            all_settings.append(settings.stability_settings)
+        for some_settings in all_settings:
+            some_settings.conv_tol = 3 * some_settings.conv_tol
+            some_settings.precond = partial(self._mock_precond)
+
+        for copy_function, shared, case in [
+            (copy.copy, True, "copy"),
+            (copy.deepcopy, False, "deep copy"),
+        ]:
+            settings_copy = copy_function(settings)
+            copies = [settings_copy]
+            if hasattr(settings_copy, "stability_settings"):
+                copies.append(settings_copy.stability_settings)
+            for original, duplicate in zip(all_settings, copies):
+                # the copy holds the same settings, a change of which leaves the
+                # original unchanged
+                if bytes(duplicate.settings_c) != bytes(original.settings_c):
+                    print(f" {test_name} failed: The {case} holds other settings.")
+                    test_passed = False
+                conv_tol = original.conv_tol
+                duplicate.conv_tol = 2 * conv_tol
+                if original.conv_tol != conv_tol:
+                    print(
+                        f" {test_name} failed: Changing the {case} changed the "
+                        "original."
+                    )
+                    test_passed = False
+
+                # a copy shares the callback functions, a deep copy copies them
+                if (duplicate.precond is original.precond) != shared or not callable(
+                    duplicate.precond
+                ):
+                    print(
+                        f" {test_name} failed: Callback function wrong for the "
+                        f"{case}."
+                    )
+                    test_passed = False
+
+        return test_passed
+
     @staticmethod
     def _state_holds_reference(test_name, state, prefix, location=""):
         """
@@ -792,6 +864,21 @@ class PyInterfaceUnitTests(unittest.TestCase):
                     f"{location}."
                 )
                 test_passed = False
+        return test_passed
+
+    def _state_copies_kept(self, test_name, state, prefix):
+        """
+        this function checks that a copy and a deep copy of a state holding the
+        reference values keep them when the original state is reset, since they hold
+        them in a C struct of their own
+        """
+        test_passed = True
+        copies = [copy.copy(state), copy.deepcopy(state)]
+        memset(addressof(state.state_c), 0, sizeof(state.c_struct))
+        for state_copy, case in zip(copies, ["copy", "deep copy"]):
+            test_passed &= self._state_holds_reference(
+                test_name, state_copy, prefix, f" for the {case} of a reset state"
+            )
         return test_passed
 
     @staticmethod
@@ -871,6 +958,48 @@ class PyInterfaceUnitTests(unittest.TestCase):
                     f" test_callback_interfaces failed: Exception raised by {name} "
                     "not kept."
                 )
+                test_passed = False
+
+        # the interfaces hand the callback functions their inputs read-only, so that
+        # writing into one is reported as an error of the callback function and leaves
+        # the input unchanged
+        def writing_into_input(array, *args):
+            array[0] = 1.0
+
+        output = np.zeros(n_param)
+        output_ptr = output.ctypes.data_as(POINTER(c_real))
+        for name, make_interface, args in [
+            (
+                "objective function",
+                lambda exc: ObjFuncInterface(writing_into_input, n_param, exc),
+                (vector_ptr, pointer(c_real())),
+            ),
+            (
+                "Hessian linear transformation",
+                lambda exc: HessXInterface(writing_into_input, n_param, exc),
+                (vector_ptr, output_ptr),
+            ),
+            (
+                "orbital update",
+                lambda exc: UpdateOrbsInterface(writing_into_input, n_param, exc),
+                (vector_ptr, pointer(c_real()), output_ptr, output_ptr, None),
+            ),
+            (
+                "preconditioner",
+                lambda exc: PrecondInterface(writing_into_input, n_param, exc),
+                (vector_ptr, pointer(c_real(1.0)), output_ptr),
+            ),
+        ]:
+            exception = {}
+            error = make_interface(exception).call(*args)
+            if error != 1 or not isinstance(exception.get("exc"), ValueError):
+                print(
+                    f" test_callback_interfaces failed: Writing into the input of the "
+                    f"{name} not reported as error."
+                )
+                test_passed = False
+            if np.any(vector != 0.0):
+                print(f" test_callback_interfaces failed: Input of the {name} changed.")
                 test_passed = False
 
         # the orbital update interface leaves the Hessian linear transformation unset
@@ -1078,6 +1207,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         test_passed = self._settings_hold_reference(
             "test_solver_settings", settings, ""
         )
+        test_passed &= self._settings_safeguarded("test_solver_settings", settings)
 
         dummy_error_code = 42
 
@@ -1144,6 +1274,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         test_passed = self._settings_hold_reference(
             "test_stability_settings", settings, "stability_settings."
         )
+        test_passed &= self._settings_safeguarded("test_stability_settings", settings)
         self.assertTrue(test_passed, "test_stability_settings failed")
         print(" test_stability_settings PASSED")
 
@@ -1157,6 +1288,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
         test_passed = self._state_holds_defaults("test_solver_state", state)
         lib.get_reference_solver_state_values(byref(state.state_c))
         test_passed &= self._state_holds_reference("test_solver_state", state, "")
+        test_passed &= self._state_copies_kept("test_solver_state", state, "")
         try:
             state.n_update_orbs = 1
             print(" test_solver_state failed: Field could be set.")
@@ -1175,6 +1307,9 @@ class PyInterfaceUnitTests(unittest.TestCase):
         test_passed = self._state_holds_defaults("test_stability_state", state)
         lib.get_reference_stability_state_values(byref(state.state_c))
         test_passed &= self._state_holds_reference(
+            "test_stability_state", state, "stability_state."
+        )
+        test_passed &= self._state_copies_kept(
             "test_stability_state", state, "stability_state."
         )
         try:

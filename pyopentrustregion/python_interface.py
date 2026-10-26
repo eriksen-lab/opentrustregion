@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import copy
 import warnings
 from pathlib import Path
 import numpy as np
@@ -165,8 +166,9 @@ class ObjFuncInterface(CallbackInterface):
     exception: Dict[str, Exception]
 
     def call(self, kappa_ptr, func_ptr) -> int:
-        # convert matrix pointers to numpy arrays
+        # convert matrix pointers to numpy arrays and make read-only
         kappa = np.ctypeslib.as_array(kappa_ptr, shape=(self.n_param,))
+        kappa.flags.writeable = False
 
         try:
             func_ptr[0] = self.obj_func(kappa)
@@ -188,8 +190,9 @@ class HessXInterface(CallbackInterface):
     exception: Dict[str, Exception]
 
     def call(self, x_ptr, hx_ptr) -> int:
-        # convert trial vector pointer to numpy array
+        # convert trial vector pointer to numpy array and make read-only
         x = np.ctypeslib.as_array(x_ptr, shape=(self.n_param,))
+        x.flags.writeable = False
         hx = np.ctypeslib.as_array(hx_ptr, shape=(self.n_param,))
 
         # perform linear transformation
@@ -217,8 +220,9 @@ class UpdateOrbsInterface(CallbackInterface):
     hess_x_funptr: Optional[Any] = None
 
     def call(self, kappa_ptr, func_ptr, grad_ptr, h_diag_ptr, hess_x_funptr) -> int:
-        # convert matrix pointers to numpy arrays
+        # convert matrix pointers to numpy arrays and make read-only
         kappa = np.ctypeslib.as_array(kappa_ptr, shape=(self.n_param,))
+        kappa.flags.writeable = False
         grad = np.ctypeslib.as_array(grad_ptr, shape=(self.n_param,))
         h_diag = np.ctypeslib.as_array(h_diag_ptr, shape=(self.n_param,))
 
@@ -263,8 +267,9 @@ class PrecondInterface(CallbackInterface):
     exception: Dict[str, Exception]
 
     def call(self, residual_ptr, mu_ptr, precond_residual_ptr) -> int:
-        # convert pointers to numpy arrays and float
+        # convert pointers to numpy arrays and float and make read-only
         residual = np.ctypeslib.as_array(residual_ptr, shape=(self.n_param,))
+        residual.flags.writeable = False
         mu = mu_ptr[0]
         precond_residual = np.ctypeslib.as_array(
             precond_residual_ptr, shape=(self.n_param,)
@@ -487,6 +492,10 @@ class Settings:
     c_struct: type[Structure]
     init_c_struct: Any
 
+    # attributes the settings classes set themselves besides the settings and the
+    # optional callback functions
+    own_attributes = ("settings_c", "_stability_settings")
+
     def __init__(self, settings_c: Optional[Structure] = None):
         """
         this function initializes the settings class
@@ -504,10 +513,74 @@ class Settings:
             self.settings_c = settings_c
 
         # initializes all optional function pointers to None
-        for field_info in self.settings_c._fields_:
-            field_name, field_type = field_info[:2]
-            if field_type is c_void_p and field_name != "context":
-                setattr(self, field_name, None)
+        for name in self.callback_names():
+            setattr(self, name, None)
+
+    @classmethod
+    def callback_names(cls) -> list:
+        """
+        this function returns the names of the optional callback functions, the
+        function pointers of the C struct apart from the host context, which Python
+        does not use
+        """
+        return [
+            field_info[0]
+            for field_info in cls.c_struct._fields_
+            if field_info[1] is c_void_p and field_info[0] != "context"
+        ]
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """
+        this function sets an attribute only if it is a setting, an optional callback
+        function or one the class sets itself, so that a misspelled setting raises
+        instead of being silently ignored
+        """
+        if not (
+            isinstance(getattr(type(self), name, None), property)
+            or name in self.callback_names()
+            or name in self.own_attributes
+        ):
+            raise AttributeError(f"{type(self).__name__} has no setting {name!r}.")
+        super().__setattr__(name, value)
+
+    def __copy__(self) -> Settings:
+        """
+        this function returns a copy of the settings with a C struct of its own, so
+        that changing either leaves the other unchanged, which shares the callback
+        functions
+        """
+        return self.copy_with(lambda func: func)
+
+    def __deepcopy__(self, memo: dict) -> Settings:
+        """
+        this function returns a copy of the settings with a C struct of its own and
+        deep copies of the callback functions
+        """
+        return self.copy_with(lambda func: copy.deepcopy(func, memo))
+
+    def copy_with(self, copy_callback: Callable[[Any], Any]) -> Settings:
+        """
+        this function returns a copy of the settings with a C struct of its own, whose
+        callback functions are copied by the given function
+        """
+        settings = type(self)()
+        memmove(
+            addressof(settings.settings_c),
+            addressof(self.settings_c),
+            sizeof(self.c_struct),
+        )
+        self.copy_callbacks(settings, copy_callback)
+        return settings
+
+    def copy_callbacks(
+        self, settings: Settings, copy_callback: Callable[[Any], Any]
+    ) -> None:
+        """
+        this function sets the optional callback functions of other settings to copies
+        of these, made by the given function
+        """
+        for name in self.callback_names():
+            setattr(settings, name, copy_callback(getattr(self, name)))
 
     def set_optional_callback(
         self,
@@ -557,6 +630,19 @@ class SolverSettings(Settings):
     @property
     def stability_settings(self) -> StabilitySettings:
         return self._stability_settings
+
+    def copy_callbacks(
+        self, settings: Settings, copy_callback: Callable[[Any], Any]
+    ) -> None:
+        """
+        this function sets the optional callback functions of other settings, those of
+        the nested stability check settings included, to copies of these, made by the
+        given function
+        """
+        super().copy_callbacks(settings, copy_callback)
+        self.stability_settings.copy_callbacks(
+            settings.stability_settings, copy_callback
+        )
 
     def set_optional_callbacks(
         self,
@@ -702,10 +788,13 @@ def auto_bind_fields(cls: type[Settings]):
     for field_info in cls.c_struct._fields_:
         field_name, field_type = field_info[:2]
 
-        # skip if function pointer (these will be initialized separately) or nested
-        # structures
-        if field_type is c_void_p or (
-            isinstance(field_type, type) and issubclass(field_type, Structure)
+        # skip if function pointer (these will be initialized separately), nested
+        # structures or the flag of initialized C settings, which Python settings
+        # always are
+        if (
+            field_type is c_void_p
+            or (isinstance(field_type, type) and issubclass(field_type, Structure))
+            or field_name == "initialized"
         ):
             continue
 
@@ -771,6 +860,24 @@ class State:
         default values, or on a given one
         """
         self.state_c = self.c_struct() if state_c is None else state_c
+
+    def __copy__(self) -> State:
+        """
+        this function returns a copy of the state with a C struct of its own, so that
+        a later call writing into the state leaves the copy unchanged
+        """
+        state = type(self)()
+        memmove(
+            addressof(state.state_c), addressof(self.state_c), sizeof(self.c_struct)
+        )
+        return state
+
+    def __deepcopy__(self, memo: dict) -> State:
+        """
+        this function returns a copy of the state with a C struct of its own, a state
+        holds nothing else that could be copied
+        """
+        return self.__copy__()
 
 
 class SolverState(State):
