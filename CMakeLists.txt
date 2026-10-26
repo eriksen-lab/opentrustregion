@@ -112,6 +112,12 @@ endif()
 
 # user-supplied integer size
 set(INTEGER_SIZE "" CACHE STRING "Size of integers for library (4=32-bit, 8=64-bit)")
+if(INTEGER_SIZE AND NOT INTEGER_SIZE MATCHES "^(4|8)$")
+    message(FATAL_ERROR
+        "INTEGER_SIZE is ${INTEGER_SIZE}. "
+        "Please set INTEGER_SIZE to 4 (LP64) or 8 (ILP64), or leave it unset to autodetect."
+    )
+endif()
 
 # user-supplied BLAS and LAPACK libraries
 set(BLAS_LIBRARIES "" CACHE STRING "User-specified BLAS library path(s)")
