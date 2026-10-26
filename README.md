@@ -30,7 +30,7 @@ cmake --build .
 
 The installation can be tested by running the ```testsuite.py``` file in the ```pyopentrustregion``` directory.
 
-A Fortran or C program has to be rebuilt against the modules or the header of the library version it links, since the settings and state types can change from one version to the next.
+A new major version changes the interfaces, while a new minor version can change the settings and state types, so a Fortran or C program has to be rebuilt against the modules or the header of the minor version it links. The shared library is therefore versioned by its minor version, and `find_package(OpenTrustRegion <version>)` only accepts the requested one. A patch version can replace the library without a rebuild.
 
 ### Python Usage
 Released versions are available from PyPI:

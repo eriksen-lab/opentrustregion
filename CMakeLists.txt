@@ -215,8 +215,10 @@ set_target_properties(
     EXPORT_NAME "opentrustregion${LIB_SUFFIX}"
     # library version
     VERSION ${PROJECT_VERSION}
-    # interface version
-    SOVERSION ${PROJECT_VERSION_MAJOR}
+    # interface version, which includes the minor version since a minor version can
+    # change the settings and state types, so that a program built against another
+    # minor version does not load the library
+    SOVERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
     # position-independent code - not automatically enabled for static libraries, but
     # required when linking a static library into a shared library
     POSITION_INDEPENDENT_CODE ON
@@ -303,11 +305,12 @@ configure_package_config_file(
     INSTALL_DESTINATION ${${otr}_INSTALL_CMAKEDIR}
 )
 
-# generate version file
+# generate version file, which accepts only the requested minor version, since a
+# program has to be rebuilt for another one
 write_basic_package_version_file(
     ${CMAKE_CURRENT_BINARY_DIR}/${otr}ConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
+    COMPATIBILITY SameMinorVersion
 )
 
 # install library
