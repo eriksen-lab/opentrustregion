@@ -9303,10 +9303,11 @@ contains
         character(len=*), parameter :: mixed_case_subsystem_solvers(5) = &
             [character(len=18) :: "Davidson_LS", "Davidson_AH", "Jacobi-Davidson_LS", &
              "Jacobi-Davidson_AH", "TCG"]
-        character(len=*), parameter :: error_case_names(7) = &
+        character(len=*), parameter :: error_case_names(9) = &
             [character(len=55) :: "vanishing number of parameters", &
              "negative number of parameters", "vanishing number of micro iterations", &
              "negative number of random trial vectors", &
+             "vanishing starting trust radius", "negative starting trust radius", &
              "extra trial vector function without extra trial vectors", &
              "unknown subsystem solver", "rejected nested stability check settings"]
         character(len=*), parameter :: projection_case_names(2) = &
@@ -9375,11 +9376,15 @@ contains
             case (4)
                 settings%n_random_trial_vectors = -1
             case (5)
+                settings%start_trust_radius = 0.0_rp
+            case (6)
+                settings%start_trust_radius = -1.0_rp
+            case (7)
                 settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
                 settings%n_extra_trial_vectors = 0
-            case (6)
+            case (8)
                 settings%subsystem_solver = "unknown"
-            case (7)
+            case (9)
                 ! the nested settings print the error message of their own check
                 call setup_error_logging(settings%stability_settings, context)
                 settings%stability_settings%diag_solver = "unknown"

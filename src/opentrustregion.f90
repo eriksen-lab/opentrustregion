@@ -3632,6 +3632,14 @@ contains
             return
         end if
 
+        ! check that the starting trust radius is positive
+        if (.not. settings%start_trust_radius > 0.0_rp) then
+            call settings%log("Starting trust radius should be larger than 0.", &
+                              verbosity_error, .true.)
+            error = 1
+            return
+        end if
+
         ! convert strings to lowercase
         settings%subsystem_solver = string_to_lowercase(settings%subsystem_solver)
 
