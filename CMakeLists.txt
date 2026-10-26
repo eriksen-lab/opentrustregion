@@ -256,9 +256,14 @@ if(NOT ${otr}_HOST_PROVIDES_BLAS)
 endif()
 
 # set include directories
+set(module_dir ${CMAKE_CURRENT_BINARY_DIR}/modules)
+set(module_install_dir ${CMAKE_INSTALL_INCLUDEDIR}/opentrustregion_${LIB_SUFFIX})
+set_target_properties(opentrustregion PROPERTIES Fortran_MODULE_DIRECTORY ${module_dir})
 target_include_directories(opentrustregion PUBLIC
                            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+                           $<BUILD_INTERFACE:${module_dir}>
                            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+                           $<INSTALL_INTERFACE:${module_install_dir}>
 )
 
 # option to build testsuite but skip when the host provides BLAS/LAPACK (tests require 
@@ -333,6 +338,13 @@ install(TARGETS opentrustregion
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
         COMPONENT ${runtime_component}
+)
+
+# install Fortran modules
+install(DIRECTORY ${module_dir}/
+        DESTINATION ${module_install_dir}
+        COMPONENT ${runtime_component}
+        FILES_MATCHING PATTERN "*.mod"
 )
 
 # install targets
