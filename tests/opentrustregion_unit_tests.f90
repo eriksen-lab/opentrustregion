@@ -7916,6 +7916,31 @@ contains
             test_level_shifted_davidson = .false.
         end if
 
+        ! run level-shifted Davidson near the saddle point with a single micro iteration
+        ! allowed per step and check that every step, accepted or rejected, performs
+        ! exactly one micro iteration before the objective function is evaluated
+        call setup_settings(settings, context)
+        settings%grad_noise = .false.
+        settings%n_micro = 1
+        call setup_hartmann6d_point(context, near_saddle_point, func, grad, h_diag)
+        obj_func_funptr => obj_func
+        hess_x_funptr => hess_x_fun
+        state%trust_radius = 0.4_rp
+        state%n_obj_func = 0
+        call level_shifted_davidson(func, grad, norm2(grad), h_diag, n_param, &
+                                    obj_func_funptr, hess_x_funptr, settings, .false., &
+                                    state, solution, solution_norm, mu, error)
+        if (error /= 0) then
+            write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
+                "with a single micro iteration."
+            test_level_shifted_davidson = .false.
+        end if
+        if (state%micro_iteration /= state%n_obj_func) then
+            write(stderr, *) "test_level_shifted_davidson failed: Not exactly one "// &
+                "micro iteration performed per step when a single one is allowed."
+            test_level_shifted_davidson = .false.
+        end if
+
         ! let the residual stagnate with a quadratic model whose gradient only couples
         ! to the second unit vector and a preconditioner which returns the following
         ! unit vectors, which can never reduce the residual, and check that the
@@ -8302,7 +8327,7 @@ contains
         use opentrustregion_core, only: &
             obj_func_type, hess_x_type, solver_settings_type, &
             truncated_conjugate_gradient, error_hess_x, error_obj_func, &
-            function_unchanged_warning_msg, precond_floor
+            function_unchanged_warning_msg, precond_floor, default_solver_settings
 
         real(rp) :: func, ratio, solution_norm, metric_norm
         real(rp), dimension(n_param) :: grad, h_diag, solution
@@ -8410,6 +8435,32 @@ contains
             test_truncated_conjugate_gradient = .false.
         end if
         settings%precond => null()
+
+        ! run truncated conjugate gradient with a single micro iteration allowed and
+        ! check that it performs exactly one, with one Hessian linear transformation,
+        ! and takes a step
+        settings%n_micro = 1
+        state%trust_radius = 0.4_rp
+        context%n_hess_x_calls = 0
+        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
+                                          obj_func_funptr, hess_x_funptr, settings, &
+                                          state, solution, solution_norm, error)
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error with a single micro iteration."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (state%micro_iteration /= 1 .or. context%n_hess_x_calls /= 1) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Not "// &
+                "exactly one micro iteration performed when a single one is allowed."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (state%max_precision_reached .or. norm2(solution) <= 0.0_rp) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: No step "// &
+                "taken with a single micro iteration."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        settings%n_micro = default_solver_settings%n_micro
 
         ! run truncated conjugate gradient with a trust radius twice as long as the
         ! first solution in the metric of the trust region but shorter than its

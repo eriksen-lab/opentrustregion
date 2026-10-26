@@ -3262,7 +3262,7 @@ contains
 
         ! start microiteration loop
         micro_converged = .false.
-        do imicro = 1, settings%n_micro - 1
+        do imicro = 1, settings%n_micro
             ! count the micro iteration
             state%micro_iteration = state%micro_iteration + 1
 
