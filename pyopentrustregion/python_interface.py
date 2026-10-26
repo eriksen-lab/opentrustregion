@@ -163,7 +163,7 @@ class ObjFuncInterface(CallbackInterface):
 
     obj_func: Callable[[np.ndarray], float]
     n_param: int
-    exception: Dict[str, Exception]
+    exception: Dict[str, BaseException]
 
     def call(self, kappa_ptr, func_ptr) -> int:
         # convert matrix pointers to numpy arrays and make read-only
@@ -172,7 +172,7 @@ class ObjFuncInterface(CallbackInterface):
 
         try:
             func_ptr[0] = self.obj_func(kappa)
-        except Exception as e:
+        except BaseException as e:
             self.exception["exc"] = e
             return 1
 
@@ -187,7 +187,7 @@ class HessXInterface(CallbackInterface):
 
     hess_x: Callable[[np.ndarray, np.ndarray], None]
     n_param: int
-    exception: Dict[str, Exception]
+    exception: Dict[str, BaseException]
 
     def call(self, x_ptr, hx_ptr) -> int:
         # convert trial vector pointer to numpy array and make read-only
@@ -198,7 +198,7 @@ class HessXInterface(CallbackInterface):
         # perform linear transformation
         try:
             self.hess_x(x, hx)
-        except Exception as e:
+        except BaseException as e:
             self.exception["exc"] = e
             return 1
 
@@ -216,7 +216,7 @@ class UpdateOrbsInterface(CallbackInterface):
         Tuple[float, Callable[[np.ndarray, np.ndarray], None]],
     ]
     n_param: int
-    exception: Dict[str, Exception]
+    exception: Dict[str, BaseException]
     hess_x_funptr: Optional[Any] = None
 
     def call(self, kappa_ptr, func_ptr, grad_ptr, h_diag_ptr, hess_x_funptr) -> int:
@@ -230,7 +230,7 @@ class UpdateOrbsInterface(CallbackInterface):
         # and Hessian linear transformation function
         try:
             func_ptr[0], hess_x = self.update_orbs(kappa, grad, h_diag)
-        except Exception as e:
+        except BaseException as e:
             self.exception["exc"] = e
             return 1
 
@@ -264,7 +264,7 @@ class PrecondInterface(CallbackInterface):
 
     precond: Callable[[np.ndarray, float, np.ndarray], None]
     n_param: int
-    exception: Dict[str, Exception]
+    exception: Dict[str, BaseException]
 
     def call(self, residual_ptr, mu_ptr, precond_residual_ptr) -> int:
         # convert pointers to numpy arrays and float and make read-only
@@ -278,7 +278,7 @@ class PrecondInterface(CallbackInterface):
         # call preconditioner
         try:
             self.precond(residual, mu, precond_residual)
-        except Exception as e:
+        except BaseException as e:
             self.exception["exc"] = e
             return 1
 
@@ -293,7 +293,7 @@ class ProjectInterface(CallbackInterface):
 
     project: Callable[[np.ndarray], None]
     n_param: int
-    exception: Dict[str, Exception]
+    exception: Dict[str, BaseException]
 
     def call(self, vector_ptr) -> int:
         # convert matrix pointers to numpy arrays
@@ -302,7 +302,7 @@ class ProjectInterface(CallbackInterface):
         # call projection function
         try:
             self.project(vector)
-        except Exception as e:
+        except BaseException as e:
             self.exception["exc"] = e
             return 1
 
@@ -317,7 +317,7 @@ class GetExtraTrialVectorsInterface(CallbackInterface):
 
     get_extra_trial_vectors: Callable[[np.ndarray], None]
     n_param: int
-    exception: Dict[str, Exception]
+    exception: Dict[str, BaseException]
 
     def call(self, trial_vectors_ptr, n_extra_trial_vectors) -> int:
         # convert matrix pointer to numpy array with one trial vector per row
@@ -328,7 +328,7 @@ class GetExtraTrialVectorsInterface(CallbackInterface):
         # call extra trial vector function
         try:
             self.get_extra_trial_vectors(trial_vectors)
-        except Exception as e:
+        except BaseException as e:
             self.exception["exc"] = e
             return 1
 
@@ -342,13 +342,13 @@ class ConvCheckInterface(CallbackInterface):
     """
 
     conv_check: Callable[[], bool]
-    exception: Dict[str, Exception]
+    exception: Dict[str, BaseException]
 
     def call(self, conv_ptr) -> int:
         # call convergence check
         try:
             conv_ptr[0] = self.conv_check()
-        except Exception as e:
+        except BaseException as e:
             self.exception["exc"] = e
             return 1
 
@@ -362,13 +362,13 @@ class LoggerInterface(CallbackInterface):
     """
 
     logger: Callable[[str], None]
-    exception: Dict[str, Exception]
+    exception: Dict[str, BaseException]
 
     def call(self, message):
         # call logger
         try:
             self.logger(string_at(message).decode("utf-8"))
-        except Exception as e:
+        except BaseException as e:
             # the logger has no error channel since the result does not depend on it,
             # so the first failure is kept and reported once the call into the library
             # has returned
@@ -649,7 +649,7 @@ class SolverSettings(Settings):
         settings_c: Structure,
         interfaces: list,
         n_param: int,
-        exception: Dict[str, Exception],
+        exception: Dict[str, BaseException],
     ):
         """
         this function sets the interfaces for the optional callback functions in the C
@@ -724,7 +724,7 @@ class StabilitySettings(Settings):
         settings_c: Structure,
         interfaces: list,
         n_param: int,
-        exception: Dict[str, Exception],
+        exception: Dict[str, BaseException],
     ):
         """
         this function sets the interfaces for the optional callback functions in the C
@@ -926,13 +926,17 @@ bind_state_fields(SolverState)
 bind_state_fields(StabilityState)
 
 
-def raise_on_failure(error: int, exception: Dict[str, Exception], name: str):
+def raise_on_failure(error: int, exception: Dict[str, BaseException], name: str):
     """
     this function raises if a call into the library failed, with the exception raised
     by a failing callback function as its cause, a failed logger cannot affect the
     result and is therefore only reported as a warning, both before an error and
-    instead of one
+    instead of one, while an interruption of a callback function, such as a
+    KeyboardInterrupt, is raised as it is
     """
+    for key in ("exc", "logger"):
+        if key in exception and not isinstance(exception[key], Exception):
+            raise exception[key]
     if "logger" in exception:
         warning = RuntimeWarning(
             f"OpenTrustRegion {name} called a logging function that raised "
@@ -958,7 +962,7 @@ def solver(
     state: Optional[SolverState] = None,
 ):
     # variable to capture exceptions in the callback interfaces
-    exception: Dict[str, Exception] = {}
+    exception: Dict[str, BaseException] = {}
 
     # define interfaces for callback functions
     obj_func_interface = obj_func_interface_type(
@@ -1030,7 +1034,7 @@ def stability_check(
         )
 
     # variable to capture exceptions in the callback interfaces
-    exception: Dict[str, Exception] = {}
+    exception: Dict[str, BaseException] = {}
 
     # define interfaces for callback functions
     hess_x_interface = hess_x_interface_type(HessXInterface(hess_x, n_param, exception))

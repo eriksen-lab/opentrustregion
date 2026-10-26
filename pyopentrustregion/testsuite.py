@@ -948,58 +948,75 @@ class PyInterfaceUnitTests(unittest.TestCase):
     def test_callback_interfaces(self):
         """
         this function tests that the interfaces to the Python callback functions
-        report an exception raised by a callback function as an error and keep it,
-        that the convergence check interface passes on the result and that the logging
-        interface keeps the first exception the logging function raises
+        report an exception or an interruption raised by a callback function as an
+        error and keep it, that the convergence check interface passes on the result
+        and that the logging interface keeps the first exception the logging function
+        raises and an interruption
         """
         test_passed = True
         n_param = 2
         vector = np.zeros(n_param)
         vector_ptr = vector.ctypes.data_as(POINTER(c_real))
 
-        def raising(*args):
-            raise ValueError("callback function failure")
+        def raising(error_type):
+            def callback(*args):
+                raise error_type("callback function failure")
 
-        for name, make_interface, args in [
-            (
-                "orbital update",
-                lambda exc: UpdateOrbsInterface(raising, n_param, exc),
-                (vector_ptr, pointer(c_real()), vector_ptr, vector_ptr, None),
-            ),
-            (
-                "preconditioner",
-                lambda exc: PrecondInterface(raising, n_param, exc),
-                (vector_ptr, pointer(c_real(1.0)), vector_ptr),
-            ),
-            (
-                "projection",
-                lambda exc: ProjectInterface(raising, n_param, exc),
-                (vector_ptr,),
-            ),
-            (
-                "extra trial vector function",
-                lambda exc: GetExtraTrialVectorsInterface(raising, n_param, exc),
-                (vector_ptr, 1),
-            ),
-            (
-                "convergence check",
-                lambda exc: ConvCheckInterface(raising, exc),
-                (pointer(c_bool()),),
-            ),
-        ]:
-            exception = {}
-            if make_interface(exception).call(*args) != 1:
-                print(
-                    f" test_callback_interfaces failed: Exception raised by {name} "
-                    "not reported as error."
-                )
-                test_passed = False
-            if not isinstance(exception.get("exc"), ValueError):
-                print(
-                    f" test_callback_interfaces failed: Exception raised by {name} "
-                    "not kept."
-                )
-                test_passed = False
+            return callback
+
+        for error_type in (ValueError, KeyboardInterrupt):
+            for name, make_interface, args in [
+                (
+                    "objective function",
+                    lambda exc: ObjFuncInterface(raising(error_type), n_param, exc),
+                    (vector_ptr, pointer(c_real())),
+                ),
+                (
+                    "Hessian linear transformation",
+                    lambda exc: HessXInterface(raising(error_type), n_param, exc),
+                    (vector_ptr, vector_ptr),
+                ),
+                (
+                    "orbital update",
+                    lambda exc: UpdateOrbsInterface(raising(error_type), n_param, exc),
+                    (vector_ptr, pointer(c_real()), vector_ptr, vector_ptr, None),
+                ),
+                (
+                    "preconditioner",
+                    lambda exc: PrecondInterface(raising(error_type), n_param, exc),
+                    (vector_ptr, pointer(c_real(1.0)), vector_ptr),
+                ),
+                (
+                    "projection",
+                    lambda exc: ProjectInterface(raising(error_type), n_param, exc),
+                    (vector_ptr,),
+                ),
+                (
+                    "extra trial vector function",
+                    lambda exc: GetExtraTrialVectorsInterface(
+                        raising(error_type), n_param, exc
+                    ),
+                    (vector_ptr, 1),
+                ),
+                (
+                    "convergence check",
+                    lambda exc: ConvCheckInterface(raising(error_type), exc),
+                    (pointer(c_bool()),),
+                ),
+            ]:
+                exception = {}
+                if make_interface(exception).call(*args) != 1:
+                    print(
+                        f" test_callback_interfaces failed: {error_type.__name__} "
+                        f"raised by {name} not reported as error."
+                    )
+                    test_passed = False
+                if not isinstance(exception.get("exc"), error_type):
+                    print(
+                        f" test_callback_interfaces failed: {error_type.__name__} "
+                        f"raised by {name} not kept."
+                    )
+                    test_passed = False
 
         # the interfaces hand the callback functions their inputs read-only, so that
         # writing into one is reported as an error of the callback function and leaves
@@ -1112,6 +1129,16 @@ class PyInterfaceUnitTests(unittest.TestCase):
             )
             test_passed = False
 
+        # the logging interface also keeps an interruption
+        exception = {}
+        LoggerInterface(raising(KeyboardInterrupt), exception).call(b"test")
+        if not isinstance(exception.get("logger"), KeyboardInterrupt):
+            print(
+                " test_callback_interfaces failed: Interruption of logging function "
+                "not kept."
+            )
+            test_passed = False
+
         self.assertTrue(test_passed, "test_callback_interfaces failed")
         print(" test_callback_interfaces PASSED")
 
@@ -1120,8 +1147,9 @@ class PyInterfaceUnitTests(unittest.TestCase):
         this function tests that an error returned by the library is raised with its
         code and the exception of a failed callback function as its cause, that a
         failed logging function is reported as a warning with its exception as the
-        cause both with and without an error and that nothing is reported without
-        either
+        cause both with and without an error, that nothing is reported without either
+        and that an interruption of a callback function or of the logging function is
+        raised as it is
         """
         test_passed = True
         callback_failure = ValueError("callback function failure")
@@ -1180,6 +1208,26 @@ class PyInterfaceUnitTests(unittest.TestCase):
             if "logger" not in exception and caught:
                 print(
                     f" test_raise_on_failure failed: Warned without failed logger {case}."
+                )
+                test_passed = False
+
+        # an interruption of a callback function or of the logging function is raised
+        # as it is, rather than as an error of the library or a warning, also without
+        # an error
+        for error, key, function in [
+            (7, "exc", "callback function"),
+            (0, "logger", "logging function"),
+        ]:
+            interruption = KeyboardInterrupt()
+            raised = None
+            try:
+                raise_on_failure(error, {key: interruption}, "solver")
+            except BaseException as e:
+                raised = e
+            if raised is not interruption:
+                print(
+                    f" test_raise_on_failure failed: Interruption of {function} not "
+                    "raised as it is."
                 )
                 test_passed = False
 
