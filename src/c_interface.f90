@@ -14,7 +14,8 @@ module c_interface
         logger_type, solver_state_type, stability_state_type
     use, intrinsic :: iso_c_binding, only: &
         c_double, c_int64_t, c_int32_t, c_bool, c_ptr, c_funptr, c_f_pointer, &
-        c_f_procpointer, c_associated, c_char, c_null_char, c_null_ptr, c_null_funptr
+        c_f_procpointer, c_associated, c_char, c_null_char, c_null_ptr, c_null_funptr, &
+        c_size_t, c_sizeof
 
     implicit none
 
@@ -820,6 +821,54 @@ contains
         settings = default_stability_settings
 
     end subroutine init_stability_settings_c
+
+    integer(c_size_t) function solver_settings_size() bind(C)
+        !
+        ! this function returns the size of the C solver settings, which the Python
+        ! interface compares with its own to detect a library of another version and
+        ! the C layout tests with the header's
+        !
+        type(solver_settings_type_c) :: settings_c
+
+        solver_settings_size = c_sizeof(settings_c)
+
+    end function solver_settings_size
+
+    integer(c_size_t) function stability_settings_size() bind(C)
+        !
+        ! this function returns the size of the C stability check settings, which the
+        ! Python interface compares with its own to detect a library of another
+        ! version and the C layout tests with the header's
+        !
+        type(stability_settings_type_c) :: settings_c
+
+        stability_settings_size = c_sizeof(settings_c)
+
+    end function stability_settings_size
+
+    integer(c_size_t) function solver_state_size() bind(C)
+        !
+        ! this function returns the size of the C solver state, which the Python
+        ! interface compares with its own to detect a library of another version and
+        ! the C layout tests with the header's
+        !
+        type(solver_state_type_c) :: state_c
+
+        solver_state_size = c_sizeof(state_c)
+
+    end function solver_state_size
+
+    integer(c_size_t) function stability_state_size() bind(C)
+        !
+        ! this function returns the size of the C stability check state, which the
+        ! Python interface compares with its own to detect a library of another
+        ! version and the C layout tests with the header's
+        !
+        type(stability_state_type_c) :: state_c
+
+        stability_state_size = c_sizeof(state_c)
+
+    end function stability_state_size
 
     subroutine assign_solver_f_c(settings, settings_c)
         !

@@ -11,10 +11,9 @@ module test_reference
         solver_state_type, stability_state_type, settings_uninitialized_warning_msg, &
         stability_settings_uninitialized_warning_msg
     use c_interface, only: c_rp, c_ip, solver_state_type_c
-    use, intrinsic :: iso_c_binding, only: c_bool, c_char, c_null_char, c_funptr, &
-                                           c_null_funptr, c_f_procpointer, &
-                                           c_associated, c_ptr, c_null_ptr, c_loc, &
-                                           c_f_pointer, c_intptr_t, c_size_t, c_sizeof
+    use, intrinsic :: iso_c_binding, only: &
+        c_bool, c_char, c_null_char, c_funptr, c_null_funptr, c_f_procpointer, &
+        c_associated, c_ptr, c_null_ptr, c_loc, c_f_pointer, c_intptr_t
 
     implicit none
 
@@ -443,32 +442,6 @@ contains
 
     end subroutine get_reference_stability_values
 
-    integer(c_size_t) function solver_settings_size() bind(C)
-        !
-        ! this function returns the size of the C solver settings, so that the layout
-        ! tests detect a field missing from the C or Python settings
-        !
-        use c_interface, only: solver_settings_type_c
-
-        type(solver_settings_type_c) :: settings_c
-
-        solver_settings_size = c_sizeof(settings_c)
-
-    end function solver_settings_size
-
-    integer(c_size_t) function stability_settings_size() bind(C)
-        !
-        ! this function returns the size of the C stability check settings, so that
-        ! the layout tests detect a field missing from the C or Python settings
-        !
-        use c_interface, only: stability_settings_type_c
-
-        type(stability_settings_type_c) :: settings_c
-
-        stability_settings_size = c_sizeof(settings_c)
-
-    end function stability_settings_size
-
     subroutine get_reference_solver_state_values(values_out) bind(C)
         !
         ! this subroutine exports the reference solver state as a C state whose fields
@@ -519,30 +492,6 @@ contains
         values_out%n_hess_x = ref_stability_state%n_hess_x
 
     end subroutine get_reference_stability_state_values
-
-    integer(c_size_t) function solver_state_size() bind(C)
-        !
-        ! this function returns the size of the C solver state, so that the layout
-        ! tests detect a field missing from the C or Python state
-        !
-        type(solver_state_type_c) :: state_c
-
-        solver_state_size = c_sizeof(state_c)
-
-    end function solver_state_size
-
-    integer(c_size_t) function stability_state_size() bind(C)
-        !
-        ! this function returns the size of the C stability check state, so that the
-        ! layout tests detect a field missing from the C or Python state
-        !
-        use c_interface, only: stability_state_type_c
-
-        type(stability_state_type_c) :: state_c
-
-        stability_state_size = c_sizeof(state_c)
-
-    end function stability_state_size
 
     subroutine flush_fortran_stderr() bind(C)
         !

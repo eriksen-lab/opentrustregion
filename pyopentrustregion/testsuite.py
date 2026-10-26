@@ -15,7 +15,6 @@ from ctypes import (
     pointer,
     c_char_p,
     c_void_p,
-    c_size_t,
     sizeof,
     Array,
     byref,
@@ -24,6 +23,7 @@ from ctypes import (
     POINTER,
 )
 from unittest.mock import patch
+from types import SimpleNamespace
 from pathlib import Path
 import numpy as np
 
@@ -47,6 +47,7 @@ try:
         ConvCheckInterface,
         LoggerInterface,
         raise_on_failure,
+        check_struct_sizes,
         hess_x_interface_type,
     )
 except ImportError:
@@ -69,6 +70,7 @@ except ImportError:
         ConvCheckInterface,
         LoggerInterface,
         raise_on_failure,
+        check_struct_sizes,
         hess_x_interface_type,
     )
 
@@ -179,7 +181,11 @@ fortran_tests = {
         "precond_f_wrapper",
         "project_f_wrapper",
         "solver_c_wrapper",
+        "solver_settings_size",
+        "solver_state_size",
         "stability_check_c_wrapper",
+        "stability_settings_size",
+        "stability_state_size",
         "store_optional_c_callbacks",
         "update_orbs_f_wrapper",
     ],
@@ -213,8 +219,6 @@ lib.get_reference_solver_values.argtypes = [
     c_char_p,
 ]
 lib.get_reference_solver_values.restype = None
-lib.solver_settings_size.restype = c_size_t
-lib.stability_settings_size.restype = c_size_t
 
 # define signatures of the Fortran functions providing the reference states
 lib.reference_state_field.argtypes = [c_char_p]
@@ -223,8 +227,6 @@ lib.get_reference_solver_state_values.argtypes = [POINTER(SolverState.c_struct)]
 lib.get_reference_solver_state_values.restype = None
 lib.get_reference_stability_state_values.argtypes = [POINTER(StabilityState.c_struct)]
 lib.get_reference_stability_state_values.restype = None
-lib.solver_state_size.restype = c_size_t
-lib.stability_state_size.restype = c_size_t
 
 
 def reference(name, field_type):
@@ -1014,6 +1016,58 @@ class PyInterfaceUnitTests(unittest.TestCase):
         self.assertTrue(test_passed, "test_raise_on_failure failed")
         print(" test_raise_on_failure PASSED")
 
+    def test_check_struct_sizes(self):
+        """
+        this function tests that the check of the structure sizes passes for a library
+        whose structures have the sizes of the Python structures and raises an import
+        error for one whose structure differs in size or which exports no sizes
+        """
+        test_passed = True
+        sizes = {
+            "solver_settings": sizeof(SolverSettings.c_struct),
+            "stability_settings": sizeof(StabilitySettings.c_struct),
+            "solver_state": sizeof(SolverState.c_struct),
+            "stability_state": sizeof(StabilityState.c_struct),
+        }
+
+        def mock_library(sizes):
+            """
+            this function returns a mock library which exports the given sizes
+            """
+            return SimpleNamespace(
+                _name="mock library",
+                **{
+                    f"{name}_size": (lambda size=size: size)
+                    for name, size in sizes.items()
+                },
+            )
+
+        # the check passes for the sizes of the Python structures
+        try:
+            check_struct_sizes(mock_library(sizes))
+        except ImportError:
+            print(" test_check_struct_sizes failed: Raised for matching sizes.")
+            test_passed = False
+
+        # the check raises for a structure of another size and for a missing size
+        for name in sizes:
+            for wrong_sizes, case in [
+                ({**sizes, name: sizes[name] + 8}, f"for a differing {name} size"),
+                (
+                    {key: size for key, size in sizes.items() if key != name},
+                    f"for a missing {name} size",
+                ),
+            ]:
+                try:
+                    check_struct_sizes(mock_library(wrong_sizes))
+                    print(f" test_check_struct_sizes failed: Not raised {case}.")
+                    test_passed = False
+                except ImportError:
+                    pass
+
+        self.assertTrue(test_passed, "test_check_struct_sizes failed")
+        print(" test_check_struct_sizes PASSED")
+
     @patch.object(SolverSettings, "init_c_struct", lib.mock_init_solver_settings)
     def test_solver_settings(self):
         """
@@ -1258,22 +1312,6 @@ class PyIntegrationTests(unittest.TestCase):
         """
         test_passed = True
 
-        # check that the settings structures have the size of the bind(C) settings
-        # types, so that a field missing from either is detected, which the field
-        # checks below would not read, and stop otherwise, since filling smaller
-        # settings would write past their end
-        for settings, size in [
-            (SolverSettings, lib.solver_settings_size()),
-            (StabilitySettings, lib.stability_settings_size()),
-        ]:
-            if sizeof(settings.c_struct) != size:
-                print(
-                    f" test_settings_layout failed: Size of {settings.__name__} "
-                    "structure differs from the library's."
-                )
-                test_passed = False
-        self.assertTrue(test_passed, "test_settings_layout failed")
-
         # names of the logicals, prefixed for the nested settings
         logicals = [
             name
@@ -1331,22 +1369,6 @@ class PyIntegrationTests(unittest.TestCase):
         from a state whose fields Fortran sets one by one to the reference values
         """
         test_passed = True
-
-        # check that the state structures have the size of the bind(C) state types,
-        # so that a field missing from either is detected, which the field checks
-        # below would not read, and stop otherwise, since filling a smaller state
-        # would write past its end
-        for state, size in [
-            (SolverState, lib.solver_state_size()),
-            (StabilityState, lib.stability_state_size()),
-        ]:
-            if sizeof(state.c_struct) != size:
-                print(
-                    f" test_state_layout failed: Size of {state.__name__} structure "
-                    "differs from the library's."
-                )
-                test_passed = False
-        self.assertTrue(test_passed, "test_state_layout failed")
 
         # check that every field is read back under its own name
         state_c = SolverState.c_struct()

@@ -12,9 +12,9 @@ module c_interface_unit_tests
                            get_extra_trial_vectors_c_type, conv_check_c_type, &
                            logger_c_type
     use test_reference, only: tol_c, n_param, n_param_c
-    use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_loc, c_funptr, c_funloc, &
-                                           c_char, c_associated, c_null_ptr, &
-                                           c_null_char, c_null_funptr, c_f_pointer
+    use, intrinsic :: iso_c_binding, only: &
+        c_bool, c_ptr, c_loc, c_funptr, c_funloc, c_char, c_associated, c_null_ptr, &
+        c_null_char, c_null_funptr, c_f_pointer, c_sizeof
 
     implicit none
 
@@ -1592,6 +1592,83 @@ contains
         end if
 
     end function test_init_stability_settings_c
+
+    logical(c_bool) function test_solver_settings_size() bind(C)
+        !
+        ! this function tests that the size of the C solver settings is returned
+        !
+        use c_interface, only: solver_settings_type_c, solver_settings_size
+
+        type(solver_settings_type_c) :: settings
+
+        ! assume tests pass
+        test_solver_settings_size = .true.
+
+        ! check size
+        if (solver_settings_size() /= c_sizeof(settings)) then
+            write(stderr, *) "test_solver_settings_size failed: Returned size wrong."
+            test_solver_settings_size = .false.
+        end if
+
+    end function test_solver_settings_size
+
+    logical(c_bool) function test_stability_settings_size() bind(C)
+        !
+        ! this function tests that the size of the C stability check settings is
+        ! returned
+        !
+        use c_interface, only: stability_settings_type_c, stability_settings_size
+
+        type(stability_settings_type_c) :: settings
+
+        ! assume tests pass
+        test_stability_settings_size = .true.
+
+        ! check size
+        if (stability_settings_size() /= c_sizeof(settings)) then
+            write(stderr, *) "test_stability_settings_size failed: Returned size wrong."
+            test_stability_settings_size = .false.
+        end if
+
+    end function test_stability_settings_size
+
+    logical(c_bool) function test_solver_state_size() bind(C)
+        !
+        ! this function tests that the size of the C solver state is returned
+        !
+        use c_interface, only: solver_state_type_c, solver_state_size
+
+        type(solver_state_type_c) :: state
+
+        ! assume tests pass
+        test_solver_state_size = .true.
+
+        ! check size
+        if (solver_state_size() /= c_sizeof(state)) then
+            write(stderr, *) "test_solver_state_size failed: Returned size wrong."
+            test_solver_state_size = .false.
+        end if
+
+    end function test_solver_state_size
+
+    logical(c_bool) function test_stability_state_size() bind(C)
+        !
+        ! this function tests that the size of the C stability check state is returned
+        !
+        use c_interface, only: stability_state_type_c, stability_state_size
+
+        type(stability_state_type_c) :: state
+
+        ! assume tests pass
+        test_stability_state_size = .true.
+
+        ! check size
+        if (stability_state_size() /= c_sizeof(state)) then
+            write(stderr, *) "test_stability_state_size failed: Returned size wrong."
+            test_stability_state_size = .false.
+        end if
+
+    end function test_stability_state_size
 
     logical(c_bool) function test_assign_solver_f_c() bind(C)
         !

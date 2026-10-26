@@ -375,32 +375,37 @@ static c_int settingless_obj_func(const c_real *delta_vars, c_real *func,
 }
 
 /* ------------------------------------------------------------------
+ * Sizes of the bind(C) settings and state types, which the library exports so that the
+ * Python interface can compare its structures with them at import
+ * ------------------------------------------------------------------ */
+
+size_t solver_settings_size(void);
+size_t stability_settings_size(void);
+size_t solver_state_size(void);
+size_t stability_state_size(void);
+
+/* ------------------------------------------------------------------
  * Reference settings provided by test_reference.f90, so that these tests need no
  * values of their own: the reference value of a field by its name, prefixed by
  * "stability_settings." for the nested settings, C settings filled with these values
- * field by field with only the named logical set if one is named instead of NULL, the
- * sizes of the bind(C) settings types, and comparisons with the default settings
+ * field by field with only the named logical set if one is named instead of NULL, and
+ * comparisons with the default settings
  * ------------------------------------------------------------------ */
 
 void reference_field(const char *name, c_real *value, char *keyword);
 void get_reference_solver_values(solver_settings_type *settings,
                                  const char *true_logical);
-size_t solver_settings_size(void);
-size_t stability_settings_size(void);
 bool is_default_solver_settings(const solver_settings_type *settings);
 bool is_default_stability_settings(const stability_settings_type *settings);
 
 /* ------------------------------------------------------------------
  * Reference states provided by test_reference.f90 in the same way: the reference
- * value of a field by its name, prefixed by "stability_state." for the nested state, a
- * C state filled with these values field by field, and the sizes of the bind(C) state
- * types
+ * value of a field by its name, prefixed by "stability_state." for the nested state,
+ * and a C state filled with these values field by field
  * ------------------------------------------------------------------ */
 
 c_real reference_state_field(const char *name);
 void get_reference_solver_state_values(solver_state_type *state);
-size_t solver_state_size(void);
-size_t stability_state_size(void);
 
 /* the flush of the standard error of the Fortran runtime, which buffers what the
  * library writes there while it is a file, provided by test_reference.f90 */

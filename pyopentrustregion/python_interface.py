@@ -28,6 +28,8 @@ from ctypes import (
     c_void_p,
     c_char_p,
     c_char,
+    c_size_t,
+    sizeof,
     Structure,
 )
 from dataclasses import dataclass
@@ -448,6 +450,35 @@ class SolverStateC(Structure):
         ("n_hess_x", c_int),
         ("stability_state", StabilityStateC),
     ]
+
+
+def check_struct_sizes(library: CDLL) -> None:
+    """
+    this function checks that the structures of the settings and states have the
+    sizes of those of the library, which differ for a library of another version than
+    this module, as a separately installed library or a stale build can be, whose
+    settings and states would otherwise be read and written with the wrong layout
+    """
+    for name, structure in [
+        ("solver_settings", SolverSettingsC),
+        ("stability_settings", StabilitySettingsC),
+        ("solver_state", SolverStateC),
+        ("stability_state", StabilityStateC),
+    ]:
+        # a library older than this check exports no sizes
+        size_function = getattr(library, f"{name}_size", None)
+        if size_function is not None:
+            size_function.restype = c_size_t
+        if size_function is None or size_function() != sizeof(structure):
+            raise ImportError(
+                f"The {name.replace('_', ' ')} of pyopentrustregion do not match those "
+                f"of the loaded library {library._name}, which therefore comes from "
+                "another version of OpenTrustRegion. Reinstall or rebuild the library "
+                "together with pyopentrustregion."
+            )
+
+
+check_struct_sizes(lib)
 
 
 # define classes for settings
