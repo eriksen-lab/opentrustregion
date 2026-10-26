@@ -278,6 +278,8 @@ contains
         !
         ! this subroutine is the main solver for orbital optimization
         !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
         procedure(update_orbs_type), intent(in), pointer :: update_orbs
         procedure(obj_func_type), intent(in), pointer :: obj_func
         integer(ip), intent(in) :: n_param
@@ -375,6 +377,18 @@ contains
                 if (.not. associated(hess_x_funptr)) then
                     call local_settings%log("Orbital update did not provide a "// &
                                             "Hessian linear transformation.", &
+                                            verbosity_error, .true.)
+                    error = error_solver + 1
+                    return
+                end if
+
+                ! an orbital update which returns an objective function, gradient or
+                ! Hessian diagonal that is not finite leaves no point to optimize from
+                if (.not. (ieee_is_finite(func) .and. all(ieee_is_finite(grad)) .and. &
+                           all(ieee_is_finite(h_diag)))) then
+                    call local_settings%log("Orbital update returned an objective "// &
+                                            "function, gradient or Hessian "// &
+                                            "diagonal that is not finite.", &
                                             verbosity_error, .true.)
                     error = error_solver + 1
                     return
@@ -3156,7 +3170,8 @@ contains
             accept_step = accept_trust_region_step( &
                 solution, dnrm2(n_param, solution, 1_ip), func, new_func - func, &
                 ddot(n_param, solution, 1_ip, perturbed_grad + 0.5_rp * h_solution, &
-                     1_ip), micro_converged, settings, state)
+                     1_ip), micro_converged, settings, state, error)
+            if (error /= 0) return
             if (state%max_precision_reached) exit
         end do
 
@@ -3280,7 +3295,10 @@ contains
             step_length = solution_dot + 2 * step_size * solution_direction_dot + &
                           step_size**2 * direction_dot
 
-            if (curvature < 0.0_rp .or. step_length >= state%trust_radius**2) then
+            ! step to the trust region boundary along a direction without positive
+            ! curvature, along which the model does not have a minimum, or if the step
+            ! leaves the trust region
+            if (curvature <= 0.0_rp .or. step_length >= state%trust_radius**2) then
                 ! solve quadratic equation
                 step_size = (-solution_direction_dot + sqrt( &
                     solution_direction_dot**2 + direction_dot * &
@@ -3368,7 +3386,8 @@ contains
             accept_step = accept_trust_region_step( &
                 solution, solution_norm, func, new_func - func, &
                 ddot(n_param, solution, 1_ip, grad + 0.5_rp * h_solution, 1_ip), &
-                micro_converged, settings, state)
+                micro_converged, settings, state, error)
+            if (error /= 0) return
             if (accept_step .or. state%max_precision_reached) exit
 
             ! check if step exceeds new trust region boundary
@@ -3439,24 +3458,41 @@ contains
 
     logical function accept_trust_region_step(solution, solution_norm, func, &
                                               actual_func_diff, pred_func_diff, &
-                                              micro_converged, settings, state)
+                                              micro_converged, settings, state, error)
         !
         ! this function checks whether the trust region step is accepted and modifies
         ! the trust radius in the state accordingly, where it also flags whether the
         ! function changes could not be resolved anymore
         !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
         real(rp), intent(in) :: solution(:), solution_norm, func, actual_func_diff, &
                                 pred_func_diff
         logical, intent(in) :: micro_converged
         type(solver_settings_type), intent(in) :: settings
         type(solver_state_type), intent(inout), target :: state
+        integer(ip), intent(out) :: error
 
         real(rp), parameter :: func_resolution_safety_factor = 10.0_rp
         real(rp) :: ratio, func_resolution
         logical :: finite_changes
 
+        ! initialize error flag
+        error = 0
+
         ! default to maximum precision not yet reached
         state%max_precision_reached = .false.
+
+        ! a step whose norm is not finite, as from a Hessian linear transformation or a
+        ! preconditioner which returns values that are not finite, can not be cut back
+        ! to a smaller trust region
+        if (.not. ieee_is_finite(solution_norm)) then
+            call settings%log("Trust-region step is not finite.", verbosity_error, &
+                              .true.)
+            error = 1
+            accept_trust_region_step = .false.
+            return
+        end if
 
         ! check if function value has not decreased up to floating point precision, in
         ! which case the step is not taken
@@ -3476,15 +3512,23 @@ contains
         ! value has not decreased, if the function changes are not finite, as for an
         ! objective function which overflows at the step, or if individual orbitals
         ! change too much
-        finite_changes = abs(actual_func_diff) <= huge(1.0_rp) .and. &
-                         abs(pred_func_diff) <= huge(1.0_rp)
+        finite_changes = ieee_is_finite(actual_func_diff) .and. &
+                         ieee_is_finite(pred_func_diff)
         if (.not. micro_converged .or. ratio < 0.0_rp .or. .not. finite_changes .or. &
             any(abs(solution) > pi / 4)) then
             ! a rejected step whose predicted function change can not be resolved can
             ! not be improved by a smaller trust radius, as when the objective function
             ! and the orbital update disagree by more than the resolution, so the step
-            ! is not taken and maximum precision is reached
+            ! is not taken and maximum precision is reached, unless the objective
+            ! function is not finite even at such a short step, which is an error
             if (abs(pred_func_diff) <= func_resolution) then
+                if (.not. finite_changes) then
+                    call settings%log("Objective function returned a value that is "// &
+                                      "not finite.", verbosity_error, .true.)
+                    error = 1
+                    accept_trust_region_step = .false.
+                    return
+                end if
                 call settings%log(function_unchanged_warning_msg, verbosity_warning)
                 state%max_precision_reached = .true.
                 accept_trust_region_step = .false.

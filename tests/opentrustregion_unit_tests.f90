@@ -95,10 +95,12 @@ module opentrustregion_unit_tests
     ! define type for the host context of the Hartmann 6D function which additionally
     ! records whether the objective function was evaluated without displacement,
     ! whether the Hessian was applied to the normalized gradient and the last
-    ! displacement passed to the orbital update
+    ! displacement passed to the orbital update, and which names the output of the
+    ! orbital update which a mock returns as not finite
     type, extends(hartmann6d_context_type) :: hartmann6d_recording_context_type
         logical :: obj_func_zero_step = .false., hess_x_normalized_grad = .false.
         real(rp) :: last_delta_vars(n_param) = 0.0_rp
+        character(len=18) :: non_finite_output = ""
     end type
 
     ! callback functions of the Hartmann 6D function into which a fault can be
@@ -220,6 +222,27 @@ contains
         func = 1.0_rp + 0.0_rp * sum(delta_vars)
 
     end function constant_obj_func
+
+    function nan_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes an objective function evaluation that returns a
+        ! value which is not a number at every displacement
+        !
+        use test_reference, only: check_host_context
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
+
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        func = ieee_value(sum(delta_vars), ieee_quiet_nan)
+
+    end function nan_obj_func
 
     subroutine mock_precond(residual, mu, precond_residual, error, context)
         !
@@ -782,6 +805,42 @@ contains
         if (state%n_update_orbs_calls > 1) hess_x_funptr => received_hess_x_funptr
 
     end subroutine update_orbs_hess_x_once
+
+    subroutine non_finite_update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, &
+                                      error, context)
+        !
+        ! this subroutine describes an orbital update of the Hartmann 6D function which
+        ! returns a value that is not a number in the output its recording context
+        ! names
+        !
+        use opentrustregion, only: hess_x_type
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
+
+        real(rp), intent(in), target :: delta_vars(:)
+        real(rp), intent(out) :: func
+        real(rp), intent(out), target :: grad(:), h_diag(:)
+        procedure(hess_x_type), intent(inout), pointer :: hess_x_funptr
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+
+        ! perform orbital update
+        call update_orbs(delta_vars, func, grad, h_diag, hess_x_funptr, error, context)
+        if (error /= 0) return
+
+        ! replace the named output by a value that is not a number
+        select type (context)
+        class is (hartmann6d_recording_context_type)
+            select case (context%non_finite_output)
+            case ("objective function")
+                func = ieee_value(func, ieee_quiet_nan)
+            case ("gradient")
+                grad(1) = ieee_value(func, ieee_quiet_nan)
+            case ("Hessian diagonal")
+                h_diag(1) = ieee_value(func, ieee_quiet_nan)
+            end select
+        end select
+
+    end subroutine non_finite_update_orbs
 
     function obj_func(delta_vars, error, context) result(func)
         !
@@ -2058,6 +2117,8 @@ contains
             subsystem_solver_options
 
         real(rp), parameter :: var_thres = 1e-4_rp
+        character(len=*), parameter :: non_finite_outputs(3) = &
+            [character(len=18) :: "objective function", "gradient", "Hessian diagonal"]
         integer(ip) :: error, i_solver, i_case, callback, i_call, &
                        n_calls(n_fault_callbacks)
         logical :: grad_noise
@@ -2372,6 +2433,38 @@ contains
                 "transformation not reported in the second macro iteration."
             test_solver = .false.
         end if
+
+        ! run solver with an orbital update which returns a value that is not finite in
+        ! each of its outputs in turn and check that the solver reports this as its own
+        ! error right after the orbital update, before the subproblem calls any other
+        ! callback function
+        update_orbs_funptr => non_finite_update_orbs
+        do i_case = 1, size(non_finite_outputs)
+            context%vars = distant_point
+            context%non_finite_output = non_finite_outputs(i_case)
+            context%n_hess_x_calls = 0
+            context%n_obj_func_calls = 0
+            settings = solver_settings_type()
+            call setup_error_logging(settings, context)
+            call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings)
+            if (error /= error_solver + 1) then
+                write(stderr, *) "test_solver failed: Did not report a "// &
+                    trim(non_finite_outputs(i_case))//" that is not finite."
+                test_solver = .false.
+            end if
+            if (len_trim(context%log_message) == 0) then
+                write(stderr, *) "test_solver failed: No error message printed for "// &
+                    "a "//trim(non_finite_outputs(i_case))//" that is not finite."
+                test_solver = .false.
+            end if
+            if (context%n_hess_x_calls /= 0 .or. context%n_obj_func_calls /= 0) then
+                write(stderr, *) "test_solver failed: A "// &
+                    trim(non_finite_outputs(i_case))//" that is not finite not "// &
+                    "reported right after the orbital update."
+                test_solver = .false.
+            end if
+        end do
+        context%non_finite_output = ""
 
         ! run solver from the saddle point of the Hartmann 6D function, whose path
         ! depends on the settings, with the default settings and without settings and
@@ -7805,6 +7898,21 @@ contains
             test_level_shifted_davidson = .false.
         end if
 
+        ! run level-shifted Davidson with an objective function which is not a number
+        ! at every step, so that every step is rejected until the predicted change can
+        ! not be resolved, and check that it stops with an error rather than at maximum
+        ! precision
+        obj_func_funptr => nan_obj_func
+        state%trust_radius = 0.4_rp
+        call level_shifted_davidson(0.5_rp, grad, norm2(grad), h_diag, n_param, &
+                                    obj_func_funptr, hess_x_funptr, settings, .false., &
+                                    state, solution, solution_norm, mu, error)
+        if (error /= 1) then
+            write(stderr, *) "test_level_shifted_davidson failed: Did not report "// &
+                "an objective function which is not a number at every step."
+            test_level_shifted_davidson = .false.
+        end if
+
         ! let the residual stagnate with a quadratic model whose gradient only couples
         ! to the second unit vector and a preconditioner which returns the following
         ! unit vectors, which can never reduce the residual, and check that the
@@ -8568,6 +8676,44 @@ contains
                 "every step is rejected."
             test_truncated_conjugate_gradient = .false.
         end if
+
+        ! run truncated conjugate gradient on the quadratic model with an objective
+        ! function which is not a number at every step, so that every step is rejected
+        ! until the predicted change can not be resolved, and check that the
+        ! subproblem stops with an error rather than at maximum precision
+        obj_func_funptr => nan_obj_func
+        state%trust_radius = 0.4_rp
+        call truncated_conjugate_gradient( &
+            0.5_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+            hess_x_funptr, settings, state, solution, solution_norm, error)
+        if (error /= 1) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Did not "// &
+                "report an objective function which is not a number at every step."
+            test_truncated_conjugate_gradient = .false.
+        end if
+
+        ! run truncated conjugate gradient on a quadratic model without curvature,
+        ! along whose first direction the model has no minimum, and check that the step
+        ! goes to the trust region boundary, where the objective function accepts it
+        quadratic_context%hess = 0.0_rp
+        obj_func_funptr => quadratic_obj_func
+        state%trust_radius = 0.4_rp
+        call truncated_conjugate_gradient( &
+            0.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+            hess_x_funptr, settings, state, solution, solution_norm, error)
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error for a model without curvature."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        metric_norm = sqrt(dot_product(solution, &
+                                       solution / max(abs(h_diag), precond_floor)))
+        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, 1.0_rp, &
+                                                    metric_norm)) > tol) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Step does "// &
+                "not lie at trust region boundary for a model without curvature."
+            test_truncated_conjugate_gradient = .false.
+        end if
         hess_x_funptr => hess_x_fun
 
         ! start near the minimum with a trust radius far beyond the step, so that the
@@ -8719,12 +8865,23 @@ contains
              "overflowing prediction"]
         real(rp) :: non_finite_actual(3), non_finite_predicted(3)
 
+        ! cases of a step whose norm is not finite, as from a Hessian linear
+        ! transformation or a preconditioner which returns values that are not finite,
+        ! and of a function change which is not finite at a step whose predicted change
+        ! can not be resolved, as from an objective function which fails, which are
+        ! errors
+        character(len=*), parameter :: error_case_names(3) = &
+            [character(len=51) :: "step norm not a number", &
+             "function not a number at an unresolvable prediction", &
+             "overflowing function at an unresolvable prediction"]
+        real(rp) :: error_step_norms(3), error_actual(3), error_predicted(3)
+
         logical :: accept_step
         real(rp) :: solution(3)
         type(solver_state_type) :: state
         type(solver_settings_type) :: settings
         type(test_context_type), target :: context
-        integer(ip) :: i
+        integer(ip) :: i, error
 
         ! assume tests pass
         test_accept_trust_region_step = .true.
@@ -8741,9 +8898,14 @@ contains
             state%trust_radius = 1.0_rp
             state%max_precision_reached = .true.
             solution(1) = case_rotations(i)
-            accept_step = accept_trust_region_step(solution, case_step_norms(i), &
-                                                   -1.0_rp, case_ratios(i), 1.0_rp, &
-                                                   case_converged(i), settings, state)
+            accept_step = accept_trust_region_step( &
+                solution, case_step_norms(i), -1.0_rp, case_ratios(i), 1.0_rp, &
+                case_converged(i), settings, state, error)
+            if (error /= 0) then
+                write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
+                    "error when "//trim(case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
             if (accept_step .neqv. case_accepted(i)) then
                 write(stderr, *) "test_accept_trust_region_step failed: Step "// &
                     "acceptance incorrect when "//trim(case_names(i))//"."
@@ -8772,7 +8934,12 @@ contains
             state%trust_radius = 1.0_rp
             accept_step = accept_trust_region_step( &
                 solution, 0.5_rp, -1.0_rp, non_finite_actual(i), &
-                non_finite_predicted(i), .true., settings, state)
+                non_finite_predicted(i), .true., settings, state, error)
+            if (error /= 0) then
+                write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
+                    "error for "//trim(non_finite_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
             if (accept_step) then
                 write(stderr, *) "test_accept_trust_region_step failed: Step "// &
                     "accepted for "//trim(non_finite_case_names(i))//"."
@@ -8801,7 +8968,12 @@ contains
             accept_step = accept_trust_region_step( &
                 solution, 0.5_rp, precision_case_funcs(i), precision_case_actual(i), &
                 precision_case_predicted(i), precision_case_converged(i), settings, &
-                state)
+                state, error)
+            if (error /= 0) then
+                write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
+                    "error for "//trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
             if (state%max_precision_reached .neqv. precision_case_reached(i)) then
                 write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
                     "precision detected incorrectly for "// &
@@ -8826,6 +8998,41 @@ contains
                 write(stderr, *) "test_accept_trust_region_step failed: No warning "// &
                     "printed at maximum precision for "// &
                     trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+        end do
+
+        ! check for every error case that the error is reported with an error message
+        ! and that the step is rejected without maximum precision being reported as
+        ! reached
+        call setup_error_logging(settings, context)
+        error_step_norms = [ieee_value(1.0_rp, ieee_quiet_nan), 0.5_rp, 0.5_rp]
+        error_actual = [1.0_rp, ieee_value(1.0_rp, ieee_quiet_nan), &
+                        ieee_value(1.0_rp, ieee_positive_inf)]
+        error_predicted = [1.0_rp, -1e-20_rp, -1e-20_rp]
+        do i = 1, size(error_case_names)
+            context%log_message = ""
+            accept_step = accept_trust_region_step( &
+                solution, error_step_norms(i), -1.0_rp, error_actual(i), &
+                error_predicted(i), .true., settings, state, error)
+            if (error /= 1) then
+                write(stderr, *) "test_accept_trust_region_step failed: Did not "// &
+                    "report an error for "//trim(error_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (len_trim(context%log_message) == 0) then
+                write(stderr, *) "test_accept_trust_region_step failed: No error "// &
+                    "message printed for "//trim(error_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (accept_step) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "accepted for "//trim(error_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (state%max_precision_reached) then
+                write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
+                    "precision reported as reached for "//trim(error_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
         end do
