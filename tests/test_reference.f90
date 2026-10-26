@@ -89,9 +89,10 @@ module test_reference
     ! host context handed to the callback functions by the tests that exercise it,
     ! together with the bookkeeping those callback functions keep, so that a test can
     ! check the context reached all of them unchanged, and the error code the C mock
-    ! callback functions report
+    ! callback functions report, the bookkeeping of the C logging function includes the
+    ! number of messages it received
     type :: host_context_type
-        integer(ip) :: n_calls = 0
+        integer(ip) :: n_calls = 0, n_messages = 0
         logical :: logger_called = .false., stability_warning_logged = .false.
         integer(c_ip) :: mock_error = 0
     end type
@@ -267,6 +268,7 @@ contains
         ! host context for a test
         !
         host_context%n_calls = 0
+        host_context%n_messages = 0
         host_context%logger_called = .false.
         host_context%stability_warning_logged = .false.
         host_context%mock_error = 0

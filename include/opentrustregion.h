@@ -183,7 +183,7 @@ typedef struct {
  * ------------------------------------------------------------------ */
 
 /**
- * Fortran-callable solver interface
+ * C interface to the solver
  *
  * @param update_orbs_ptr   Pointer to update_orbs callback
  * @param obj_func_ptr      Pointer to objective function callback
@@ -198,9 +198,9 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
              const solver_settings_type *settings, solver_state_type *state);
 
 /**
- * Fortran-callable stability check interface
+ * C interface to the stability check
  *
- * @param h_diag_ptr        Pointer to diagonal Hessian array
+ * @param h_diag_ptr        Pointer to diagonal Hessian array of n_param elements,
  * @param hess_x_ptr        Pointer to Hessian–vector product callback
  * @param n_param           Number of parameters
  * @param stable            Pointer to bool that receives stability result
@@ -208,9 +208,10 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
  *                          NULL to use the default settings
  * @param state             Pointer to struct that receives the state of the
  *                          stability check, may be NULL to skip returning it
- * @param kappa_ptr         Pointer to array that receives the eigenvector of the
- *                          lowest Hessian eigenvalue, the direction of instability at
- *                          an unstable point, may be NULL to skip returning it
+ * @param kappa_ptr         Pointer to array of n_param elements that receives the
+ *                          eigenvector of the lowest Hessian eigenvalue, the direction
+ *                          of instability at an unstable point, may be NULL to skip
+ *                          returning it
  * @return                  Integer error code from Fortran
  */
 c_int stability_check(const c_real *h_diag_ptr, hess_x_fp hess_x_ptr, c_int n_param,

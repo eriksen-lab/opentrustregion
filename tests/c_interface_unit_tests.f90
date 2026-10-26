@@ -283,6 +283,12 @@ contains
         ! check host context
         call check_host_context_c(context_c)
 
+        ! count every message in host context
+        if (c_associated(context_c)) then
+            call c_f_pointer(context_c, context)
+            context%n_messages = context%n_messages + 1
+        end if
+
         ! record call with null-terminated test message in host context
         message = transfer(message_c(1:4), message)
         if (message == "test" .and. message_c(5) == c_null_char .and. &
@@ -368,7 +374,8 @@ contains
         ! this function tests the C wrapper for the solver
         !
         use opentrustregion_core, only: standard_solver => solver, &
-                                        default_solver_settings
+                                        default_solver_settings, solver_state_type, &
+                                        error_solver, verbosity_error
         use c_interface, only: solver_settings_type_c, solver_state_type_c, solver, &
                                solver_c_wrapper
         use opentrustregion_mock, only: &
@@ -379,7 +386,7 @@ contains
                                   get_reference_solver_state_values, host_context, &
                                   arm_host_context_c, host_context_reached, &
                                   unset_callbacks, callbacks_unset, &
-                                  ref_solver_settings, operator(/=)
+                                  ref_solver_settings, operator(/=), operator(==)
 
         type(c_funptr) :: update_orbs_c_funptr, obj_func_c_funptr
         type(solver_settings_type_c) :: settings
@@ -652,6 +659,57 @@ contains
         end if
         if (.not. test_passed) test_solver_c_wrapper = .false.
 
+        ! call the solver without an orbital update and without an objective function,
+        ! the wrapper has to return an error with an error message, which is the only
+        ! message passed to the logging function, without calling the solver
+        do i_case = 1, 2
+            call get_reference_solver_values(settings)
+            call unset_callbacks(settings)
+            settings%logger = c_funloc(mock_logger)
+            call arm_host_context_c(settings%context)
+            settings%verbose = int(verbosity_error, kind=c_ip)
+            settings%initialized = .true.
+            settings%stability_settings%initialized = .true.
+            test_passed = .false.
+            if (i_case == 1) then
+                error = solver_c_wrapper(c_null_funptr, obj_func_c_funptr, n_param_c, &
+                                         settings, c_null_ptr)
+            else
+                error = solver_c_wrapper(update_orbs_c_funptr, c_null_funptr, &
+                                         n_param_c, settings, c_null_ptr)
+            end if
+            if (error /= error_solver + 1) then
+                write(stderr, *) "test_solver_c_wrapper failed: No error returned "// &
+                    "without "//trim(merge("orbital update    ", "objective function", &
+                                           i_case == 1))//"."
+                test_solver_c_wrapper = .false.
+            end if
+            if (host_context%n_messages == 0) then
+                write(stderr, *) "test_solver_c_wrapper failed: No error message "// &
+                    "printed without "//trim(merge( &
+                        "orbital update    ", "objective function", i_case == 1))//"."
+                test_solver_c_wrapper = .false.
+            end if
+            if (test_passed) then
+                write(stderr, *) "test_solver_c_wrapper failed: Solver called "// &
+                    "without "//trim(merge("orbital update    ", "objective function", &
+                                           i_case == 1))//"."
+                test_solver_c_wrapper = .false.
+            end if
+        end do
+
+        ! call the solver without an orbital update and without settings, whose
+        ! logging function would copy the state into the host's record, the wrapper
+        ! has to leave the default state there itself
+        call get_reference_solver_state_values(state)
+        error = solver_c_wrapper(c_null_funptr, obj_func_c_funptr, n_param_c, &
+                                 state_c_ptr=c_loc(state))
+        if (.not. (state == solver_state_type())) then
+            write(stderr, *) "test_solver_c_wrapper failed: Default state not left "// &
+                "in the host's record without orbital update."
+            test_solver_c_wrapper = .false.
+        end if
+
         ! restore the procedure pointer so later tests do not inherit the mock
         solver => standard_solver
 
@@ -661,18 +719,19 @@ contains
         !
         ! this function tests the C wrapper for the stability check
         !
-        use opentrustregion_core, only: standard_stability_check => stability_check, &
-                                        default_stability_settings
+        use opentrustregion_core, only: &
+            standard_stability_check => stability_check, default_stability_settings, &
+            stability_state_type, error_stability_check, verbosity_error
         use c_interface, only: stability_settings_type_c, stability_state_type_c, &
                                stability_check, stability_check_c_wrapper
         use opentrustregion_mock, only: &
             mock_stability_check, test_passed, mock_error, mock_stability_state, &
             mock_stable, received_stability_settings, received_callbacks, &
             kappa_received, stability_state_bundled
-        use test_reference, only: get_reference_stability_values, &
-                                  get_reference_stability_state_values, host_context, &
-                                  arm_host_context_c, host_context_reached, &
-                                  callbacks_unset, ref_stability_settings, operator(/=)
+        use test_reference, only: &
+            get_reference_stability_values, get_reference_stability_state_values, &
+            host_context, arm_host_context_c, host_context_reached, callbacks_unset, &
+            unset_callbacks, ref_stability_settings, operator(/=), operator(==)
 
         type(c_funptr) :: hess_x_c_funptr
         real(c_rp) :: h_diag(n_param)
@@ -851,6 +910,54 @@ contains
             test_stability_check_c_wrapper = .false.
         end if
         if (.not. test_passed) test_stability_check_c_wrapper = .false.
+
+        ! call the stability check without a Hessian linear transformation, the
+        ! wrapper has to return an error with an error message, which is the only
+        ! message passed to the logging function, and an unstable point without calling
+        ! the stability check
+        call get_reference_stability_values(settings)
+        call unset_callbacks(settings)
+        settings%logger = c_funloc(mock_logger)
+        call arm_host_context_c(settings%context)
+        settings%verbose = int(verbosity_error, kind=c_ip)
+        settings%initialized = .true.
+        test_passed = .false.
+        stable = .true.
+        error = stability_check_c_wrapper(h_diag, c_null_funptr, n_param_c, stable, &
+                                          settings, c_null_ptr, c_null_ptr)
+        if (error /= error_stability_check + 1) then
+            write(stderr, *) "test_stability_check_c_wrapper failed: No error "// &
+                "returned without Hessian linear transformation."
+            test_stability_check_c_wrapper = .false.
+        end if
+        if (host_context%n_messages == 0) then
+            write(stderr, *) "test_stability_check_c_wrapper failed: No error "// &
+                "message printed without Hessian linear transformation."
+            test_stability_check_c_wrapper = .false.
+        end if
+        if (test_passed) then
+            write(stderr, *) "test_stability_check_c_wrapper failed: Stability "// &
+                "check called without Hessian linear transformation."
+            test_stability_check_c_wrapper = .false.
+        end if
+        if (stable) then
+            write(stderr, *) "test_stability_check_c_wrapper failed: Stable point "// &
+                "returned without Hessian linear transformation."
+            test_stability_check_c_wrapper = .false.
+        end if
+
+        ! call the stability check without a Hessian linear transformation and
+        ! without settings, whose logging function would copy the state into the
+        ! host's record, the wrapper has to leave the default state there itself
+        call get_reference_stability_state_values(state)
+        error = stability_check_c_wrapper(h_diag, c_null_funptr, n_param_c, stable, &
+                                          state_c_ptr=c_loc(state), &
+                                          kappa_c_ptr=c_null_ptr)
+        if (.not. (state == stability_state_type())) then
+            write(stderr, *) "test_stability_check_c_wrapper failed: Default state "// &
+                "not left in the host's record without Hessian linear transformation."
+            test_stability_check_c_wrapper = .false.
+        end if
 
         ! restore the procedure pointer so later tests do not inherit the mock
         stability_check => standard_stability_check

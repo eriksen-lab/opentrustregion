@@ -217,9 +217,9 @@ contains
         !
         ! this function exposes a Fortran-implemented solver subroutine to C
         !
-        use opentrustregion_core, only: solver_settings_type, stderr, &
-                                        settings_uninitialized_warning_msg, &
-                                        stability_settings_uninitialized_warning_msg
+        use opentrustregion_core, only: &
+            solver_settings_type, stderr, settings_uninitialized_warning_msg, &
+            stability_settings_uninitialized_warning_msg, error_solver, verbosity_error
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
@@ -302,6 +302,16 @@ contains
             end if
         end if
 
+        ! the solver can not run without an orbital update and an objective function
+        if (.not. (c_associated(update_orbs_c_funptr) .and. &
+                   c_associated(obj_func_c_funptr))) then
+            call settings%log("Orbital update and objective function have to be "// &
+                              "given.", verbosity_error, .true.)
+            call copy_state_to_c(callbacks)
+            error_c = int(error_solver + 1, kind=c_ip)
+            return
+        end if
+
         ! call solver
         call solver(update_orbs, obj_func, n_param, error, settings, state)
 
@@ -320,7 +330,8 @@ contains
         ! this function exposes a Fortran-implemented stability check subroutine to C
         !
         use opentrustregion_core, only: stability_settings_type, stderr, &
-                                        settings_uninitialized_warning_msg
+                                        settings_uninitialized_warning_msg, &
+                                        error_stability_check, verbosity_error
 
         real(c_rp), intent(in), target :: h_diag_c(*)
         integer(c_ip), intent(in), value :: n_param_c
@@ -363,6 +374,28 @@ contains
             call c_f_pointer(cptr=state_c_ptr, fptr=callbacks%stability_state_c)
         end if
 
+        ! convert settings and hand the bundle to the callback wrappers as opaque
+        ! context
+        settings = local_settings_c
+        settings%context => callbacks
+
+        ! the conversion replaces settings that were not initialized by the default
+        ! settings, so the warning is printed here on stderr regardless of the
+        ! verbosity since settings that were not initialized provide no logging
+        ! function
+        if (.not. local_settings_c%initialized) &
+            write(stderr, '(A)') " "//settings_uninitialized_warning_msg
+
+        ! the stability check can not run without a Hessian linear transformation
+        if (.not. c_associated(hess_x_c_funptr)) then
+            call settings%log("Hessian linear transformation has to be given.", &
+                              verbosity_error, .true.)
+            call copy_state_to_c(callbacks)
+            stable_c = .false._c_bool
+            error_c = int(error_stability_check + 1, kind=c_ip)
+            return
+        end if
+
         ! associate procedure pointer to wrapper function
         hess_x => hess_x_f_wrapper
 
@@ -381,18 +414,6 @@ contains
                 allocate(kappa_ptr(n_param_c))
             end if
         end if
-
-        ! convert settings and hand the bundle to the callback wrappers as opaque
-        ! context
-        settings = local_settings_c
-        settings%context => callbacks
-
-        ! the conversion replaces settings that were not initialized by the default
-        ! settings, so the warning is printed here on stderr regardless of the
-        ! verbosity since settings that were not initialized provide no logging
-        ! function
-        if (.not. local_settings_c%initialized) &
-            write(stderr, '(A)') " "//settings_uninitialized_warning_msg
 
         ! call stability check
         if (c_associated(kappa_c_ptr)) then
