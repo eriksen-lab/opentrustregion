@@ -6,7 +6,8 @@
 
 module opentrustregion_system_tests
 
-    use opentrustregion, only: rp, ip, stderr
+    use opentrustregion, only: rp, ip
+    use opentrustregion_core, only: stderr
     use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_char, c_f_pointer, &
                                            c_null_char
 

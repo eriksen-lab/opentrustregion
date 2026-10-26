@@ -6,7 +6,7 @@
 
 module c_interface_mock
 
-    use opentrustregion, only: stderr
+    use opentrustregion_core, only: stderr
     use c_interface, only: c_rp, c_ip, solver_c_wrapper, stability_check_c_wrapper, &
                            init_solver_settings_c, init_stability_settings_c
     use test_reference, only: ref_solver_settings, ref_stability_settings, n_param

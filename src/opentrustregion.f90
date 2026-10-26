@@ -4,7 +4,7 @@
 ! License, v. 2.0. If a copy of the MPL was not distributed with this
 ! file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-module opentrustregion
+module opentrustregion_core
 
     use, intrinsic :: iso_fortran_env, only: int32, int64, real64, &
                                              stdout => output_unit, stderr => error_unit
@@ -3942,5 +3942,26 @@ contains
         end do
 
     end function option_list
+
+end module opentrustregion_core
+
+! the interface of OpenTrustRegion for Fortran programs, the counterpart of the C
+! header and the Python package, which re-exports the entities of the implementation
+! that form the interface, while the other entities of the implementation can change in
+! any version
+module opentrustregion
+
+    use opentrustregion_core, only: &
+        rp, ip, solver, stability_check, solver_settings_type, &
+        stability_settings_type, solver_state_type, stability_state_type, &
+        update_orbs_type, obj_func_type, hess_x_type, precond_type, project_type, &
+        conv_check_type, get_extra_trial_vectors_type, logger_type, error_solver, &
+        error_solver_max_iter, error_stability_check, error_stability_check_max_iter, &
+        error_obj_func, error_update_orbs, error_hess_x, error_precond, &
+        error_conv_check, error_project, error_get_extra_trial_vectors, &
+        verbosity_silent, verbosity_error, verbosity_warning, verbosity_info, &
+        verbosity_debug
+
+    implicit none
 
 end module opentrustregion

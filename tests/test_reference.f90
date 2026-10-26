@@ -6,7 +6,7 @@
 
 module test_reference
 
-    use opentrustregion, only: &
+    use opentrustregion_core, only: &
         rp, ip, kw_len, stderr, solver_settings_type, stability_settings_type, &
         solver_state_type, stability_state_type, settings_uninitialized_warning_msg, &
         stability_settings_uninitialized_warning_msg
@@ -283,7 +283,7 @@ contains
         ! this subroutine points a settings object at the host context the callback
         ! functions expect, by default the global one, and clears their bookkeeping
         !
-        use opentrustregion, only: settings_type
+        use opentrustregion_core, only: settings_type
 
         class(settings_type), intent(inout) :: settings
         class(host_context_type), intent(inout), target, optional :: context
@@ -1115,7 +1115,7 @@ contains
         ! without callback functions and host contexts, so that a C test can compare
         ! against them without values of its own
         !
-        use opentrustregion, only: default_solver_settings
+        use opentrustregion_core, only: default_solver_settings
         use c_interface, only: solver_settings_type_c
 
         type(solver_settings_type_c), intent(in) :: settings_c
@@ -1134,7 +1134,7 @@ contains
         ! values without callback functions and host context, so that a C test can
         ! compare against them without values of its own
         !
-        use opentrustregion, only: default_stability_settings
+        use opentrustregion_core, only: default_stability_settings
         use c_interface, only: stability_settings_type_c
 
         type(stability_settings_type_c), intent(in) :: settings_c
@@ -1150,7 +1150,7 @@ contains
         !
         ! this function tests a provided orbital updating function pointer
         !
-        use opentrustregion, only: update_orbs_type, hess_x_type
+        use opentrustregion_core, only: update_orbs_type, hess_x_type
 
         procedure(update_orbs_type), intent(in), pointer :: update_orbs_funptr
         character(len=*), intent(in) :: test_name, message
@@ -1310,7 +1310,7 @@ contains
         !
         ! this function tests a provided Hessian linear transformation function pointer
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
 
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         character(len=*), intent(in) :: test_name, message
@@ -1423,7 +1423,7 @@ contains
         !
         ! this function tests a provided objective function function pointer
         !
-        use opentrustregion, only: obj_func_type
+        use opentrustregion_core, only: obj_func_type
 
         procedure(obj_func_type), intent(in), pointer :: obj_func_funptr
         character(len=*), intent(in) :: test_name, message
@@ -1535,7 +1535,7 @@ contains
         !
         ! this function tests a provided preconditioner function pointer
         !
-        use opentrustregion, only: precond_type
+        use opentrustregion_core, only: precond_type
 
         procedure(precond_type), intent(in), pointer :: precond_funptr
         character(len=*), intent(in) :: test_name, message
@@ -1645,7 +1645,7 @@ contains
         !
         ! this function tests a provided projection function pointer
         !
-        use opentrustregion, only: project_type
+        use opentrustregion_core, only: project_type
 
         procedure(project_type), intent(in), pointer :: project_funptr
         character(len=*), intent(in) :: test_name, message
@@ -1755,7 +1755,7 @@ contains
         !
         ! this function tests a provided extra trial vector function pointer
         !
-        use opentrustregion, only: get_extra_trial_vectors_type
+        use opentrustregion_core, only: get_extra_trial_vectors_type
 
         procedure(get_extra_trial_vectors_type), intent(in), pointer :: &
             get_extra_trial_vectors_funptr
@@ -1862,7 +1862,7 @@ contains
         !
         ! this function tests a provided convergence check function pointer
         !
-        use opentrustregion, only: conv_check_type
+        use opentrustregion_core, only: conv_check_type
 
         procedure(conv_check_type), intent(in), pointer :: conv_check_funptr
         character(len=*), intent(in) :: test_name, message

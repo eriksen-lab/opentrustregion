@@ -6,7 +6,7 @@
 
 module c_interface_unit_tests
 
-    use opentrustregion, only: rp, ip, stderr
+    use opentrustregion_core, only: rp, ip, stderr
     use c_interface, only: c_rp, c_ip, update_orbs_c_type, hess_x_c_type, &
                            obj_func_c_type, precond_c_type, project_c_type, &
                            get_extra_trial_vectors_c_type, conv_check_c_type, &
@@ -270,7 +270,7 @@ contains
         !
         ! this subroutine is a test subroutine for the C logging function
         !
-        use opentrustregion, only: stability_settings_uninitialized_warning_msg
+        use opentrustregion_core, only: stability_settings_uninitialized_warning_msg
         use test_reference, only: host_context_type, check_host_context_c, &
                                   ref_character_from_c
 
@@ -367,7 +367,8 @@ contains
         !
         ! this function tests the C wrapper for the solver
         !
-        use opentrustregion, only: standard_solver => solver, default_solver_settings
+        use opentrustregion_core, only: standard_solver => solver, &
+                                        default_solver_settings
         use c_interface, only: solver_settings_type_c, solver_state_type_c, solver, &
                                solver_c_wrapper
         use opentrustregion_mock, only: &
@@ -660,8 +661,8 @@ contains
         !
         ! this function tests the C wrapper for the stability check
         !
-        use opentrustregion, only: standard_stability_check => stability_check, &
-                                   default_stability_settings
+        use opentrustregion_core, only: standard_stability_check => stability_check, &
+                                        default_stability_settings
         use c_interface, only: stability_settings_type_c, stability_state_type_c, &
                                stability_check, stability_check_c_wrapper
         use opentrustregion_mock, only: &
@@ -957,7 +958,7 @@ contains
         ! this function tests the subroutine that copies the state of a call into the
         ! host's records which were given
         !
-        use opentrustregion, only: solver_state_type, stability_state_type
+        use opentrustregion_core, only: solver_state_type, stability_state_type
         use c_interface, only: c_callbacks_type, solver_state_type_c, &
                                stability_state_type_c, copy_state_to_c
         use opentrustregion_mock, only: mock_solver_state, mock_stability_state
@@ -1014,7 +1015,7 @@ contains
         !
         ! this function tests the Fortran wrapper for the orbital update
         !
-        use opentrustregion, only: update_orbs_type, hess_x_type
+        use opentrustregion_core, only: update_orbs_type, hess_x_type
         use c_interface, only: c_callbacks_type, update_orbs_f_wrapper, hess_x_f_wrapper
         use test_reference, only: check_update_orbs_funptr, host_context, &
                                   arm_host_context_c, arm_state_c, host_context_reached
@@ -1124,7 +1125,7 @@ contains
         !
         ! this function tests the Fortran wrapper for the Hessian linear transformation
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
         use c_interface, only: c_callbacks_type, hess_x_f_wrapper
         use test_reference, only: check_hess_x_funptr, host_context, &
                                   arm_host_context_c, arm_state_c, host_context_reached
@@ -1182,7 +1183,7 @@ contains
         !
         ! this function tests the Fortran wrapper for the objective function
         !
-        use opentrustregion, only: obj_func_type
+        use opentrustregion_core, only: obj_func_type
         use c_interface, only: c_callbacks_type, obj_func_f_wrapper
         use test_reference, only: check_obj_func_funptr, host_context, &
                                   arm_host_context_c, arm_state_c, host_context_reached
@@ -1240,7 +1241,7 @@ contains
         !
         ! this function tests the Fortran wrapper for the preconditioner function
         !
-        use opentrustregion, only: precond_type
+        use opentrustregion_core, only: precond_type
         use c_interface, only: c_callbacks_type, precond_f_wrapper
         use test_reference, only: check_precond_funptr, host_context, &
                                   arm_host_context_c, arm_state_c, host_context_reached
@@ -1299,7 +1300,7 @@ contains
         !
         ! this function tests the Fortran wrapper for the projection function
         !
-        use opentrustregion, only: project_type
+        use opentrustregion_core, only: project_type
         use c_interface, only: c_callbacks_type, project_f_wrapper
         use test_reference, only: check_project_funptr, host_context, &
                                   arm_host_context_c, arm_state_c, host_context_reached
@@ -1357,7 +1358,7 @@ contains
         !
         ! this function tests the Fortran wrapper for the convergence check function
         !
-        use opentrustregion, only: conv_check_type
+        use opentrustregion_core, only: conv_check_type
         use c_interface, only: c_callbacks_type, conv_check_f_wrapper
         use test_reference, only: check_conv_check_funptr, host_context, &
                                   arm_host_context_c, arm_state_c, host_context_reached
@@ -1431,7 +1432,7 @@ contains
         !
         ! this function tests the Fortran wrapper for the extra trial vector function
         !
-        use opentrustregion, only: get_extra_trial_vectors_type
+        use opentrustregion_core, only: get_extra_trial_vectors_type
         use c_interface, only: c_callbacks_type, get_extra_trial_vectors_f_wrapper
         use test_reference, only: check_get_extra_trial_vectors_funptr, host_context, &
                                   arm_host_context_c, arm_state_c, &
@@ -1540,7 +1541,7 @@ contains
         ! this function tests that the solver settings initialization routine correctly
         ! initializes all settings to their default values
         !
-        use opentrustregion, only: default_solver_settings
+        use opentrustregion_core, only: default_solver_settings
         use c_interface, only: solver_settings_type_c, init_solver_settings_c
         use test_reference, only: operator(/=), get_reference_solver_values
 
@@ -1569,7 +1570,7 @@ contains
         ! this function tests that the stability check settings initialization routine
         ! correctly initializes all settings to their default values
         !
-        use opentrustregion, only: default_stability_settings
+        use opentrustregion_core, only: default_stability_settings
         use c_interface, only: stability_settings_type_c, init_stability_settings_c
         use test_reference, only: operator(/=), get_reference_stability_values
 
@@ -1675,7 +1676,7 @@ contains
         ! this function tests that the function that converts solver settings from C to
         ! Fortran correctly perform this conversion
         !
-        use opentrustregion, only: solver_settings_type, default_solver_settings
+        use opentrustregion_core, only: solver_settings_type, default_solver_settings
         use c_interface, only: solver_settings_type_c, assignment(=)
         use test_reference, only: ref_solver_settings, get_reference_solver_values, &
                                   operator(/=), callbacks_unset, unset_callbacks, &
@@ -1773,7 +1774,8 @@ contains
         ! this function tests that the function that converts stability check settings
         ! from C to Fortran correctly performs this conversion
         !
-        use opentrustregion, only: stability_settings_type, default_stability_settings
+        use opentrustregion_core, only: stability_settings_type, &
+                                        default_stability_settings
         use c_interface, only: stability_settings_type_c, assignment(=)
         use test_reference, only: ref_stability_settings, &
                                   get_reference_stability_values, operator(/=), &
@@ -1861,7 +1863,7 @@ contains
         ! this function tests that the function that converts solver settings from
         ! Fortran to C correctly performs this conversion
         !
-        use opentrustregion, only: solver_settings_type, default_solver_settings
+        use opentrustregion_core, only: solver_settings_type, default_solver_settings
         use c_interface, only: solver_settings_type_c, assignment(=)
         use test_reference, only: ref_solver_settings, operator(/=), callbacks_unset, &
                                   get_reference_solver_values
@@ -1949,7 +1951,8 @@ contains
         ! this function tests that the function that converts stability check settings
         ! from Fortran to C correctly performs this conversion
         !
-        use opentrustregion, only: stability_settings_type, default_stability_settings
+        use opentrustregion_core, only: stability_settings_type, &
+                                        default_stability_settings
         use c_interface, only: stability_settings_type_c, assignment(=)
         use test_reference, only: ref_stability_settings, operator(/=), &
                                   callbacks_unset, get_reference_stability_values
@@ -2024,7 +2027,7 @@ contains
         ! this function tests that the function that converts a solver state from
         ! Fortran to C correctly performs this conversion
         !
-        use opentrustregion, only: solver_state_type
+        use opentrustregion_core, only: solver_state_type
         use c_interface, only: solver_state_type_c, assignment(=)
         use test_reference, only: ref_solver_state, operator(/=)
 
@@ -2122,7 +2125,7 @@ contains
         ! this function tests conversion of a Fortran character string to a C
         ! null-terminated character array
         !
-        use opentrustregion, only: kw_len
+        use opentrustregion_core, only: kw_len
         use c_interface, only: character_to_c
 
         character(len=*), parameter :: test_string = "test  "

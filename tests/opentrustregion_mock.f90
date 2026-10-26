@@ -6,9 +6,9 @@
 
 module opentrustregion_mock
 
-    use opentrustregion, only: rp, ip, stderr, solver, stability_check, &
-                               solver_settings_type, stability_settings_type, &
-                               solver_state_type, stability_state_type
+    use opentrustregion_core, only: rp, ip, stderr, solver, stability_check, &
+                                    solver_settings_type, stability_settings_type, &
+                                    solver_state_type, stability_state_type
     use c_interface, only: c_callbacks_type
     use test_reference, only: tol
 
@@ -64,7 +64,7 @@ contains
         !
         ! this subroutine is a mock routine for solver to test the C interface
         !
-        use opentrustregion, only: update_orbs_type, obj_func_type
+        use opentrustregion_core, only: update_orbs_type, obj_func_type
         use test_reference, only: check_update_orbs_funptr, check_obj_func_funptr, &
                                   check_precond_funptr, check_project_funptr, &
                                   check_get_extra_trial_vectors_funptr, &
@@ -172,7 +172,7 @@ contains
         ! this subroutine is a mock routine for the stability check to test the C
         ! interface
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
         use test_reference, only: &
             check_hess_x_funptr, check_precond_funptr, check_project_funptr, &
             check_get_extra_trial_vectors_funptr, check_conv_check_funptr, n_param

@@ -6,7 +6,8 @@
 
 module opentrustregion_unit_tests
 
-    use opentrustregion, only: rp, ip, stderr, solver_state_type, stability_state_type
+    use opentrustregion_core, only: rp, ip, stderr, solver_state_type, &
+                                    stability_state_type
     use c_interface, only: c_rp, c_ip
     use test_reference, only: tol, host_context_type
     use, intrinsic :: iso_c_binding, only: c_bool
@@ -733,7 +734,7 @@ contains
         ! this subroutine describes the orbital update equivalent for the Hartmann 6D
         ! function
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
         use test_reference, only: check_host_context
 
         real(rp), intent(in), target :: delta_vars(:)
@@ -780,7 +781,7 @@ contains
         ! provides a Hessian linear transformation on its first call and leaves the
         ! argument as it received it on later calls
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
 
         real(rp), intent(in), target :: delta_vars(:)
         real(rp), intent(out) :: func
@@ -813,7 +814,7 @@ contains
         ! returns a value that is not a number in the output its recording context
         ! names
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 
         real(rp), intent(in), target :: delta_vars(:)
@@ -941,7 +942,7 @@ contains
         ! module context since it receives no host context, and returns a Hessian
         ! linear transformation that does the same
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
 
         real(rp), intent(in), target :: delta_vars(:)
         real(rp), intent(out) :: func
@@ -1018,7 +1019,7 @@ contains
         ! which a fault can be injected, and which returns the Hessian linear
         ! transformation into which a fault can be injected
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
 
         real(rp), intent(in), target :: delta_vars(:)
         real(rp), intent(out) :: func
@@ -1124,7 +1125,7 @@ contains
         ! below the default convergence threshold, since it replaces the gradient
         ! criterion, and into which a fault can be injected
         !
-        use opentrustregion, only: default_solver_settings
+        use opentrustregion_core, only: default_solver_settings
         use test_reference, only: check_host_context
 
         integer(ip), intent(out) :: error
@@ -1401,7 +1402,7 @@ contains
         ! this subroutine describes the orbital update equivalent for the double well
         ! function
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
         use test_reference, only: check_host_context
 
         real(rp), intent(in), target :: delta_vars(:)
@@ -1534,7 +1535,7 @@ contains
         ! context and the size of the step it receives in the Euclidean norm and in
         ! the norm of the absolute diagonal preconditioner of the previous point
         !
-        use opentrustregion, only: hess_x_type, precond_floor
+        use opentrustregion_core, only: hess_x_type, precond_floor
 
         real(rp), intent(in), target :: delta_vars(:)
         real(rp), intent(out) :: func
@@ -1601,7 +1602,7 @@ contains
         ! 1/2 |x|^2, whose Newton step leads to the origin, and records the first
         ! nonvanishing displacement
         !
-        use opentrustregion, only: hess_x_type
+        use opentrustregion_core, only: hess_x_type
         use test_reference, only: check_host_context
 
         real(rp), intent(in), target :: delta_vars(:)
@@ -1775,7 +1776,7 @@ contains
         ! this subroutine sets up a settings object for tests, which hands the test
         ! context to the mock callback functions
         !
-        use opentrustregion, only: settings_type, verbosity_info
+        use opentrustregion_core, only: settings_type, verbosity_info
 
         class(settings_type), intent(out) :: settings
         class(test_context_type), intent(inout), target :: context
@@ -1793,7 +1794,7 @@ contains
         ! passed to the mock logging function and clears the log of the test context,
         ! so that a test can check whether an error message was printed
         !
-        use opentrustregion, only: settings_type, verbosity_error
+        use opentrustregion_core, only: settings_type, verbosity_error
 
         class(settings_type), intent(inout) :: settings
         class(test_context_type), intent(inout), target :: context
@@ -2021,7 +2022,7 @@ contains
         ! step which nearly reaches it, taking it as expanded where the norm of the
         ! step lies within both the expanded and the unchanged trust radius
         !
-        use opentrustregion, only: &
+        use opentrustregion_core, only: &
             trust_radius_shrink_ratio, trust_radius_expand_ratio, &
             trust_radius_shrink_factor, trust_radius_expand_factor
 
@@ -2109,7 +2110,7 @@ contains
         !
         ! this function tests the solver subroutine
         !
-        use opentrustregion, only: &
+        use opentrustregion_core, only: &
             update_orbs_type, obj_func_type, solver_settings_type, solver, &
             default_settings => default_solver_settings, error_solver_max_iter, &
             error_update_orbs, error_conv_check, error_obj_func, error_hess_x, &
@@ -2957,7 +2958,7 @@ contains
         !
         ! this function tests the stability check subroutine
         !
-        use opentrustregion, only: &
+        use opentrustregion_core, only: &
             hess_x_type, stability_settings_type, stability_check, &
             error_stability_check, error_stability_check_max_iter, verbosity_warning, &
             error_hess_x, error_precond, error_project, error_conv_check, &
@@ -3412,11 +3413,11 @@ contains
         ! this function tests the subroutine which performs the stability check at a
         ! stationary point and determines the step along an unstable mode
         !
-        use opentrustregion, only: solver_settings_type, hess_x_type, &
-                                   check_stationary_point, error_stability_check, &
-                                   started_at_saddle_point_warning_msg, &
-                                   reached_saddle_point_warning_msg, &
-                                   reached_saddle_point_no_grad_noise_warning_msg
+        use opentrustregion_core, only: solver_settings_type, hess_x_type, &
+                                        check_stationary_point, error_stability_check, &
+                                        started_at_saddle_point_warning_msg, &
+                                        reached_saddle_point_warning_msg, &
+                                        reached_saddle_point_no_grad_noise_warning_msg
         use test_reference, only: arm_host_context, host_context_reached
 
         type(solver_settings_type) :: settings
@@ -3618,7 +3619,7 @@ contains
         !
         ! this function tests the saddle-point step subroutine
         !
-        use opentrustregion, only: solver_settings_type, saddle_point_step
+        use opentrustregion_core, only: solver_settings_type, saddle_point_step
         use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
 
         ! cases with a gradient RMS below and well above the convergence threshold and
@@ -3747,7 +3748,7 @@ contains
         !
         ! this function tests the Newton step subroutine
         !
-        use opentrustregion, only: newton_step
+        use opentrustregion_core, only: newton_step
 
         character(len=*), parameter :: case_names(3) = &
             [character(len=10) :: "symmetric", "asymmetric", "singular"]
@@ -3818,7 +3819,7 @@ contains
         !
         ! this function tests the augmented Hessian bisection subroutine
         !
-        use opentrustregion, only: solver_settings_type, bisection_ah
+        use opentrustregion_core, only: solver_settings_type, bisection_ah
         use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
 
         type(solver_settings_type) :: settings
@@ -4140,8 +4141,8 @@ contains
         !
         ! this function tests the level-shift bisection subroutine
         !
-        use opentrustregion, only: solver_settings_type, bisection_mu, &
-                                   bisection_imaginary_eigval_warning_msg
+        use opentrustregion_core, only: solver_settings_type, bisection_mu, &
+                                        bisection_imaginary_eigval_warning_msg
         use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
 
         character(len=*), parameter :: case_names(4) = &
@@ -4578,8 +4579,8 @@ contains
         !
         ! this function tests the bracketing function
         !
-        use opentrustregion, only: solver_settings_type, obj_func_type, bracket, &
-                                   error_obj_func
+        use opentrustregion_core, only: solver_settings_type, obj_func_type, bracket, &
+                                        error_obj_func
 
         type(solver_settings_type) :: settings
         procedure(obj_func_type), pointer :: obj_func_funptr
@@ -4721,7 +4722,7 @@ contains
         !
         ! this function tests the subroutine for extending a matrix
         !
-        use opentrustregion, only: extend_matrix
+        use opentrustregion_core, only: extend_matrix
 
         real(rp), allocatable :: matrix(:, :)
         real(rp) :: initial_matrix(2, 2), expected(3, 3), vector1(3), vector2(3)
@@ -4766,7 +4767,7 @@ contains
         !
         ! this function tests the subroutine for adding a column to a matrix
         !
-        use opentrustregion, only: add_column
+        use opentrustregion_core, only: add_column
 
         real(rp), allocatable :: matrix(:, :)
         real(rp) :: initial_matrix(n_param, 2), new_col(n_param)
@@ -4805,7 +4806,7 @@ contains
         ! this function tests the subroutine which determines the eigenvalues and left
         ! and right eigenvectors of a symmetric or a general matrix
         !
-        use opentrustregion, only: solver_settings_type, mat_diag
+        use opentrustregion_core, only: solver_settings_type, mat_diag
 
         type(solver_settings_type) :: settings
         real(rp) :: matrix(n_param, n_param), right_eigvecs(n_param, n_param), &
@@ -4880,7 +4881,7 @@ contains
         ! this function tests the function for determining the eigenvalues and
         ! eigenvectors for a symmetric matrix
         !
-        use opentrustregion, only: solver_settings_type, symm_mat_diag
+        use opentrustregion_core, only: solver_settings_type, symm_mat_diag
 
         type(solver_settings_type) :: settings
         real(rp) :: matrix(n_param, n_param), eigvals(n_param), &
@@ -4924,7 +4925,7 @@ contains
         ! this function tests the function for determining the eigenvalues and left and
         ! right eigenvectors for a square matrix
         !
-        use opentrustregion, only: solver_settings_type, general_mat_diag
+        use opentrustregion_core, only: solver_settings_type, general_mat_diag
 
         type(solver_settings_type) :: settings
         real(rp) :: matrix(n_param, n_param), right_eigvecs(n_param, n_param), &
@@ -5075,7 +5076,7 @@ contains
         ! corresponding eigenvector of a matrix, for both the symmetric and the
         ! non-symmetric case
         !
-        use opentrustregion, only: solver_settings_type, mat_min_eig
+        use opentrustregion_core, only: solver_settings_type, mat_min_eig
 
         type(solver_settings_type) :: settings
         real(rp) :: matrix(n_param, n_param), eigval, eigvec(n_param), &
@@ -5137,8 +5138,8 @@ contains
         ! this function tests the subroutine which returns the lowest eigenpairs of a
         ! matrix
         !
-        use opentrustregion, only: solver_settings_type, mat_lowest_eigpairs, &
-                                   complex_eigval_warning_msg
+        use opentrustregion_core, only: solver_settings_type, mat_lowest_eigpairs, &
+                                        complex_eigval_warning_msg
 
         integer(ip), parameter :: n_target = 2
 
@@ -5247,7 +5248,7 @@ contains
         ! this function tests the initialization subroutine for the random number
         ! generator
         !
-        use opentrustregion, only: init_rng
+        use opentrustregion_core, only: init_rng
 
         integer(ip) :: seed1, seed2
         real(rp) :: rand_seq1(5), rand_seq2(5), rand_seq3(5)
@@ -5293,7 +5294,7 @@ contains
         ! along the lowest Hessian diagonal elements, both when any sign is accepted
         ! and when only negative curvature is wanted
         !
-        use opentrustregion, only: lowest_h_diag_unit_vectors
+        use opentrustregion_core, only: lowest_h_diag_unit_vectors
 
         integer(ip), parameter :: n_param = 4, n_vectors = 3
         real(rp), parameter :: h_diag(n_param) = [1.0_rp, -2.0_rp, 3.0_rp, -4.0_rp]
@@ -5343,9 +5344,9 @@ contains
         ! this function tests the function which generates trial vectors for the
         ! Davidson procedure
         !
-        use opentrustregion, only: solver_settings_type, generate_trial_vectors, &
-                                   lin_dep_trial_vector_warning_msg, error_project, &
-                                   error_get_extra_trial_vectors
+        use opentrustregion_core, only: solver_settings_type, generate_trial_vectors, &
+                                        lin_dep_trial_vector_warning_msg, &
+                                        error_project, error_get_extra_trial_vectors
 
         character(len=*), parameter :: case_names(5) = [ &
             character(len=48) :: "Hessian with only positive diagonal elements", &
@@ -5527,8 +5528,8 @@ contains
         ! this function tests the function which generates random trial vectors for the
         ! Davidson procedure
         !
-        use opentrustregion, only: solver_settings_type, &
-                                   generate_random_trial_vectors, error_project
+        use opentrustregion_core, only: solver_settings_type, &
+                                        generate_random_trial_vectors, error_project
 
         integer(ip), parameter :: n_fill = 2
 
@@ -5648,8 +5649,8 @@ contains
         ! this function tests the Davidson procedure for both a single tracked
         ! eigenpair and a larger block
         !
-        use opentrustregion, only: hess_x_type, stability_settings_type, &
-                                   block_davidson, error_hess_x, error_conv_check
+        use opentrustregion_core, only: hess_x_type, stability_settings_type, &
+                                        block_davidson, error_hess_x, error_conv_check
 
         integer(ip), parameter :: n_block = 3
         character(len=*), parameter :: jacobi_davidson_case_names(5) = &
@@ -6092,8 +6093,9 @@ contains
         ! this function tests the subroutine which generates the initial trial space
         ! for the stability check
         !
-        use opentrustregion, only: stability_settings_type, get_stability_trial_space, &
-                                   error_get_extra_trial_vectors, error_project
+        use opentrustregion_core, only: stability_settings_type, &
+                                        get_stability_trial_space, &
+                                        error_get_extra_trial_vectors, error_project
 
         character(len=*), parameter :: case_names(4) = [ &
             character(len=30) :: "Hessian diagonal leading block", "supplied extra "// &
@@ -6257,9 +6259,9 @@ contains
         !
         ! this function tests the subroutine which orthogonalizes trial vectors
         !
-        use opentrustregion, only: stability_settings_type, &
-                                   orthogonalize_trial_vectors, &
-                                   lin_dep_trial_vector_warning_msg
+        use opentrustregion_core, only: stability_settings_type, &
+                                        orthogonalize_trial_vectors, &
+                                        lin_dep_trial_vector_warning_msg
 
         type(stability_settings_type) :: settings
         real(rp), allocatable :: red_space_basis(:, :)
@@ -6342,8 +6344,8 @@ contains
         ! this function tests the Gram-Schmidt subroutine which orthonormalizes a
         ! vector to a given basis
         !
-        use opentrustregion, only: solver_settings_type, gram_schmidt, &
-                                   error_gram_schmidt_lin_dep
+        use opentrustregion_core, only: solver_settings_type, gram_schmidt, &
+                                        error_gram_schmidt_lin_dep
 
         type(solver_settings_type) :: settings
         real(rp) :: vector(n_param), lin_trans_vector(n_param), vector_small(2), &
@@ -6512,8 +6514,9 @@ contains
         ! this function tests the subroutine that constructs the level-shifted diagonal
         ! preconditioner
         !
-        use opentrustregion, only: solver_settings_type, level_shifted_diag_precond, &
-                                   error_precond, error_project
+        use opentrustregion_core, only: solver_settings_type, &
+                                        level_shifted_diag_precond, error_precond, &
+                                        error_project
 
         real(rp) :: vector(3), mu, h_diag(3), precond_vector(3)
         type(solver_settings_type) :: settings
@@ -6612,8 +6615,8 @@ contains
         ! this function tests the subroutine that constructs the absolute diagonal
         ! preconditioner
         !
-        use opentrustregion, only: solver_settings_type, abs_diag_precond, &
-                                   error_precond, error_project
+        use opentrustregion_core, only: solver_settings_type, abs_diag_precond, &
+                                        error_precond, error_project
 
         real(rp) :: vector(3), h_diag(3), precond_vector(3)
         type(solver_settings_type) :: settings
@@ -6706,7 +6709,7 @@ contains
         ! this function tests the orthogonal projection function which removes a
         ! certain direction from a vector
         !
-        use opentrustregion, only: orthogonal_projection
+        use opentrustregion_core, only: orthogonal_projection
 
         real(rp), dimension(n_param) :: vector, direction, complement
 
@@ -6740,8 +6743,8 @@ contains
         !
         ! this function tests the Jacobi-Davidson correction subroutine
         !
-        use opentrustregion, only: solver_settings_type, hess_x_type, &
-                                   jacobi_davidson_correction, error_hess_x
+        use opentrustregion_core, only: solver_settings_type, hess_x_type, &
+                                        jacobi_davidson_correction, error_hess_x
 
         type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
@@ -6831,8 +6834,8 @@ contains
         !
         ! this function tests the minimum residual method subroutine
         !
-        use opentrustregion, only: solver_settings_type, hess_x_type, minres, &
-                                   verbosity_warning, minres_max_iter_warning_msg
+        use opentrustregion_core, only: solver_settings_type, hess_x_type, minres, &
+                                        verbosity_warning, minres_max_iter_warning_msg
 
         type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
@@ -7136,9 +7139,9 @@ contains
         ! this function tests the subroutine which adds a new trial vector to the
         ! reduced space basis
         !
-        use opentrustregion, only: solver_settings_type, hess_x_type, &
-                                   add_trial_vector, error_gram_schmidt_lin_dep, &
-                                   error_hess_x
+        use opentrustregion_core, only: solver_settings_type, hess_x_type, &
+                                        add_trial_vector, error_gram_schmidt_lin_dep, &
+                                        error_hess_x
 
         type(solver_settings_type) :: settings
         procedure(hess_x_type), pointer :: hess_x_funptr
@@ -7472,7 +7475,7 @@ contains
         !
         ! this function tests the subroutine that prints the result table
         !
-        use opentrustregion, only: solver_settings_type
+        use opentrustregion_core, only: solver_settings_type
 
         type(solver_settings_type) :: settings
         type(test_context_type), target :: context
@@ -7528,8 +7531,8 @@ contains
         !
         ! this function tests the logging subroutine
         !
-        use opentrustregion, only: solver_settings_type, print_message, &
-                                   verbosity_debug, verbosity_warning
+        use opentrustregion_core, only: solver_settings_type, print_message, &
+                                        verbosity_debug, verbosity_warning
 
         type(solver_settings_type) :: settings
         type(test_context_type), target :: context
@@ -7583,7 +7586,7 @@ contains
         ! this function tests the subroutine which splits strings after a space if they
         ! exceed a given maximum length
         !
-        use opentrustregion, only: split_string_by_space
+        use opentrustregion_core, only: split_string_by_space
 
         character(len=23), parameter :: message = "This is a test message."
         character(len=:), allocatable :: substrings(:)
@@ -7641,10 +7644,10 @@ contains
         !
         ! this function tests the level-shifted Davidson subroutine
         !
-        use opentrustregion, only: solver_settings_type, subsystem_solver_options, &
-                                   obj_func_type, hess_x_type, level_shifted_davidson, &
-                                   error_hess_x, error_obj_func, &
-                                   trust_radius_expand_ratio, trust_radius_expand_factor
+        use opentrustregion_core, only: &
+            solver_settings_type, subsystem_solver_options, obj_func_type, &
+            hess_x_type, level_shifted_davidson, error_hess_x, error_obj_func, &
+            trust_radius_expand_ratio, trust_radius_expand_factor
 
         integer(ip), parameter :: n_stagnation = 20
         character(len=*), parameter :: &
@@ -8296,10 +8299,10 @@ contains
         !
         ! this function tests the truncated conjugate gradient subroutine
         !
-        use opentrustregion, only: obj_func_type, hess_x_type, solver_settings_type, &
-                                   truncated_conjugate_gradient, error_hess_x, &
-                                   error_obj_func, function_unchanged_warning_msg, &
-                                   precond_floor
+        use opentrustregion_core, only: &
+            obj_func_type, hess_x_type, solver_settings_type, &
+            truncated_conjugate_gradient, error_hess_x, error_obj_func, &
+            function_unchanged_warning_msg, precond_floor
 
         real(rp) :: func, ratio, solution_norm, metric_norm
         real(rp), dimension(n_param) :: grad, h_diag, solution
@@ -8794,7 +8797,7 @@ contains
         ! this function tests the subroutine which determines whether to accept a
         ! trust-region step
         !
-        use opentrustregion, only: &
+        use opentrustregion_core, only: &
             solver_settings_type, accept_trust_region_step, trust_radius_shrink_ratio, &
             trust_radius_expand_ratio, trust_radius_shrink_factor, &
             trust_radius_expand_factor, function_unchanged_warning_msg
@@ -9044,8 +9047,8 @@ contains
         ! this function tests the subroutine that resolves settings defaults that
         ! depend on other settings
         !
-        use opentrustregion, only: solver_settings_type, init_defaults, &
-                                   verbosity_info, verbosity_debug
+        use opentrustregion_core, only: solver_settings_type, init_defaults, &
+                                        verbosity_info, verbosity_debug
 
         ! the settings of the cases for the symmetry of the Hessian of the nested
         ! stability check settings
@@ -9193,7 +9196,7 @@ contains
         ! this function tests the subroutine which performs a sanity check for the
         ! solver
         !
-        use opentrustregion, only: &
+        use opentrustregion_core, only: &
             solver_settings_type, solver_sanity_check, project_warning_msg, &
             random_trial_vector_warning_msg, subsystem_solver_options
 
@@ -9368,7 +9371,7 @@ contains
         ! this function tests the subroutine which performs a sanity check for the
         ! stability check
         !
-        use opentrustregion, only: &
+        use opentrustregion_core, only: &
             stability_settings_type, stability_sanity_check, project_warning_msg, &
             random_trial_vector_warning_msg, diag_solver_options, &
             standalone_n_random_trial_vectors
@@ -9549,7 +9552,7 @@ contains
         ! this function tests the subroutine that adds the error origin to an error
         ! code
         !
-        use opentrustregion, only: solver_settings_type, add_error_origin
+        use opentrustregion_core, only: solver_settings_type, add_error_origin
 
         type(solver_settings_type) :: settings
         integer(ip) :: error
@@ -9608,7 +9611,7 @@ contains
         !
         ! this function tests the function that transfers strings to lowercase
         !
-        use opentrustregion, only: string_to_lowercase
+        use opentrustregion_core, only: string_to_lowercase
 
         character(len=*), parameter :: input = "OpenTrustRegion123!", &
                                        expect = "opentrustregion123!"
@@ -9630,7 +9633,7 @@ contains
         ! this function tests the function that checks whether a string is contained in
         ! another string
         !
-        use opentrustregion, only: string_in
+        use opentrustregion_core, only: string_in
 
         character(len=*), parameter :: input = "OpenTrustRegion123!"
 
@@ -9656,7 +9659,8 @@ contains
         ! this function tests the subroutine which perturbs a vector by a random vector
         ! of a given size relative to it
         !
-        use opentrustregion, only: solver_settings_type, perturb_vector, error_project
+        use opentrustregion_core, only: solver_settings_type, perturb_vector, &
+                                        error_project
 
         real(rp), parameter :: noise = 1e-3_rp
         type(solver_settings_type) :: settings
@@ -9734,7 +9738,7 @@ contains
         ! this function tests the function which returns the relative size of the
         ! gradient perturbation
         !
-        use opentrustregion, only: solver_settings_type, noise_level
+        use opentrustregion_core, only: solver_settings_type, noise_level
 
         type(solver_settings_type) :: settings
 
@@ -9768,8 +9772,8 @@ contains
         ! this function tests the function which returns the residual norm at which the
         ! micro iterations stop
         !
-        use opentrustregion, only: solver_settings_type, micro_conv_tol, &
-                                   level_shift_local_thres, residual_norm_floor
+        use opentrustregion_core, only: solver_settings_type, micro_conv_tol, &
+                                        level_shift_local_thres, residual_norm_floor
 
         ! cases with the level shift, the gradient perturbation and the initial
         ! residual norm
@@ -9814,7 +9818,7 @@ contains
         !
         ! this function tests the function which lists options
         !
-        use opentrustregion, only: option_list
+        use opentrustregion_core, only: option_list
 
         ! assume tests pass
         test_option_list = .true.

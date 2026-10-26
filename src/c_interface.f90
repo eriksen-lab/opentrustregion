@@ -6,7 +6,7 @@
 
 module c_interface
 
-    use opentrustregion, only: &
+    use opentrustregion_core, only: &
         rp, ip, kw_len, standard_solver => solver, &
         standard_stability_check => stability_check, default_solver_settings, &
         default_stability_settings, update_orbs_type, hess_x_type, obj_func_type, &
@@ -217,9 +217,9 @@ contains
         !
         ! this function exposes a Fortran-implemented solver subroutine to C
         !
-        use opentrustregion, only: solver_settings_type, stderr, &
-                                   settings_uninitialized_warning_msg, &
-                                   stability_settings_uninitialized_warning_msg
+        use opentrustregion_core, only: solver_settings_type, stderr, &
+                                        settings_uninitialized_warning_msg, &
+                                        stability_settings_uninitialized_warning_msg
 
         type(c_funptr), intent(in), value :: update_orbs_c_funptr, obj_func_c_funptr
         integer(c_ip), intent(in), value :: n_param_c
@@ -319,8 +319,8 @@ contains
         !
         ! this function exposes a Fortran-implemented stability check subroutine to C
         !
-        use opentrustregion, only: stability_settings_type, stderr, &
-                                   settings_uninitialized_warning_msg
+        use opentrustregion_core, only: stability_settings_type, stderr, &
+                                        settings_uninitialized_warning_msg
 
         real(c_rp), intent(in), target :: h_diag_c(*)
         integer(c_ip), intent(in), value :: n_param_c
@@ -874,7 +874,7 @@ contains
         !
         ! this subroutine converts solver settings from C to Fortran
         !
-        use opentrustregion, only: solver_settings_type
+        use opentrustregion_core, only: solver_settings_type
 
         type(solver_settings_type), intent(out) :: settings
         type(solver_settings_type_c), intent(in) :: settings_c
@@ -948,7 +948,7 @@ contains
         !
         ! this subroutine converts stability check settings from C to Fortran
         !
-        use opentrustregion, only: stability_settings_type
+        use opentrustregion_core, only: stability_settings_type
 
         type(stability_settings_type), intent(out) :: settings
         type(stability_settings_type_c), intent(in) :: settings_c
@@ -1014,7 +1014,7 @@ contains
         !
         ! this subroutine converts solver settings from Fortran to C
         !
-        use opentrustregion, only: solver_settings_type
+        use opentrustregion_core, only: solver_settings_type
 
         type(solver_settings_type_c), intent(out) :: settings_c
         type(solver_settings_type), intent(in) :: settings
@@ -1068,7 +1068,7 @@ contains
         !
         ! this subroutine converts stability settings from Fortran to C
         !
-        use opentrustregion, only: stability_settings_type
+        use opentrustregion_core, only: stability_settings_type
 
         type(stability_settings_type_c), intent(out) :: settings_c
         type(stability_settings_type), intent(in) :: settings
