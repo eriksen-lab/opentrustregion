@@ -701,6 +701,45 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "Hessian linear transformation was not reported."
             )
 
+        # a Hessian diagonal given as a strided view, of another type or as a list is
+        # passed with its values, while a Hessian diagonal of another length and an
+        # array for the direction which the library can not write into are refused
+        matrix = np.zeros((n_param, n_param))
+        np.fill_diagonal(matrix, 3.0)
+        h_diag_converted = True
+        for h_diag_given, case in [
+            (np.diag(matrix), "a strided view"),
+            (np.full(n_param, 3.0, dtype=np.float32), "a single precision array"),
+            ([3.0] * n_param, "a list"),
+        ]:
+            interface_flag.value = False
+            stability_check(h_diag_given, mock_hess_x, n_param, settings)
+            if not interface_flag.value:
+                print(
+                    " test_stability_check_py_interface failed: Hessian diagonal "
+                    f"given as {case} not passed correctly."
+                )
+                h_diag_converted = False
+        read_only = np.zeros(n_param)
+        read_only.flags.writeable = False
+        wrong_inputs_refused = True
+        for h_diag_given, kappa_given, case in [
+            (np.full(n_param + 1, 3.0), None, "Hessian diagonal of another length"),
+            (h_diag, np.zeros(n_param + 1), "Direction of another length"),
+            (h_diag, np.zeros(n_param, dtype=np.float32), "Single precision direction"),
+            (h_diag, np.zeros(2 * n_param)[::2], "Strided direction"),
+            (h_diag, read_only, "Read-only direction"),
+            (h_diag, [0.0] * n_param, "Direction given as a list"),
+        ]:
+            try:
+                stability_check(
+                    h_diag_given, mock_hess_x, n_param, settings, kappa=kappa_given
+                )
+                print(f" test_stability_check_py_interface failed: {case} not refused.")
+                wrong_inputs_refused = False
+            except ValueError:
+                pass
+
         # call stability check python interface without settings, which have to be
         # passed as none so that the library uses its default settings, the results of
         # the mock start opposite to the expected ones
@@ -728,6 +767,8 @@ class PyInterfaceUnitTests(unittest.TestCase):
             and stable_with_failed_logger
             and stable_without_direction
             and callback_error_reported
+            and h_diag_converted
+            and wrong_inputs_refused
             and no_settings_passed,
             "test_stability_check_py_interface failed",
         )

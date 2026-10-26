@@ -417,8 +417,7 @@ settings.conv_tol = 1e-6
 settings.n_iter = 100
 settings.diag_solver = "jacobi-davidson"
 
-# Hessian diagonal and lowest eigenvector arrays
-h_diag = np.asarray(h_diag, dtype=np.float64)
+# array for the lowest eigenvector
 kappa = np.empty(n_param, dtype=np.float64)
 
 # run stability check

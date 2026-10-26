@@ -1009,6 +1009,26 @@ def stability_check(
     state: Optional[StabilityState] = None,
     kappa: Optional[np.ndarray] = None,
 ) -> bool:
+    # convert the Hessian diagonal into a contiguous array of reals, check its shape
+    # and ensure the lowest eigenvector array is writable, contiguous and has the right
+    # type and shape
+    h_diag = np.ascontiguousarray(h_diag, dtype=np.float64)
+    if h_diag.shape != (n_param,):
+        raise ValueError(
+            f"Hessian diagonal has shape {h_diag.shape} instead of ({n_param},)."
+        )
+    if kappa is not None and not (
+        isinstance(kappa, np.ndarray)
+        and kappa.dtype == np.float64
+        and kappa.shape == (n_param,)
+        and kappa.flags.c_contiguous
+        and kappa.flags.writeable
+    ):
+        raise ValueError(
+            "The array for the lowest eigenvector has to be a writeable, contiguous "
+            f"float64 array of shape ({n_param},)."
+        )
+
     # variable to capture exceptions in the callback interfaces
     exception: Dict[str, Exception] = {}
 
