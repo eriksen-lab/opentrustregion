@@ -7991,6 +7991,53 @@ contains
             end if
         end do
 
+        ! let the residual stagnate in the same way on a quadratic model with a
+        ! diagonal Hessian whose eigenvalues grow with the cube of their index and a
+        ! gradient spread evenly over the first half of its eigenvectors, the
+        ! preconditioner only returning the others, so that the Jacobi-Davidson method,
+        ! which the stagnation switches to, decreases the residual by less than a fifth
+        ! in its first micro iteration and needs several to solve the subproblem, and
+        ! check that it gets them and solves the subproblem in the first step instead
+        ! of stopping right after the switch, the gradient is small enough for the
+        ! step to rotate no parameter by more than the trust region allows
+        call setup_settings(settings, quadratic_context)
+        settings%grad_noise = .false.
+        settings%n_random_trial_vectors = 0
+        settings%precond => mock_precond_next_unit_vector
+        settings%subsystem_solver = "jacobi-davidson_ls"
+        quadratic_context%hess = identity_matrix(n_stagnation)
+        do i = 1, n_stagnation
+            quadratic_context%hess(i, i) = real(i, kind=rp)**3
+        end do
+        quadratic_context%grad = spread(0.0_rp, 1, n_stagnation)
+        quadratic_context%grad(:n_stagnation / 2) = 0.01_rp
+        quadratic_context%next_unit_vector = n_stagnation / 2
+        h_diag_stagnation = [(quadratic_context%hess(i, i), i=1, n_stagnation)]
+        obj_func_funptr => quadratic_obj_func
+        hess_x_funptr => quadratic_hess_x
+        state%trust_radius = 10.0_rp
+        state%n_obj_func = 0
+        call level_shifted_davidson( &
+            0.0_rp, quadratic_context%grad, norm2(quadratic_context%grad), &
+            h_diag_stagnation, n_stagnation, obj_func_funptr, hess_x_funptr, settings, &
+            .false., state, solution_stagnation, solution_norm, mu, error)
+        if (error /= 0) then
+            write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
+                "when Jacobi-Davidson needs several micro iterations after stagnation."
+            test_level_shifted_davidson = .false.
+        end if
+        if (state%jacobi_davidson_iteration < 2) then
+            write(stderr, *) "test_level_shifted_davidson failed: Jacobi-Davidson "// &
+                "method not given more than one micro iteration after stagnation."
+            test_level_shifted_davidson = .false.
+        end if
+        if (state%n_obj_func /= 1) then
+            write(stderr, *) "test_level_shifted_davidson failed: Step rejected "// &
+                "although Jacobi-Davidson method can solve the subproblem after "// &
+                "stagnation."
+            test_level_shifted_davidson = .false.
+        end if
+
         ! let the reduced space grow until it can no longer be expanded, a vanishing
         ! reduction factor prevents natural convergence, and one large Hessian
         ! eigenvalue ensures that even the exact full-rank solution's residual carries

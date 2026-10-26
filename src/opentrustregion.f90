@@ -3102,6 +3102,11 @@ contains
                         jacobi_davidson_iter = 1
                         state%jacobi_davidson_iteration = &
                             state%jacobi_davidson_iteration + 1
+
+                        ! give Jacobi-Davidson its own micro iterations to decrease
+                        ! the residual before it counts as stagnating
+                        initial_imicro = imicro
+                        initial_residual_norm = residual_norm
                     end if
                 ! check if residual has not decreased sufficiently
                 else if (imicro - initial_imicro >= 10 .and. residual_norm > &
