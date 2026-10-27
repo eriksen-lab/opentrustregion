@@ -1073,6 +1073,22 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 )
                 test_passed = False
 
+        # the Hessian linear transformation an orbital update returns reports an
+        # exception it raises as an error and keeps it with those of the orbital update
+        exception = {}
+        hess_x_funptr = pointer(hess_x_interface_type())
+        UpdateOrbsInterface(
+            lambda kappa, grad, h_diag: (0.0, raising(ValueError)), n_param, exception
+        ).call(vector_ptr, pointer(c_real()), vector_ptr, vector_ptr, hess_x_funptr)
+        if hess_x_funptr[0](vector_ptr, output_ptr, None) != 1 or not isinstance(
+            exception.get("exc"), ValueError
+        ):
+            print(
+                " test_callback_interfaces failed: Exception raised by Hessian linear "
+                "transformation returned by orbital update not reported."
+            )
+            test_passed = False
+
         # the convergence check interface passes on that the optimization has not
         # converged
         converged = c_bool(True)
