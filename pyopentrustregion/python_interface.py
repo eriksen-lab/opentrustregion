@@ -498,10 +498,10 @@ class SolverStateC(Structure):
 
 def check_struct_sizes(library: CDLL) -> None:
     """
-    this function checks that the structures of the settings and states have the
-    sizes of those of the library, which differ for a library of another version than
-    this module, as a separately installed library or a stale build can be, whose
-    settings and states would otherwise be read and written with the wrong layout
+    this function checks that the settings and state structures have the sizes the
+    library exports, so that a library of another version, such as a separately
+    installed one or a stale build, is not read and written with the wrong layout,
+    only a layout change that keeps the sizes goes undetected
     """
     for name, structure in [
         ("solver_settings", SolverSettingsC),
