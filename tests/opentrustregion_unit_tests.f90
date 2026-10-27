@@ -8399,6 +8399,7 @@ contains
             obj_func_type, hess_x_type, solver_settings_type, &
             truncated_conjugate_gradient, error_hess_x, error_obj_func, &
             function_unchanged_warning_msg, precond_floor, default_solver_settings
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_positive_inf
 
         real(rp) :: func, ratio, solution_norm, metric_norm, double_well_grad(2), &
                     double_well_h_diag(2), double_well_solution(2)
@@ -8828,6 +8829,36 @@ contains
                                                     metric_norm)) > tol) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Step does "// &
                 "not lie at trust region boundary for a model without curvature."
+            test_truncated_conjugate_gradient = .false.
+        end if
+
+        ! run truncated conjugate gradient on the quadratic model with an infinite
+        ! curvature along the first parameter, as from a Hessian linear transformation
+        ! which overflows, and check that the subproblem reports this as an error with
+        ! an error message right after the first Hessian linear transformation, without
+        ! evaluating the objective function
+        quadratic_context%hess(1, 1) = ieee_value(1.0_rp, ieee_positive_inf)
+        call setup_error_logging(settings, quadratic_context)
+        state%trust_radius = 0.4_rp
+        state%n_hess_x = 0
+        state%n_obj_func = 0
+        call truncated_conjugate_gradient( &
+            0.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+            hess_x_funptr, settings, state, solution, solution_norm, error)
+        if (error /= 1) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Did not "// &
+                "report a Hessian linear transformation which is not finite."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (len_trim(quadratic_context%log_message) == 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: No error "// &
+                "message printed for a Hessian linear transformation which is not "// &
+                "finite."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (state%n_hess_x /= 1 .or. state%n_obj_func /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Hessian "// &
+                "linear transformation which is not finite not reported right after it."
             test_truncated_conjugate_gradient = .false.
         end if
         hess_x_funptr => hess_x_fun

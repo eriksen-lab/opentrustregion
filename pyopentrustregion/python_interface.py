@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import sys
 import copy
+import signal
+import threading
 import warnings
 from pathlib import Path
 import numpy as np
@@ -145,17 +147,73 @@ conv_check_interface_type = callback_type(c_int, POINTER(c_bool))
 logger_interface_type = callback_type(None, c_char_p)
 
 
+class InterruptionState(threading.local):
+    """
+    this class keeps, separately for every thread, a stack of the running calls, True
+    for a callback function and False for the library, innermost last, and an
+    interruption that arrived while the library ran and is raised later
+    """
+
+    stack: tuple = ()
+    pending: Optional[BaseException] = None
+
+
+interruption_state = InterruptionState()
+
+
+def defer_interruption(signum, frame):
+    """
+    this function handles SIGINT during a call into the library, it raises a
+    KeyboardInterrupt right away while a callback function runs, but only records it
+    while the library runs, since Python would otherwise raise it on entering the next
+    callback function, where ctypes would drop it
+    """
+    if interruption_state.stack and not interruption_state.stack[-1]:
+        interruption_state.pending = KeyboardInterrupt()
+    else:
+        signal.default_int_handler(signum, frame)
+
+
 # define interface factories
 class CallbackInterface:
     """
     this class is the base class of the callback function interfaces, the C interface
     hands every callback function the opaque host context as its last argument while
     Python hosts carry their data in closures instead, so it is dropped here and the
-    subclasses only implement call without it
+    subclasses only implement call without it, an exception is reported to the library
+    as an error, since ctypes would drop it
     """
 
+    exception: Dict[str, BaseException]
+
     def __call__(self, *args):
-        return self.call(*args[:-1])
+        # catch every exception, since ctypes drops one that leaves this function and
+        # hands the library an undefined return value instead
+        outer = interruption_state.stack
+        try:
+            interruption_state.stack = outer + (True,)
+
+            # stop the call for an interruption that arrived while the library ran
+            if interruption_state.pending is not None:
+                pending, interruption_state.pending = interruption_state.pending, None
+                raise pending
+
+            result = self.call(*args[:-1])
+        except BaseException as e:
+            # unmark the callback function before calling fail, so that an interruption
+            # arriving during that call is recorded instead of raised outside the try
+            interruption_state.stack = outer
+            return self.fail(e)
+        interruption_state.stack = outer
+        return result
+
+    def fail(self, e: BaseException) -> Optional[int]:
+        """
+        this function keeps the exception of a callback function, which is raised once
+        the call has returned, and returns the error code that stops the call
+        """
+        self.exception["exc"] = e
+        return 1
 
 
 @dataclass
@@ -173,11 +231,7 @@ class ObjFuncInterface(CallbackInterface):
         kappa = np.ctypeslib.as_array(kappa_ptr, shape=(self.n_param,))
         kappa.flags.writeable = False
 
-        try:
-            func_ptr[0] = self.obj_func(kappa)
-        except BaseException as e:
-            self.exception["exc"] = e
-            return 1
+        func_ptr[0] = self.obj_func(kappa)
 
         return 0
 
@@ -199,11 +253,7 @@ class HessXInterface(CallbackInterface):
         hx = np.ctypeslib.as_array(hx_ptr, shape=(self.n_param,))
 
         # perform linear transformation
-        try:
-            self.hess_x(x, hx)
-        except BaseException as e:
-            self.exception["exc"] = e
-            return 1
+        self.hess_x(x, hx)
 
         return 0
 
@@ -231,11 +281,7 @@ class UpdateOrbsInterface(CallbackInterface):
 
         # update orbitals and retrieve objective function, gradient, Hessian diagonal
         # and Hessian linear transformation function
-        try:
-            func_ptr[0], hess_x = self.update_orbs(kappa, grad, h_diag)
-        except BaseException as e:
-            self.exception["exc"] = e
-            return 1
+        func_ptr[0], hess_x = self.update_orbs(kappa, grad, h_diag)
 
         # an orbital update which does not provide a Hessian linear transformation
         # leaves the pointer unset so that the solver reports the missing one, while
@@ -279,11 +325,7 @@ class PrecondInterface(CallbackInterface):
         )
 
         # call preconditioner
-        try:
-            self.precond(residual, mu, precond_residual)
-        except BaseException as e:
-            self.exception["exc"] = e
-            return 1
+        self.precond(residual, mu, precond_residual)
 
         return 0
 
@@ -303,11 +345,7 @@ class ProjectInterface(CallbackInterface):
         vector = np.ctypeslib.as_array(vector_ptr, shape=(self.n_param,))
 
         # call projection function
-        try:
-            self.project(vector)
-        except BaseException as e:
-            self.exception["exc"] = e
-            return 1
+        self.project(vector)
 
         return 0
 
@@ -329,11 +367,7 @@ class GetExtraTrialVectorsInterface(CallbackInterface):
         )
 
         # call extra trial vector function
-        try:
-            self.get_extra_trial_vectors(trial_vectors)
-        except BaseException as e:
-            self.exception["exc"] = e
-            return 1
+        self.get_extra_trial_vectors(trial_vectors)
 
         return 0
 
@@ -349,11 +383,7 @@ class ConvCheckInterface(CallbackInterface):
 
     def call(self, conv_ptr) -> int:
         # call convergence check
-        try:
-            conv_ptr[0] = self.conv_check()
-        except BaseException as e:
-            self.exception["exc"] = e
-            return 1
+        conv_ptr[0] = self.conv_check()
 
         return 0
 
@@ -369,13 +399,19 @@ class LoggerInterface(CallbackInterface):
 
     def call(self, message):
         # call logger
-        try:
-            self.logger(string_at(message).decode("utf-8"))
-        except BaseException as e:
-            # the logger has no error channel since the result does not depend on it,
-            # so the first failure is kept and reported once the call into the library
-            # has returned
+        self.logger(string_at(message).decode("utf-8"))
+
+    def fail(self, e: BaseException) -> None:
+        """
+        this function keeps the first exception of the logging function, which returns
+        no error code since the result does not depend on it, for a warning once the
+        call has returned, and records an interruption, so that the next callback
+        function stops the call
+        """
+        if isinstance(e, Exception):
             self.exception.setdefault("logger", e)
+        else:
+            interruption_state.pending = e
 
 
 # define classes corresponding to C structs for settings
@@ -937,9 +973,8 @@ def raise_on_failure(error: int, exception: Dict[str, BaseException], name: str)
     instead of one, while an interruption of a callback function, such as a
     KeyboardInterrupt, is raised as it is
     """
-    for key in ("exc", "logger"):
-        if key in exception and not isinstance(exception[key], Exception):
-            raise exception[key]
+    if "exc" in exception and not isinstance(exception["exc"], Exception):
+        raise exception["exc"]
     if "logger" in exception:
         warning = RuntimeWarning(
             f"OpenTrustRegion {name} called a logging function that raised "
@@ -952,6 +987,33 @@ def raise_on_failure(error: int, exception: Dict[str, BaseException], name: str)
         raise RuntimeError(
             f"OpenTrustRegion {name} produced error (code {error})."
         ) from exception.get("exc")
+
+
+def call_library(function: Callable[..., int], *args) -> int:
+    """
+    this function calls into the library and marks it as innermost while it runs, in
+    the main thread it also replaces Python's default handler of SIGINT with
+    defer_interruption meanwhile, and raises an interruption that arrived after the
+    last callback function once the call has returned
+    """
+    outer = interruption_state.stack
+    install = (
+        threading.current_thread() is threading.main_thread()
+        and signal.getsignal(signal.SIGINT) is signal.default_int_handler
+    )
+    try:
+        if install:
+            signal.signal(signal.SIGINT, defer_interruption)
+        interruption_state.stack = outer + (False,)
+        error = function(*args)
+    finally:
+        interruption_state.stack = outer
+        if install:
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+    if interruption_state.pending is not None:
+        pending, interruption_state.pending = interruption_state.pending, None
+        raise pending
+    return error
 
 
 def solver(
@@ -997,7 +1059,8 @@ def solver(
     ]
 
     # call Fortran function
-    error = lib.solver(
+    error = call_library(
+        lib.solver,
         update_orbs_interface,
         obj_func_interface,
         n_param,
@@ -1069,7 +1132,8 @@ def stability_check(
     stable = c_bool(False)
 
     # call Fortran function
-    error = lib.stability_check(
+    error = call_library(
+        lib.stability_check,
         h_diag.ctypes.data_as(POINTER(c_real)),
         hess_x_interface,
         n_param,

@@ -3195,6 +3195,8 @@ contains
         ! this subroutine performs truncated conjugate gradient to solve the trust
         ! region subproblem
         !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
         real(rp), intent(in) :: func, grad(:), h_diag(:)
         integer(ip), intent(in) :: n_param
         procedure(obj_func_type), pointer, intent(in) :: obj_func
@@ -3275,6 +3277,16 @@ contains
             state%n_hess_x = state%n_hess_x + 1
             call add_error_origin(error, error_hess_x, settings)
             if (error /= 0) return
+
+            ! a Hessian linear transformation which returns values that are not finite
+            ! leaves no predicted function change, which cutting the step back to a
+            ! smaller trust region can not restore since it reuses the transformation
+            if (.not. all(ieee_is_finite(hess_direction))) then
+                call settings%log("Hessian linear transformation returned values "// &
+                                  "that are not finite.", verbosity_error, .true.)
+                error = 1
+                return
+            end if
 
             ! calculate curvature
             curvature = ddot(n_param, direction, 1_ip, hess_direction, 1_ip)
