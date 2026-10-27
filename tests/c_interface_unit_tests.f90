@@ -2192,38 +2192,38 @@ contains
 
     logical(c_bool) function test_character_from_c() bind(C)
         !
-        ! this function tests conversion of a C null-terminated character array to a
-        ! Fortran character string
+        ! this function tests conversion of a null-terminated keyword field of the C
+        ! settings to a Fortran character string
         !
+        use opentrustregion_core, only: kw_len
         use c_interface, only: character_from_c
 
-        character(kind=c_char), parameter :: test_array(5) = &
-            ["t", "e", "s", "t", c_null_char]
+        character(kind=c_char) :: char_c(kw_len + 3)
         character(len=:), allocatable :: char_f
-        integer(ip) :: i
 
         ! assume tests pass
         test_character_from_c = .true.
 
-        ! perform conversion
-        char_f = character_from_c(test_array)
-
-        ! check equality
-        if (len(char_f) /= size(test_array) - 1) then
-            write(stderr, *) "test_character_from_c failed: Converted string has "// &
-                "wrong length."
+        ! check that a keyword terminated by a null character is converted up to it
+        char_c = c_null_char
+        char_c(1:4) = ["t", "e", "s", "t"]
+        char_f = character_from_c(char_c)
+        if (len(char_f) /= 4 .or. char_f /= "test") then
+            write(stderr, *) "test_character_from_c failed: Terminated keyword not "// &
+                "converted correctly."
             test_character_from_c = .false.
-            return
         end if
 
-        ! check characters
-        do i = 1, len(char_f)
-            if (test_array(i) /= char_f(i:i)) then
-                write(stderr, *) "test_character_from_c failed: String mismatch at "// &
-                    "character ", i, "."
-                test_character_from_c = .false.
-            end if
-        end do
+        ! check that a field without a null character is taken whole without reading
+        ! past it into the characters that follow it here
+        char_c(1:kw_len + 1) = "x"
+        char_c(kw_len + 2) = "y"
+        char_f = character_from_c(char_c)
+        if (len(char_f) /= kw_len + 1 .or. char_f /= repeat("x", kw_len + 1)) then
+            write(stderr, *) "test_character_from_c failed: Field without null "// &
+                "character not converted correctly."
+            test_character_from_c = .false.
+        end if
 
     end function test_character_from_c
 

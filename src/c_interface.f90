@@ -1184,23 +1184,22 @@ contains
 
     function character_from_c(char_c) result(char_f)
         !
-        ! this function converts a C null-terminated character array to a Fortran
-        ! character
+        ! this function converts a null-terminated keyword field of the C settings to a
+        ! Fortran character, without reading past the field, which is taken whole if
+        ! it holds no null character, so that it is rejected as no keyword fills it
         !
-        character(kind=c_char), intent(in) :: char_c(*)
+        character(kind=c_char), intent(in) :: char_c(kw_len + 1)
         character(len=:), allocatable :: char_f
 
         integer(ip) :: n
 
-        ! allocate Fortran character
-        n = 1
-        do while (char_c(n) /= c_null_char)
-            n = n + 1
-        end do
-        allocate(character(len=n - 1) :: char_f)
+        ! allocate Fortran character up to the terminating null character
+        n = findloc(char_c, c_null_char, dim=1) - 1
+        if (n < 0) n = size(char_c)
+        allocate(character(len=n) :: char_f)
 
         ! copy and convert each character
-        char_f = transfer(char_c(1:n - 1), char_f)
+        char_f = transfer(char_c(1:n), char_f)
 
     end function character_from_c
 
