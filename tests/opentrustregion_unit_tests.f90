@@ -1061,7 +1061,8 @@ contains
         !
         ! this function describes the objective function evaluation of the Hartmann 6D
         ! function into which a fault can be injected and which raises the value of its
-        ! first evaluation, so that the first step is rejected
+        ! first evaluation by more than the range of the function, so that the first
+        ! step is rejected
         !
         real(rp), intent(in), target :: delta_vars(:)
         integer(ip), intent(out) :: error
@@ -1075,7 +1076,7 @@ contains
         ! raise the value of the first evaluation
         select type (context)
         class is (hartmann6d_fault_context_type)
-            if (context%n_callback_calls(fault_obj_func) == 1) func = func + 1.0_rp
+            if (context%n_callback_calls(fault_obj_func) == 1) func = func + 10.0_rp
         end select
 
     end function first_step_rejecting_obj_func
@@ -2854,14 +2855,15 @@ contains
         end if
 
         ! inject faults by running the solver from the saddle point, where it performs
-        ! the internal stability check, with a stability check at convergence, a line
-        ! search and every optional callback function, also of the nested settings,
-        ! once without a fault to count the calls of every callback function and then
-        ! letting every one of these calls fail in turn, for every subsystem solver
-        ! without and with a perturbed gradient, whose perturbation is projected, and
-        ! check that the unfaulted run reaches every callback function, that the error
-        ! is reported with the origin of the failing callback function and that the
-        ! reported counters still agree with the calls
+        ! the internal stability check, with a rejected first trust-region step, a
+        ! stability check at convergence, a line search and every optional callback
+        ! function, also of the nested settings, once without a fault to count the
+        ! calls of every callback function and then letting every one of these calls
+        ! fail in turn, for every subsystem solver without and with a perturbed
+        ! gradient, whose perturbation is projected, and check that the unfaulted run
+        ! reaches every callback function, that the error is reported with the origin
+        ! of the failing callback function and that the reported counters still agree
+        ! with the calls
         do i_solver = 1, size(subsystem_solver_options)
             do i_case = 1, 2
                 grad_noise = i_case == 2
@@ -2912,8 +2914,9 @@ contains
         subroutine run_with_fault(fault_callback, fault_call)
             !
             ! this subroutine runs the solver from the saddle point with the subsystem
-            ! solver and the gradient perturbation of the current case and lets the
-            ! given call of the given callback function fail
+            ! solver and the gradient perturbation of the current case, rejecting its
+            ! first trust-region step, and lets the given call of the given callback
+            ! function fail
             !
             integer(ip), intent(in) :: fault_callback, fault_call
 
@@ -2949,7 +2952,7 @@ contains
 
             ! run solver
             faulty_update_orbs_funptr => faulty_update_orbs
-            faulty_obj_func_funptr => faulty_obj_func
+            faulty_obj_func_funptr => first_step_rejecting_obj_func
             call solver(faulty_update_orbs_funptr, faulty_obj_func_funptr, n_param, &
                         error, settings, state)
 
