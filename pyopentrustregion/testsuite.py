@@ -9,7 +9,6 @@ import sys
 import copy
 import unittest
 import warnings
-from importlib import resources
 from ctypes import (
     CDLL,
     c_bool,
@@ -45,7 +44,7 @@ from pyopentrustregion.python_interface import (
     c_int,
     c_real,
     ext,
-    conda_prefix,
+    _load_lib,
     ObjFuncInterface,
     HessXInterface,
     UpdateOrbsInterface,
@@ -59,42 +58,8 @@ from pyopentrustregion.python_interface import (
     hess_x_interface_type,
 )
 
-lib = None
-
-# try to load from installed package (conda)
-lib_name = f"libotrtestsuite.{ext}"
-conda_path_unix = conda_prefix / "lib" / lib_name
-conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
-if conda_path_unix.exists():
-    lib = CDLL(str(conda_path_unix))
-elif conda_path_wind.exists():
-    lib = CDLL(str(conda_path_wind))
-
-# fallback: try to load from installed package (site-packages)
-if lib is None:
-    lib_path = resources.files("pyopentrustregion") / f"libotrtestsuite.{ext}"
-    if lib_path.is_file():
-        lib = CDLL(str(lib_path))
-
-# fallback: try to load from same directory (editable install)
-if lib is None:
-    local_path = os.path.join(os.path.dirname(__file__), f"libotrtestsuite.{ext}")
-    if os.path.exists(local_path):
-        lib = CDLL(local_path)
-
-# fallback: try to load from ../build (development build)
-if lib is None:
-    build_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../build", f"libotrtestsuite.{ext}")
-    )
-    if os.path.exists(build_path):
-        lib = CDLL(build_path)
-
-# if all failed
-if lib is None:
-    raise FileNotFoundError(
-        f"Cannot find any of the expected libraries: libotrtestsuite.{ext}"
-    )
+# load the testsuite library
+lib = _load_lib([f"libotrtestsuite.{ext}"])
 
 
 # define all tests in alphabetical order

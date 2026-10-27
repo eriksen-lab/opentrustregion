@@ -59,9 +59,14 @@ if sys.platform != "win32":
 conda_prefix = Path("/opt/anaconda1anaconda2anaconda3")
 
 
-def _load_lib() -> CDLL:
+def _load_lib(lib_names: list) -> CDLL:
+    """
+    this function loads the first of the given libraries it finds, searching the
+    conda prefix, the installed package, the directory of this file and ../build in
+    this order
+    """
     # try to load from installed package (conda)
-    for lib_name in lib_candidates:
+    for lib_name in lib_names:
         conda_path_unix = conda_prefix / "lib" / lib_name
         conda_path_wind = conda_prefix / "Library" / "bin" / lib_name
         if conda_path_unix.exists():
@@ -70,19 +75,19 @@ def _load_lib() -> CDLL:
             return CDLL(str(conda_path_wind))
 
     # fallback: try to load from installed package (site-packages)
-    for lib_name in lib_candidates:
+    for lib_name in lib_names:
         lib_path = resources.files("pyopentrustregion") / lib_name
         if lib_path.is_file():
             return CDLL(str(lib_path))
 
-    # fallback: try to load from same directory (editable install)
-    for lib_name in lib_candidates:
+    # fallback: try to load from the directory of this file
+    for lib_name in lib_names:
         local_path = os.path.join(os.path.dirname(__file__), lib_name)
         if os.path.exists(local_path):
             return CDLL(local_path)
 
     # fallback: try to load from ../build (development build)
-    for lib_name in lib_candidates:
+    for lib_name in lib_names:
         build_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "../build", lib_name)
         )
@@ -90,12 +95,10 @@ def _load_lib() -> CDLL:
             return CDLL(build_path)
 
     # if all failed
-    raise FileNotFoundError(
-        f"Cannot find either opentrustregion or testsuite library ({lib_candidates})"
-    )
+    raise FileNotFoundError(f"Cannot find any of the libraries {lib_names}")
 
 
-lib = _load_lib()
+lib = _load_lib(lib_candidates)
 
 # determine integer size used in library
 ilp64 = c_bool.in_dll(lib, "ilp64")
@@ -246,8 +249,8 @@ class UpdateOrbsInterface(CallbackInterface):
             )
             return 1
 
-        # attach the response interface to the object so that it persists in Python
-        # to ensure that it is not garbage collected when the factory completes
+        # keep the interface of the Hessian linear transformation on this object so
+        # that it is not garbage collected while the library still calls it
         self.hess_x_funptr = hess_x_interface_type(
             HessXInterface(hess_x, self.n_param, self.exception)
         )

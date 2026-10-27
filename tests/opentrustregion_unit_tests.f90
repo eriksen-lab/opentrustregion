@@ -3853,7 +3853,7 @@ contains
                                red_space_hess_right_eigvecs)
         red_space_hess_left_eigvecs = red_space_hess_right_eigvecs
 
-        ! perform bisection, check whether error has occured and determine whether
+        ! perform bisection, check whether error has occurred and determine whether
         ! resulting solution is correct in reduced and full space and respects target
         ! trust radius
         call bisection_ah(red_space_hess, grad_norm, red_space_basis, &
@@ -4182,7 +4182,7 @@ contains
 
         ! perform bisection in the reduced space at a point with strong negative
         ! curvature and near a minimum, for the reduced space Hessian and for this
-        ! Hessian made asymmetric, check whether error has occured and determine
+        ! Hessian made asymmetric, check whether error has occurred and determine
         ! whether the solution is a level-shifted Newton step which reaches the trust
         ! radius in the indefinite case and the Newton step within it in the positive
         ! definite case, and whether it is returned in the full space
@@ -8023,7 +8023,7 @@ contains
         ! in its first micro iteration and needs several to solve the subproblem, and
         ! check that it gets them and solves the subproblem in the first step instead
         ! of stopping right after the switch, the gradient is small enough for the
-        ! step to rotate no parameter by more than the trust region allows
+        ! step to rotate no parameter by more than pi / 4, which would reject it
         call setup_settings(settings, quadratic_context)
         settings%grad_noise = .false.
         settings%n_random_trial_vectors = 0

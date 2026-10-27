@@ -238,6 +238,7 @@ module opentrustregion_core
         procedure(project_type), pointer, nopass :: project => null()
         procedure(get_extra_trial_vectors_type), pointer, nopass :: &
             get_extra_trial_vectors => null()
+        procedure(conv_check_type), pointer, nopass :: conv_check => null()
         procedure(logger_type), pointer, nopass :: logger => null()
     contains
         procedure :: log => print_message
@@ -249,7 +250,6 @@ module opentrustregion_core
         integer(ip) :: n_random_trial_vectors = -1, n_iter = 100, &
                        jacobi_davidson_start = 50
         character(len=kw_len) :: diag_solver = "davidson"
-        procedure(conv_check_type), pointer, nopass :: conv_check => null()
     end type
 
     type, extends(settings_type) :: solver_settings_type
@@ -260,7 +260,6 @@ module opentrustregion_core
                        jacobi_davidson_start = 30
         character(len=kw_len) :: subsystem_solver = "davidson_ls"
         type(stability_settings_type) :: stability_settings = stability_settings_type()
-        procedure(conv_check_type), pointer, nopass :: conv_check => null()
     contains
         procedure :: print_results
     end type
@@ -1092,7 +1091,7 @@ contains
                                   red_space_hess_eigvals(min_idx)) > numerical_zero
         if (red_space_hess_eigvals(min_idx)%re < numerical_zero) then
             ! check if the (possibly degenerate) eigenspace of the lowest eigenvalue
-            ! has a gradient component or if the minimum eigenvalue has a significant
+            ! has no gradient component or if the minimum eigenvalue has a significant
             ! imaginary part since both cases lead to no pole in the solution norm at
             ! the lowest eigenvalue
             if (sqrt(sum(red_space_hess_left_eigvecs(1, :)**2, &
@@ -1119,7 +1118,7 @@ contains
             ! check if reduced space Hessian is non-positive definite otherwise accept
             ! interior solution as Newton step
             if (red_space_hess_eigvals(min_idx)%re <= newton_eigval_thresh) then
-                ! hard case occured if lowest eigenvalue is real, trust radius cannot
+                ! hard case occurred if lowest eigenvalue is real, trust radius cannot
                 ! be reached because the eigenvector corresponding to the lowest
                 ! eigenvalue is orthogonal to the gradient, leading to no pole in the
                 ! solution norm
@@ -1171,7 +1170,7 @@ contains
             call get_level_shifted_step(lower_mu, .false.)
             if (error /= 0) return
 
-            ! find an lower bound for mu where the step falls within the trust region
+            ! find a lower bound for mu where the step falls within the trust region
             do while (current_norm > trust_radius)
                 if (lower_mu < -1e15_rp) then
                     call settings%log("Unable to find lower bound for mu in "// &
@@ -1383,7 +1382,7 @@ contains
                     f_a = f_b
                     f_b = f_u
                     exit
-                ! check if minium between n_a and n_u
+                ! check if minimum between n_a and n_u
                 else if (f_u > f_b) then
                     n_c = n_u
                     f_c = f_u
@@ -1447,7 +1446,7 @@ contains
             end if
         end do
 
-        ! check if miniumum is bracketed
+        ! check if minimum is bracketed
         if (.not. ( &
             ((f_b < f_c .and. f_b <= f_a) .or. (f_b < f_a .and. f_b <= f_c)) .and. &
             ((n_a < n_b .and. n_b < n_c) .or. (n_c < n_b .and. n_b < n_a)))) then
@@ -2496,7 +2495,7 @@ contains
         ! initialize error flag
         error = 0
 
-        ! initialze boolean to stop iterations
+        ! initialize boolean to stop iterations
         stop_iteration = .false.
 
         ! size of problem

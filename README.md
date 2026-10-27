@@ -16,7 +16,7 @@ The following paper documents the theory and implementation of the methodology i
 
 ## Installation
 
-The library needs a Fortran 2008 compiler, a C compiler, CMake 3.24 or newer and BLAS and LAPACK. It is tested with gfortran 10 and newer, Intel ifx and LLVM Flang 21 and newer, and against OpenBLAS, the reference BLAS and LAPACK, Intel MKL and Apple Accelerate.
+The library needs a Fortran 2018 compiler, a C compiler, CMake 3.24 or newer and BLAS and LAPACK. It is tested with gfortran 10 and newer, Intel ifx and LLVM Flang 21 and newer, and against OpenBLAS, the reference BLAS and LAPACK, Intel MKL and Apple Accelerate.
 
 ### Fortran or C Usage
 To build the library for Fortran or C:
@@ -29,6 +29,8 @@ cmake --build .
 ```
 
 The installation can be tested by running the ```testsuite.py``` file in the ```pyopentrustregion``` directory.
+
+A program that compiles the sources with its own build system instead has to preprocess them (`-cpp` for gfortran, `-fpp` for Intel), with `USE_ILP64` defined for 64-bit integers, and compile them for recursion (see [Nested and Concurrent Calls](#nested-and-concurrent-calls)).
 
 A new major version changes the interfaces, while a new minor version can change the settings and state types, so a Fortran or C program has to be rebuilt against the modules or the header of the minor version it links. The shared library is therefore versioned by its minor version, and `find_package(OpenTrustRegion <version>)` only accepts the requested one. A patch version can replace the library without a rebuild. Fortran programs use the module `opentrustregion`, whose entities form the interface, while the module `opentrustregion_core` in the same file holds the implementation, whose other entities can change in any version. Python programs need no rebuild, but the Python package and the library it loads have to come from the same minor version, which the Python package checks when it is imported.
 
@@ -83,7 +85,7 @@ The build process can be customized using the following CMake options:
 | **INTEGER_SIZE** | `STRING` | *(auto)* | Set the integer precision to `4` (32-bit) or `8` (64-bit). Required when providing custom BLAS/LAPACK libraries. Otherwise defaults to 32-bit integers and tries to locate compatible BLAS and LAPACK libraries. Falls back to 64-bit integers if 32-bit libraries cannot be found. The resulting library name reflects the chosen integer precision (`libopentrustregion_32.*` or `libopentrustregion_64.*`). C programs compiled against the header of a library with 64-bit integers need `OTR_ILP64` defined, which linking the CMake target `OpenTrustRegion::opentrustregion` does automatically. |
 | **BLAS_LIBRARIES** | `PATH` | *(auto)* | Path(s) to BLAS libraries. If not provided, CMake attempts to locate a suitable BLAS automatically. |
 | **LAPACK_LIBRARIES** | `PATH` | *(auto)* | Path(s) to LAPACK libraries. If not provided, CMake attempts to locate a suitable LAPACK automatically. |
-| **OpenTrustRegion_HOST_PROVIDES_BLAS** | `BOOL` | `OFF` | When enabled, OpenTrustRegion will not attempt to detect or link BLAS/LAPACK and the testsuite is automatically disabled. The calling program must provide BLAS/LAPACK routines that expose the unsuffixed symbol names (for example `ddot`, `dsyev`) with an integer width matching `INTEGER_SIZE`; otherwise linking will fail loudly. |
+| **OpenTrustRegion_HOST_PROVIDES_BLAS** | `BOOL` | `OFF` | When enabled, OpenTrustRegion will not attempt to detect or link BLAS/LAPACK and the testsuite is automatically disabled. The calling program must provide BLAS/LAPACK routines under their unsuffixed names (for example `ddot`, `dsyev`) with the integer width set by `INTEGER_SIZE`; a different integer width is not detected. |
 | **OpenTrustRegion_ENABLE_XHOST** | `BOOL` | `ON` | Optimize the Release build for the current machine's instruction set (`-march=native` for GNU, `-xHost` for Intel). Automatically disabled when cross-compiling, regardless of this setting. Turn off when building for a different machine than the one compiling (e.g. packaging/conda builds). Off for builds through pip, whose wheels pip caches and may install on another machine. |
 
 ### Nested and Concurrent Calls
@@ -247,14 +249,14 @@ print(f"Number of orbital updates: {state.n_update_orbs}")
 ### Optional Settings
 The optimization process can be fine-tuned using the following settings:
 
-- **`precond`** (subroutine): Applies a preconditioner to a residual vector, given a level shift `mu`. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors). The Davidson iterations of the Davidson-family subsystem solvers use it to approximate `(H - mu * I)^-1`, also at `mu = 0`, while their Jacobi-Davidson iterations do not call it. `"tcg"` calls it with `mu = 0` both as the preconditioner of its conjugate gradient iterations and as the metric of its trust region, so that it has to be positive definite there, as the default, which divides by the absolute Hessian diagonal, is. Receives the host context as its last argument.
+- **`precond`** (subroutine): Applies a preconditioner approximating `(H - mu * I)^-1` for a level shift `mu` to a residual vector, writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors). `"tcg"` calls it with `mu = 0` and also uses it as the metric of its trust region, so it has to be positive definite there, as the default, which divides by the absolute Hessian diagonal, is. Receives the host context as its last argument.
 - **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for optimization using non-redundant parameters. When this is used, all other passed routines (`update_orbs`, `hess_x`, and `precond`) must be self-projecting. Receives the host context as its last argument.
-- **`get_extra_trial_vectors`** (subroutine): Returns extra trial vectors that seed the leading part of the initial trial space of the Davidson-family subsystem solvers, written in-place to the provided matrix, whose column count is `n_extra_trial_vectors` and is passed to the callback itself by the C and Python interfaces, since those only receive a flat pointer. In Python, the matrix holds one trial vector per row instead. The vectors do not need to be orthonormalized or projected, and a vanishing column is dropped, which is how the callback signals that it has no vector to contribute for that slot. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
+- **`get_extra_trial_vectors`** (subroutine): Returns extra trial vectors that seed the leading part of the initial trial space of the Davidson-family subsystem solvers, written in-place to the provided matrix, whose column count is at most `n_extra_trial_vectors`, which the C interface also passes, since it only receives a flat pointer. In Python, the matrix holds one trial vector per row instead. The vectors do not need to be orthonormalized or projected, and a vanishing column is dropped, which is how the callback signals that it has no vector to contribute for that slot. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
 - **`conv_check`** (function): Returns whether the optimization has converged due to some supplied convergence criterion, which replaces the criterion on the RMS gradient (`conv_tol`). A point the solver reaches by a step along an unstable mode does not count as converged, whatever the check returns. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
 - **`stability`** (boolean): Determines whether a stability check is performed upon convergence. The solver checks the stability of a starting point that is already converged and of a point with an exactly vanishing gradient in any case. From an unstable point, it steps along the unstable mode until the gradient RMS of the quadratic model is ten times the larger of the current one and `conv_tol`, or by the trust radius if both vanish or the step would be longer, and does not take the point it reaches as converged.
 - **`hess_symm`** (boolean): Determines whether the supplied Hessian is symmetric. This is sometimes not the case for approximate Hessians. A non-symmetric Hessian is only supported by the `"davidson_ls"` subsystem solver. The internal stability check, which diagonalizes the same Hessian, inherits a non-symmetric Hessian, i.e. this setting switched off also switches off `stability_settings%hess_symm`.
 - **`line_search`** (boolean): Determines whether a line search is performed after every macro iteration.
-- **`grad_noise`** (boolean): Determines whether the gradient is perturbed by a random vector before every subsystem solve. The perturbation keeps the solution from remaining exactly within a symmetry subspace of the starting point, which a Hessian with no negative curvature outside that subspace, or no information about it, cannot otherwise leave. Its norm is the micro-iteration reduction factor (`local_red_factor` or `global_red_factor`) of the region the previous subproblem was solved in, the first counting as global, and always `local_red_factor` for `"tcg"`, times the gradient norm, so that it goes to zero together with the gradient at convergence; the micro iterations are never asked to reduce the residual below this relative size, so that they do not resolve the perturbation itself, whichever region the subproblem turns out to be solved in.
+- **`grad_noise`** (boolean): Determines whether the gradient is perturbed by a small random vector before every subsystem solve, which lets the solution leave a symmetry subspace of the starting point that the Hessian alone would not leave. Its norm relative to the gradient's is the residual reduction factor of the micro iterations (`global_red_factor` or `local_red_factor`), so that it vanishes at convergence and the micro iterations do not resolve it.
 - **`subsystem_solver`** (string): Specifies which subsystem solver to use. Options include:
   - `"davidson_ls"`: generalized Davidson method applied to the linear system,
   - `"jacobi-davidson_ls"`: generalized Davidson method applied to the linear system with fallback to Jacobi-Davidson if convergence is difficult, or automatically after `jacobi_davidson_start` micro iterations,
@@ -264,7 +266,7 @@ The optimization process can be fine-tuned using the following settings:
 - **`conv_tol`** (real): Specifies the convergence criterion for the RMS gradient, which a custom `conv_check` replaces.
 - **`n_random_trial_vectors`** (integer): Number of random trial vectors used to initialize the micro iterations of the Davidson-family subsystem solvers.
 - **`n_extra_trial_vectors`** (integer): Number of non-random trial vectors added alongside the gradient direction to initialize the micro iterations of the Davidson-family subsystem solvers, on top of the `n_random_trial_vectors` random ones. These are taken from `get_extra_trial_vectors` when that callback is provided, and are otherwise unit vectors along the lowest Hessian diagonal elements, added only where those indicate negative curvature. Vectors that vanish or are linearly dependent on the gradient direction are dropped.
-- **`start_trust_radius`** (real): Initial trust radius.
+- **`start_trust_radius`** (real): Initial trust radius. A step that changes any parameter by more than π/4 is rejected regardless of the trust radius.
 - **`n_macro`** (integer): Maximum number of macro iterations.
 - **`n_micro`** (integer): Maximum number of micro iterations per attempted trust-region step.
 - **`jacobi_davidson_start`** (integer): Number of micro iterations after which the subsystem solver switches to the Jacobi-Davidson method.
@@ -274,7 +276,7 @@ The optimization process can be fine-tuned using the following settings:
 - **`seed`** (integer): Seed value for generating random trial vectors and the random gradient perturbation.
 - **`logger`** (subroutine): Accepts a log message. Logging is otherwise routed to stdout, and error messages to stderr. Receives the host context as its last argument.
 - **`context`** (unlimited polymorphic pointer in Fortran, `void *` in C, absent in Python): Opaque host data, handed back unchanged as the last argument of every callback function so that the host does not have to reach its own state through module-level variables. The library never inspects it and never keeps it past the call, so it only has to stay valid for the duration of the call. Two solves can therefore run at the same time, or be nested inside one another, as long as each is given its own state record. This requires a suitable build, see [Nested and Concurrent Calls](#nested-and-concurrent-calls).
-- **`stability_settings`** (stability_settings_type): Settings object controlling the internal stability check that is automatically performed upon convergence when `stability` is `True` and in any case at a starting point that is already converged and at a point with an exactly vanishing gradient (see the Stability Check section below). If `stability_settings%precond`, `stability_settings%project`, `stability_settings%logger`, or `stability_settings%context` are left unset, they default to the corresponding `precond`, `project`, `logger`, and `context` supplied to `solver`. The internal stability check hands its own context to every callback function it calls, so when `stability_settings%context` is set, the Hessian linear transformation returned by `update_orbs` and any inherited `precond`, `project` or `logger` receive it instead of the solver's `context` and must accept it. Leaving it unset keeps the solver's `context` everywhere. `stability_settings%verbose` is raised to at least the solver's own `verbose` level, and `stability_settings%hess_symm` is switched off together with the solver's `hess_symm`. Unless `stability_settings%conv_check` is set, the internal stability check stops as soon as an instability is certain for a symmetric Hessian (see `stop_on_instability`), and by default it uses a single random trial vector. The solver checks the nested settings, after these defaults are resolved, together with its own before the optimization starts, also without `stability`, since the internal stability check runs in any case at the points named above.
+- **`stability_settings`** (stability_settings_type): Settings object controlling the internal stability check, which runs upon convergence when `stability` is `True` and in any case at a starting point that is already converged and at a point with an exactly vanishing gradient (see the Stability Check section below). Its `precond`, `project`, `logger` and `context` default to those of the solver when left unset. When its `context` is set, every callback function the internal stability check calls receives it instead of the solver's, including the Hessian linear transformation returned by `update_orbs` and inherited callback functions. Its `verbose` is raised to at least the solver's, and its `hess_symm` is switched off with the solver's. Unless its `conv_check` is set, it stops as soon as an instability is certain for a symmetric Hessian (see `stop_on_instability`), and by default it uses a single random trial vector.
 
 ### Output
 The solver keeps the state it is given up to date during the optimization, starting from the default values on every call, and leaves the final state of the optimization in it when it returns, also after an error. A callback function can therefore read the current state of the optimization: in Fortran, the state record is declared with the `target` attribute and reached through a pointer, for example one in the host context; in C, the state is copied into the host's struct before every callback function; and in Python, the state object can be read from within a callback function. The state holds the following fields:
@@ -291,7 +293,7 @@ The solver keeps the state it is given up to date during the optimization, start
 - **`n_update_orbs`** (integer): Number of orbital updates (`update_orbs`).
 - **`n_obj_func`** (integer): Number of objective function evaluations (`obj_func`), including those of the line search.
 - **`n_hess_x`** (integer): Number of Hessian linear transformations (`hess_x`), those of an internal stability check added once it returns.
-- **`max_precision_reached`** (boolean): `true` once neither the actual nor the predicted change of the objective function in a trust-region step can be resolved at floating-point precision relative to the objective function value, once a step is rejected whose predicted change can not be resolved, as when the objective function and the orbital update disagree by more than that, or once the gradient vanishes exactly without passing the convergence check, which leaves the subsystem solvers no subproblem to solve. This ends the optimization like convergence, without an error of its own, and the returned point is the best one found; this flag lets the host program decide whether to accept it as-is, warn, or retighten and retry with a different starting point or subsystem solver. It turns `false` again if the internal stability check, which runs with `stability` set and at an exactly vanishing gradient, then finds the point unstable and the solver continues along the unstable mode, or if the convergence check (`conv_check`, or without one the criterion on the RMS gradient) passes, which takes precedence.
+- **`max_precision_reached`** (boolean): `true` when no further progress can be resolved at floating-point precision: the change of the objective function in a trust-region step can no longer be resolved relative to its value (also when the objective function and the orbital update disagree by more than that), or the gradient vanishes exactly without passing the convergence check. The optimization then ends like at convergence, without an error, at the best point found, and the host program can decide whether to accept it. A passing convergence check takes precedence, and the flag is reset when the internal stability check finds the point unstable and the solver continues.
 - **`stability_state`** (stability_state_type): State of the most recent internal stability check, see the [stability check's output](#output-1).
 
 ## Stability Check
@@ -359,6 +361,7 @@ The following C snippet demonstrates the equivalent usage through the C interfac
 
 ```c
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "opentrustregion.h"
 
@@ -380,9 +383,8 @@ strcpy(settings.diag_solver, "jacobi-davidson");
 // hand the callback functions whatever the host needs to reach its own data
 settings.context = &host_data;
 
-// pointers to Hessian diagonal and lowest eigenvector
-c_real* h_diag;
-c_real* kappa;
+// array for the lowest eigenvector
+c_real *kappa = malloc(n_param * sizeof(c_real));
 
 // run stability check
 c_int error = stability_check(h_diag, hess_x_funptr, n_param, &stable, &settings,
@@ -445,7 +447,7 @@ The stability check can be fine-tuned using the following settings:
 - **`precond`** (subroutine): Applies a preconditioner to a residual vector, given a level shift `mu`, approximating `(H - mu * I)^-1`; the Davidson iterations of the stability check pass `stability_thresh` as `mu`, while its Jacobi-Davidson iterations do not call it. Writes the result in-place into a provided array and returns an integer error code (0 for success, positive integers < 100 for errors). Receives the host context as its last argument.
 - **`project`** (subroutine): Applies a projection in-place to a provided vector and returns an integer error code (0 for success, positive integers < 100 for errors). Required for stability check using non-redundant parameters. When this is used, all other passed routines (`hess_x` and `precond`) must be self-projecting. Receives the host context as its last argument.
 - **`conv_check`** (function): Returns whether the stability check has converged due to some supplied convergence criterion, which replaces the criterion on the RMS residual (`conv_tol`) and `stop_on_instability`. It has the same arguments as the convergence check of the solver and can read the `state` passed to `stability_check`, or, for the internal stability check, from `stability_state` of the state passed to `solver`, so a host that supplies it has to pass a state. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
-- **`get_extra_trial_vectors`** (subroutine): Returns extra trial vectors that seed the leading part of the initial trial space, written in-place to the provided matrix, whose column count is `n_extra_trial_vectors` and is passed to the callback itself by the C and Python interfaces, since those only receive a flat pointer. In Python, the matrix holds one trial vector per row instead. The vectors do not need to be orthonormalized or projected, and a vanishing column is dropped, which is how the callback signals that it has no vector to contribute for that slot. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
+- **`get_extra_trial_vectors`** (subroutine): Returns extra trial vectors that seed the leading part of the initial trial space, written in-place to the provided matrix, whose column count is at most `n_extra_trial_vectors`, which the C interface also passes, since it only receives a flat pointer. In Python, the matrix holds one trial vector per row instead. The vectors do not need to be orthonormalized or projected, and a vanishing column is dropped, which is how the callback signals that it has no vector to contribute for that slot. Additionally, outputs an integer code indicating the success or failure of the function, positive integers less than 100 represent error conditions. Receives the host context as its last argument.
 - **`hess_symm`** (boolean): Determines whether the supplied Hessian is symmetric. This is sometimes not the case for approximate Hessians. A non-symmetric Hessian is supported neither by the `"jacobi-davidson"` diagonalization solver nor by `stop_on_instability`.
 - **`stop_on_instability`** (boolean): When no `conv_check` is supplied, lets the default convergence policy accept a Ritz pair as soon as its eigenvalue drops below `stability_thresh`, without waiting for the residual to converge, since for a symmetric Hessian a Ritz value is an upper bound on the true lowest eigenvalue and the sign is then already certain. Not supported for a non-symmetric Hessian (`hess_symm`). Off by default for a standalone stability check. The solver switches it on for its internal check, also when it is set to false, unless `stability_settings%conv_check` is supplied or the Hessian is non-symmetric.
 - **`diag_solver`** (string): Specifies which diagonalization solver to use. Options include:
@@ -488,7 +490,7 @@ The library uses structured integer return codes to indicate whether a function 
 | Code Prefix (`OO`) | Component                                                                  |
 |--------------------|----------------------------------------------------------------------------|
 | `01`               | `solver`                                                                   |
-| `02`               | `stability_check`                                                          |
+| `02`               | `stability_check`, also the solver's internal one                          |
 | `11`               | `obj_func`                                                                 |
 | `12`               | `update_orbs`                                                              |
 | `13`               | `hess_x`                                                                   |
@@ -499,7 +501,7 @@ The library uses structured integer return codes to indicate whether a function 
 
 ### Error Codes (`EE`)
 
-The error field (`EE`) is `01` for a general, unspecified error. Some origins define additional, more specific codes where the host program can plausibly react differently to them (e.g. by adjusting a setting and retrying):
+The error field (`EE`) is `01` for a general, unspecified error and, for a callback function, the error code it returned (e.g. `1201` for an error code of 1 returned by `update_orbs`). Some origins define additional, more specific codes where the host program can plausibly react differently to them (e.g. by adjusting a setting and retrying):
 
 | Error Code | Meaning                                                                |
 |------------|------------------------------------------------------------------------|
@@ -509,13 +511,6 @@ The error field (`EE`) is `01` for a general, unspecified error. Some origins de
 | `0202`     | Stability check did not converge, within the maximum number of iterations (`n_iter`) or because its trial space could not be expanded any further |
 
 Future versions may define more specific codes for other actionable failure modes.
-
-### Example Error Codes
-
-| Error Code | Meaning                   |
-|------------|---------------------------|
-| `0101`     | General error in `solver` |
-| `1201`     | Error in `update_orbs`    |
 
 ## AI Usage Disclosure
 
