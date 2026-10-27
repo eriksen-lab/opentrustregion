@@ -240,6 +240,7 @@ print(f"Number of orbital updates: {state.n_update_orbs}")
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized via the `SolverSettings` class, which returns an object with default values; individual settings (here, `conv_tol`, `n_macro` and `subsystem_solver`) can then be overridden.
 - There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
+- The callback functions receive NumPy arrays, write array outputs in place and return any other outputs (e.g., `update_orbs` returns the objective function value and `hess_x`). They signal errors by raising an exception instead of returning an error code.
 - Finally, the `solver` is called with the callback functions, the settings and a state object, and errors can be caught in pythonic fashion in the form of a `RuntimeError`. The settings and the state are optional: without settings, the default settings are used, and the state is only needed to read it.
 - After the call, `state` holds the final state of the optimization (here, `n_update_orbs`), see [Output](#output), whose fields are read-only attributes. The settings are left unchanged.
 
@@ -432,6 +433,7 @@ print(f"Number of Hessian linear transformations: {state.n_hess_x}")
 - `n_param` and `h_diag` are assumed to be defined elsewhere.
 - Stability settings are initialized via the `StabilitySettings` class, which returns an object with default values; individual settings (here, `conv_tol`, `n_iter` and `diag_solver`) can then be overridden.
 - There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
+- The callback functions receive NumPy arrays, write array outputs in place and return any other outputs. They signal errors by raising an exception instead of returning an error code.
 - The `stable` output receives the result of the stability check and errors can be caught in pythonic fashion in the form of a `RuntimeError`.
 - The lowest eigenvector is written into `kappa` if it is provided.
 - The settings and the state are optional: without settings, the default settings are used, and the state is only needed to read it.
