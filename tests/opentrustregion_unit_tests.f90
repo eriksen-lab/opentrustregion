@@ -8899,18 +8899,18 @@ contains
             solver_settings_type, accept_trust_region_step, trust_radius_shrink_ratio, &
             trust_radius_expand_ratio, trust_radius_shrink_factor, &
             trust_radius_expand_factor, function_unchanged_warning_msg
-        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_positive_inf, &
-                                                 ieee_quiet_nan
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_negative_inf, &
+                                                 ieee_positive_inf, ieee_quiet_nan
 
         ! cases with the reason for accepting or rejecting the step, the size of the
         ! first rotation, the norm of the step, the ratio of actual to predicted
         ! function change, whether the micro iterations converged, and the expected
         ! acceptance and trust radius, for a starting trust radius of one
         character(len=*), parameter :: case_names(7) = &
-            [character(len=47) :: "micro iterations have not converged", "ratio is "// &
-             "negative", "individual rotations are too large", "ratio is too small", &
-             "ratio is acceptable", "ratio is too large at the trust region boundary", &
-             "ratio is too large within the trust region"]
+            [character(len=47) :: "micro iterations have not converged", &
+             "function value increases", "individual rotations are too large", &
+             "ratio is too small", "ratio is acceptable", "ratio is too large at "// &
+             "the trust region boundary", "ratio is too large within the trust region"]
         real(rp), parameter :: &
             case_rotations(7) = &
                 [0.3_rp, 0.3_rp, 1.0_rp, 0.3_rp, 0.3_rp, 0.3_rp, 0.3_rp], &
@@ -8947,24 +8947,27 @@ contains
         real(rp), parameter :: &
             precision_case_funcs(9) = [-1.0_rp, -2000.0_rp, -1.0_rp, 0.0_rp, -1.0_rp, &
                                        -1.0_rp, -1.0_rp, -1.0_rp, -1.0_rp], &
-            precision_case_actual(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, 1e-3_rp, &
-                                        1e-3_rp, -1e-3_rp, 1e10_rp, 1e-20_rp], &
-            precision_case_predicted(9) = [0.0_rp, 1e-13_rp, 1e-13_rp, 0.0_rp, &
-                                           1e-20_rp, -1e-20_rp, -1e-20_rp, -1e-6_rp, &
-                                           1e-3_rp]
+            precision_case_actual(9) = [0.0_rp, 1e-13_rp, -1e-13_rp, 0.0_rp, -1e-3_rp, &
+                                        1e-3_rp, -1e-3_rp, 1e10_rp, -1e-20_rp], &
+            precision_case_predicted(9) = [0.0_rp, 1e-13_rp, -1e-13_rp, 0.0_rp, &
+                                           -1e-20_rp, -1e-20_rp, -1e-20_rp, -1e-6_rp, &
+                                           -1e-3_rp]
         logical, parameter :: &
             precision_case_converged(9) = [.true., .true., .true., .true., .true., &
                                            .true., .false., .true., .true.], &
             precision_case_reached(9) = [.true., .true., .false., .true., .false., &
                                          .true., .true., .false., .false.]
 
-        ! cases of an actual or predicted function change which is not finite, as for
+        ! cases of function changes which reject the step whatever their ratio, a
+        ! predicted increase, as for a Newton step along a slightly negative curvature,
+        ! also where the function value decreases, a function value which does not
+        ! change and an actual or predicted function change which is not finite, as for
         ! an objective function or a Hessian linear transformation which overflows at
         ! the step
-        character(len=*), parameter :: non_finite_case_names(3) = &
-            [character(len=23) :: "overflowing function", "function not a number", &
-             "overflowing prediction"]
-        real(rp) :: non_finite_actual(3), non_finite_predicted(3)
+        character(len=*), parameter :: rejecting_case_names(5) = &
+            [character(len=23) :: "predicted increase", "unchanged function", &
+             "overflowing function", "function not a number", "overflowing prediction"]
+        real(rp) :: rejecting_actual(5), rejecting_predicted(5)
 
         ! cases of a step whose norm is not finite, as from a Hessian linear
         ! transformation or a preconditioner which returns values that are not finite,
@@ -9000,7 +9003,7 @@ contains
             state%max_precision_reached = .true.
             solution(1) = case_rotations(i)
             accept_step = accept_trust_region_step( &
-                solution, case_step_norms(i), -1.0_rp, case_ratios(i), 1.0_rp, &
+                solution, case_step_norms(i), -1.0_rp, -case_ratios(i), -1.0_rp, &
                 case_converged(i), settings, state, error)
             if (error /= 0) then
                 write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
@@ -9024,37 +9027,38 @@ contains
             end if
         end do
 
-        ! check for every case of a function change which is not finite, with changes
-        ! of the same sign which would otherwise accept the step, that the step is
-        ! rejected and the trust radius reduced without maximum precision being
-        ! reported
-        non_finite_actual = [ieee_value(1.0_rp, ieee_positive_inf), &
-                             ieee_value(1.0_rp, ieee_quiet_nan), 1.0_rp]
-        non_finite_predicted = [1.0_rp, 1.0_rp, ieee_value(1.0_rp, ieee_positive_inf)]
-        do i = 1, size(non_finite_case_names)
+        ! check for every case of function changes which reject the step, where the
+        ! changes which are not finite otherwise have the same sign, which would accept
+        ! the step, that the step is rejected and the trust radius reduced without
+        ! maximum precision being reported
+        rejecting_actual = [-0.5_rp, 0.0_rp, ieee_value(1.0_rp, ieee_negative_inf), &
+                            ieee_value(1.0_rp, ieee_quiet_nan), -1.0_rp]
+        rejecting_predicted = &
+            [1.0_rp, -1.0_rp, -1.0_rp, -1.0_rp, ieee_value(1.0_rp, ieee_negative_inf)]
+        do i = 1, size(rejecting_case_names)
             state%trust_radius = 1.0_rp
             accept_step = accept_trust_region_step( &
-                solution, 0.5_rp, -1.0_rp, non_finite_actual(i), &
-                non_finite_predicted(i), .true., settings, state, error)
+                solution, 0.5_rp, -1.0_rp, rejecting_actual(i), &
+                rejecting_predicted(i), .true., settings, state, error)
             if (error /= 0) then
                 write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
-                    "error for "//trim(non_finite_case_names(i))//"."
+                    "error for "//trim(rejecting_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
             if (accept_step) then
                 write(stderr, *) "test_accept_trust_region_step failed: Step "// &
-                    "accepted for "//trim(non_finite_case_names(i))//"."
+                    "accepted for "//trim(rejecting_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
             if (abs(state%trust_radius - trust_radius_shrink_factor) > tol) then
                 write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
-                    "radius not reduced for "//trim(non_finite_case_names(i))//"."
+                    "radius not reduced for "//trim(rejecting_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
             if (state%max_precision_reached) then
                 write(stderr, *) "test_accept_trust_region_step failed: Maximum "// &
                     "precision reported as reached for "// &
-                    trim(non_finite_case_names(i))//"."
+                    trim(rejecting_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
         end do

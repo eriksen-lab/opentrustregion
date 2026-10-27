@@ -3513,13 +3513,15 @@ contains
         ! calculate ratio of evaluated function and predicted function
         ratio = actual_func_diff / pred_func_diff
 
-        ! decrease trust radius if micro iterations are unable to converge, if function
-        ! value has not decreased, if the function changes are not finite, as for an
-        ! objective function which overflows at the step, or if individual orbitals
-        ! change too much
+        ! decrease trust radius if micro iterations are unable to converge, if the step
+        ! is not predicted to decrease the function value (e. g. Newton step along a
+        ! slightly negative curvature) if function value has not decreased, if
+        ! the function changes are not finite, as for an objective function which
+        ! overflows at the step, or if individual orbitals change too much
         finite_changes = ieee_is_finite(actual_func_diff) .and. &
                          ieee_is_finite(pred_func_diff)
-        if (.not. micro_converged .or. ratio < 0.0_rp .or. .not. finite_changes .or. &
+        if (.not. micro_converged .or. pred_func_diff >= 0.0_rp .or. &
+            actual_func_diff >= 0.0_rp .or. .not. finite_changes .or. &
             any(abs(solution) > pi / 4)) then
             ! a rejected step whose predicted function change can not be resolved can
             ! not be improved by a smaller trust radius, as when the objective function
