@@ -2079,14 +2079,17 @@ contains
 
     end function check_call_counts
 
-    logical function check_reset_state_seen(context, test_name, callback_name)
+    logical function check_reset_state_seen(context, micro_iteration, test_name, &
+                                            callback_name)
         !
         ! this function checks that the first call of a callback function which reads
         ! the solver state through the pointer of a double well context saw the state
-        ! reset by the subsystem solver, without micro iterations and with the
-        ! relative residual of the vanishing solution, which is the gradient
+        ! reset by the subsystem solver, in the given micro iteration, without
+        ! Jacobi-Davidson iterations and with the relative residual of the vanishing
+        ! solution, which is the gradient
         !
         type(double_well_state_context_type), intent(in) :: context
+        integer(ip), intent(in) :: micro_iteration
         character(len=*), intent(in) :: test_name, callback_name
 
         ! assume tests pass
@@ -2096,7 +2099,7 @@ contains
             write(stderr, *) "test_"//test_name//" failed: State not read by the "// &
                 callback_name//"."
             check_reset_state_seen = .false.
-        else if (context%seen_states(1)%micro_iteration /= 0 .or. &
+        else if (context%seen_states(1)%micro_iteration /= micro_iteration .or. &
                  context%seen_states(1)%jacobi_davidson_iteration /= 0 .or. &
                  abs(context%seen_states(1)%relative_residual - 1.0_rp) > tol) then
             write(stderr, *) "test_"//test_name//" failed: State of an earlier "// &
@@ -8243,9 +8246,9 @@ contains
                 "with a state of an earlier subproblem."
             test_level_shifted_davidson = .false.
         end if
-        if (.not. check_reset_state_seen(state_context, "level_shifted_davidson", &
-                                         "Hessian linear transformation")) &
-            test_level_shifted_davidson = .false.
+        if (.not. check_reset_state_seen( &
+            state_context, 0_ip, "level_shifted_davidson", &
+            "Hessian linear transformation")) test_level_shifted_davidson = .false.
 
     contains
 
@@ -8376,7 +8379,8 @@ contains
             truncated_conjugate_gradient, error_hess_x, error_obj_func, &
             function_unchanged_warning_msg, precond_floor, default_solver_settings
 
-        real(rp) :: func, ratio, solution_norm, metric_norm
+        real(rp) :: func, ratio, solution_norm, metric_norm, double_well_grad(2), &
+                    double_well_h_diag(2), double_well_solution(2)
         real(rp), dimension(n_param) :: grad, h_diag, solution
         integer(ip) :: i, i_case, error
         procedure(obj_func_type), pointer :: obj_func_funptr
@@ -8386,6 +8390,7 @@ contains
         type(hartmann6d_context_type), target :: context
         type(hartmann6d_fault_context_type), target :: fault_context
         type(quadratic_context_type), target :: quadratic_context
+        type(double_well_state_context_type), target :: state_context
 
         ! assume tests pass
         test_truncated_conjugate_gradient = .true.
@@ -8399,11 +8404,7 @@ contains
         hess_x_funptr => hess_x_fun
 
         ! start in quadratic region near minimum
-        context%vars = near_minimum
-        func = hartmann6d_func(context%vars)
-        call hartmann6d_gradient(context%vars, grad)
-        context%hess = hartmann6d_hessian(context%vars)
-        h_diag = [(context%hess(i, i), i=1, size(h_diag))]
+        call setup_hartmann6d_point(context, near_minimum, func, grad, h_diag)
 
         ! run truncated conjugate gradient with micro iterations left in the state by
         ! a previous subproblem, check whether the solution stays within the trust
@@ -8446,8 +8447,7 @@ contains
                 "does not reduce function value near minimum."
             test_truncated_conjugate_gradient = .false.
         end if
-        ratio = (hartmann6d_func(context%vars + solution) - func) / &
-                dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
+        ratio = ref_hartmann6d_ratio(context, solution)
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
         if (metric_norm > &
@@ -8548,8 +8548,7 @@ contains
                 "shorter than step."
             test_truncated_conjugate_gradient = .false.
         end if
-        ratio = (hartmann6d_func(context%vars + solution) - func) / &
-                dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
+        ratio = ref_hartmann6d_ratio(context, solution)
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
         if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio, &
@@ -8561,11 +8560,7 @@ contains
         end if
 
         ! start near saddle point
-        context%vars = near_saddle_point
-        func = hartmann6d_func(context%vars)
-        call hartmann6d_gradient(context%vars, grad)
-        context%hess = hartmann6d_hessian(context%vars)
-        h_diag = [(context%hess(i, i), i=1, size(h_diag))]
+        call setup_hartmann6d_point(context, near_saddle_point, func, grad, h_diag)
         state%trust_radius = 0.4_rp
 
         ! run truncated conjugate gradient, check whether the solution lies at the
@@ -8583,8 +8578,7 @@ contains
                 "does not reduce function value near saddle point."
             test_truncated_conjugate_gradient = .false.
         end if
-        ratio = (hartmann6d_func(context%vars + solution) - func) / &
-                dot_product(solution, grad + 0.5_rp * matmul(context%hess, solution))
+        ratio = ref_hartmann6d_ratio(context, solution)
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
         if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio, &
@@ -8825,11 +8819,7 @@ contains
         ! function is evaluated and counted twice and that the returned step lies at
         ! the trust region boundary
         call setup_settings(settings, fault_context)
-        fault_context%vars = near_minimum
-        fault_context%hess = hartmann6d_hessian(near_minimum)
-        func = hartmann6d_func(near_minimum)
-        call hartmann6d_gradient(near_minimum, grad)
-        h_diag = [(fault_context%hess(i, i), i=1, size(h_diag))]
+        call setup_hartmann6d_point(fault_context, near_minimum, func, grad, h_diag)
         obj_func_funptr => first_step_rejecting_obj_func
         state%trust_radius = 10.0_rp
         state%n_obj_func = 0
@@ -8854,8 +8844,7 @@ contains
                 "rejected."
             test_truncated_conjugate_gradient = .false.
         end if
-        ratio = (hartmann6d_func(near_minimum + solution) - func) / dot_product( &
-            solution, grad + 0.5_rp * matmul(fault_context%hess, solution))
+        ratio = ref_hartmann6d_ratio(fault_context, solution)
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
         if (abs(solution_norm - metric_norm) > tol) then
@@ -8887,6 +8876,28 @@ contains
                 "back step with its origin."
             test_truncated_conjugate_gradient = .false.
         end if
+
+        ! solve the subproblem of the double well function with a state holding the
+        ! values of an earlier subproblem and a Hessian linear transformation which
+        ! reads the state through the pointer in its context, and check that the
+        ! linear transformation of the first micro iteration already sees this micro
+        ! iteration and the residual of the vanishing solution, which is the gradient
+        call setup_settings(settings, state_context)
+        call setup_double_well_state_context(state_context, state, func, &
+                                             double_well_grad, double_well_h_diag)
+        obj_func_funptr => double_well_obj_func
+        hess_x_funptr => state_reading_hess_x
+        call truncated_conjugate_gradient( &
+            func, double_well_grad, double_well_h_diag, 2_ip, obj_func_funptr, &
+            hess_x_funptr, settings, state, double_well_solution, solution_norm, error)
+        if (error /= 0) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
+                "error with a state of an earlier subproblem."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (.not. check_reset_state_seen( &
+            state_context, 1_ip, "truncated_conjugate_gradient", "Hessian linear "// &
+            "transformation")) test_truncated_conjugate_gradient = .false.
 
     end function test_truncated_conjugate_gradient
 
