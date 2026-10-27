@@ -6685,6 +6685,24 @@ contains
             test_abs_diag_precond = .false.
         end if
 
+        ! check that a custom preconditioner which ignores the level shift receives
+        ! the vector and that its result is not projected
+        settings%precond => identity_precond
+
+        ! call subroutine and check if results match
+        call abs_diag_precond(vector, h_diag, precond_vector, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_abs_diag_precond failed: Produced error for "// &
+                "custom preconditioner ignoring the level shift."
+            test_abs_diag_precond = .false.
+        end if
+        if (any(abs(precond_vector - vector) > tol)) then
+            write(stderr, *) "test_abs_diag_precond failed: Returned "// &
+                "preconditioned vector not correct for custom preconditioner "// &
+                "ignoring the level shift."
+            test_abs_diag_precond = .false.
+        end if
+
         ! check that the errors of a failing custom preconditioner and of a failing
         ! projection of the default preconditioner are reported with their origins
         call setup_settings(settings, fault_context)
