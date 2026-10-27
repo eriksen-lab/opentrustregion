@@ -289,13 +289,12 @@ jobs:
     - name: Testing pip installation
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'editable' }}
       working-directory: ${{ runner.temp }}
-      run: python -c "import pyopentrustregion.testsuite"
+      run: python -m pyopentrustregion.testsuite
 
+    # the testsuite of the source tree runs against the CMake build in build/
     - name: Testing dev installation
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
-      run: | 
-        export PYTHONPATH=${GITHUB_WORKSPACE}
-        python -c "import pyopentrustregion.testsuite"
+      run: python pyopentrustregion/testsuite.py
 
     - name: Testing OpenTrustRegion
       if: ${{ matrix.build-type == 'test' }}

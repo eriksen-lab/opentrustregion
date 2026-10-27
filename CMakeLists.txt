@@ -41,13 +41,14 @@ message(STATUS "Showing option ${otr}_HOST_PROVIDES_BLAS: ${${otr}_HOST_PROVIDES
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 message(STATUS "Showing option BUILD_SHARED_LIBS: ${BUILD_SHARED_LIBS}")
 
-option(${otr}_ENABLE_XHOST "Optimize for current machine's instruction set" ON)
+option(${otr}_ENABLE_XHOST "Optimize for current machine's instruction set" OFF)
 message(STATUS "Showing option ${otr}_ENABLE_XHOST: ${${otr}_ENABLE_XHOST}")
 
 # ====  Build  ==================================================================
 
-# default build type
-if(NOT CMAKE_BUILD_TYPE)
+# default build type of a top-level build, a parent project that adds this one as a
+# subdirectory chooses its own
+if(PROJECT_IS_TOP_LEVEL AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
@@ -305,7 +306,7 @@ endif()
 
 # create targets file in the build tree for build-tree usage
 export(TARGETS opentrustregion
-       FILE "${CMAKE_CURRENT_BINARY_DIR}/${otr}Targets.cmake"
+       FILE "${CMAKE_CURRENT_BINARY_DIR}/${otr}Targets-${LIB_SUFFIX}.cmake"
        NAMESPACE "${otr}::"
 )
 

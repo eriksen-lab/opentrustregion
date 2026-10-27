@@ -32,7 +32,7 @@ The installation can be tested by running the ```testsuite.py``` file in the ```
 
 C programs that link the static library, the default, also need the Fortran runtime, e.g. by enabling Fortran in their CMake project or by building the library with `-DBUILD_SHARED_LIBS=ON`.
 
-A program that compiles the sources with its own build system instead has to preprocess them (`-cpp` for gfortran, `-fpp` for Intel), with `USE_ILP64` defined for 64-bit integers, and compile them for recursion (see [Nested and Concurrent Calls](#nested-and-concurrent-calls)).
+A program that compiles the sources with its own build system instead has to preprocess them (`-cpp` for gfortran, `-fpp` for Intel), with `USE_ILP64` defined for 64-bit integers (and every BLAS and LAPACK routine renamed to its `_64` variant, e.g. `-Dddot=ddot_64`, for a BLAS whose 64-bit routines carry that suffix), and compile them for recursion (see [Nested and Concurrent Calls](#nested-and-concurrent-calls)).
 
 A new major version changes the interfaces, while a new minor version can change the settings and state types, so a Fortran or C program has to be rebuilt against the modules or the header of the minor version it links. The shared library is therefore versioned by its minor version, and `find_package(OpenTrustRegion <version>)` only accepts the requested one. A patch version can replace the library without a rebuild. Fortran programs use the module `opentrustregion`, whose entities form the interface, while the module `opentrustregion_core` in the same file holds the implementation, whose other entities can change in any version. Python programs need no rebuild, but the Python package and the library it loads have to come from the same minor version.
 
@@ -88,7 +88,7 @@ The build process can be customized using the following CMake options:
 | **BLAS_LIBRARIES** | `PATH` | *(auto)* | Path(s) to BLAS libraries. If not provided, CMake attempts to locate a suitable BLAS automatically. |
 | **LAPACK_LIBRARIES** | `PATH` | *(auto)* | Path(s) to LAPACK libraries. If not provided, CMake attempts to locate a suitable LAPACK automatically. |
 | **OpenTrustRegion_HOST_PROVIDES_BLAS** | `BOOL` | `OFF` | When enabled, OpenTrustRegion will not attempt to detect or link BLAS/LAPACK and the testsuite is automatically disabled. The calling program must provide BLAS/LAPACK routines under their unsuffixed names (for example `ddot`, `dsyev`) with the integer width set by `INTEGER_SIZE`; a different integer width is not detected. |
-| **OpenTrustRegion_ENABLE_XHOST** | `BOOL` | `ON` | Optimize the Release build for the current machine's instruction set (`-march=native` for GNU, `-xHost` for Intel). Automatically disabled when cross-compiling, regardless of this setting. Turn off when building for a different machine than the one compiling (e.g. packaging/conda builds). Off for builds through pip, whose wheels pip caches and may install on another machine. |
+| **OpenTrustRegion_ENABLE_XHOST** | `BOOL` | `OFF` | Optimize the Release build for the current machine's instruction set (`-march=native` for GNU, `-xHost` for Intel), for a library that is only used on the machine that builds it. Ignored when cross-compiling. |
 
 ### Nested and Concurrent Calls
 
@@ -212,7 +212,7 @@ printf("Number of orbital updates: %lld\n", (long long)state.n_update_orbs);
 
 - Callback function pointers (`update_orbs_funptr`, `obj_func_funptr`) point to existing implementations elsewhere in the program.
 - `n_param` is also assumed to be defined elsewhere.
-- Solver settings are initialized via a small helper function `solver_settings_init()`, which returns a struct with default values. Individual settings (here, `conv_tol`, `n_macro` and `subsystem_solver`) can then be overridden.
+- Solver settings have to be initialized via a small helper function `solver_settings_init()`, which returns a struct with default values. Individual settings (here, `conv_tol`, `n_macro` and `subsystem_solver`) can then be overridden.
 - `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
 - Finally, the `solver` is called with the callback functions and pointers to the settings and to a state struct, and directly returns an error code in typical C fashion. Either pointer may be `NULL`: without settings, the default settings are used, and without a state struct, none is returned. Since the host context is a setting, a host that needs one passes settings.
 - After the call, `state` holds the final state of the optimization (here, `n_update_orbs`), also after an error, see [Output](#output). The state struct needs no initialization, and the settings are left unchanged.
@@ -244,7 +244,7 @@ print(f"Number of orbital updates: {state.n_update_orbs}")
 - `n_param` is also assumed to be defined elsewhere.
 - Solver settings are initialized via the `SolverSettings` class, which returns an object with default values; individual settings (here, `conv_tol`, `n_macro` and `subsystem_solver`) can then be overridden.
 - There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
-- The callback functions receive NumPy arrays, write array outputs in place and return any other outputs (e.g., `update_orbs` returns the objective function value and `hess_x`). They signal errors by raising an exception instead of returning an error code.
+- The callback functions receive NumPy arrays, which are only valid during the call, write array outputs in place and return any other outputs (e.g., `update_orbs` returns the objective function value and `hess_x`). They signal errors by raising an exception instead of returning an error code.
 - Finally, the `solver` is called with the callback functions, the settings and a state object, and errors can be caught in pythonic fashion in the form of a `RuntimeError`. The settings and the state are optional: without settings, the default settings are used, and the state is only needed to read it.
 - After the call, `state` holds the final state of the optimization (here, `n_update_orbs`), see [Output](#output), whose fields are read-only attributes. The settings are left unchanged.
 
@@ -403,7 +403,7 @@ printf("Number of Hessian linear transformations: %lld\n", (long long)state.n_he
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
 - `n_param` and `h_diag` are assumed to be defined elsewhere.
 - `host_data` is any host object. Every callback function receives `&host_data` as its `void *context` argument and casts it back. Leaving `settings.context` as `NULL` is fine; the callback functions then receive `NULL`.
-- Stability settings are initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol`, `n_iter` and `diag_solver`) can then be overridden.
+- Stability settings have to be initialized via a small helper function `stability_settings_init()`, which returns a struct with default values; individual settings (here, `conv_tol`, `n_iter` and `diag_solver`) can then be overridden.
 - The `stable` output receives the result of the stability check which directly returns an error code in typical C fashion.
 - `kappa` receives the lowest eigenvector and can be `NULL` to skip it. So can `state`, and `settings` can be `NULL` to use the default settings.
 - After the call, `state` holds the final state of the stability check (here, the lowest eigenvalue `min_eigval` and `n_hess_x`), also after an error, see [Output](#output-1). The state struct needs no initialization, and the settings are left unchanged.
@@ -440,7 +440,7 @@ print(f"Number of Hessian linear transformations: {state.n_hess_x}")
 - `n_param` and `h_diag` are assumed to be defined elsewhere.
 - Stability settings are initialized via the `StabilitySettings` class, which returns an object with default values; individual settings (here, `conv_tol`, `n_iter` and `diag_solver`) can then be overridden.
 - There is no `context` setting in Python. Any callable works as a callback function, so a closure, a bound method or a `functools.partial` already carries whatever host data the callback function needs.
-- The callback functions receive NumPy arrays, write array outputs in place and return any other outputs. They signal errors by raising an exception instead of returning an error code.
+- The callback functions receive NumPy arrays, which are only valid during the call, write array outputs in place and return any other outputs. They signal errors by raising an exception instead of returning an error code.
 - The `stable` output receives the result of the stability check and errors can be caught in pythonic fashion in the form of a `RuntimeError`.
 - The lowest eigenvector is written into `kappa` if it is provided.
 - The settings and the state are optional: without settings, the default settings are used, and the state is only needed to read it.

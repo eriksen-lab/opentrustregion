@@ -1671,6 +1671,7 @@ contains
         ! context
         !
         use test_reference, only: check_host_context
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
 
         real(rp), intent(in), target :: delta_vars(:)
         integer(ip), intent(out) :: error
@@ -1718,6 +1719,9 @@ contains
             func = (x - 2.0_rp)**2 + 10.0_rp * exp(-100.0_rp * (x - 2.0_rp)**2)
         case (8)
             func = -x
+        case (10)
+            func = (x - 3.0_rp)**2
+            if (x > 2.0_rp) func = ieee_value(func, ieee_quiet_nan)
         case default
             func = 1.0_rp
         end select
@@ -3068,7 +3072,7 @@ contains
                 "saddle point with logging function."
             test_stability_check = .false.
         end if
-        write(msg, '(A, F0.4)') unstable_warning_msg, hess_eigvals(1)
+        write(msg, '(A, ES11.4)') unstable_warning_msg, hess_eigvals(1)
         if (index(context%log_message, " "//trim(msg)) == 0) then
             write(stderr, *) "test_stability_check failed: Warning not printed for "// &
                 "saddle point."
@@ -3693,12 +3697,12 @@ contains
             predicted_grad_rms = norm2(grad + min_eigval * kappa) / &
                                  sqrt(real(n_param, kind=rp))
             if (ieee_is_nan(predicted_grad_rms) .or. &
-                abs(predicted_grad_rms - target_grad_rms) > tol) then
+                .not. abs(predicted_grad_rms - target_grad_rms) <= tol) then
                 write(stderr, *) "test_saddle_point_step failed: Step does not "// &
                     "reach targeted gradient RMS "//trim(case_names(i))//"."
                 test_saddle_point_step = .false.
             end if
-            if (abs(kappa_norm - norm2(kappa)) > tol) then
+            if (.not. abs(kappa_norm - norm2(kappa)) <= tol) then
                 write(stderr, *) "test_saddle_point_step failed: Returned norm "// &
                     "does not match step "//trim(case_names(i))//"."
                 test_saddle_point_step = .false.
@@ -3718,8 +3722,8 @@ contains
         kappa = kappa_dir
         call saddle_point_step(grad, 0.0_rp, min_eigval, trust_radius, settings, &
                                kappa, kappa_norm)
-        if (norm2(kappa - trust_radius * kappa_dir) > tol .or. &
-            abs(kappa_norm - trust_radius) > tol) then
+        if (.not. norm2(kappa - trust_radius * kappa_dir) <= tol .or. &
+            .not. abs(kappa_norm - trust_radius) <= tol) then
             write(stderr, *) "test_saddle_point_step failed: Step does not reach "// &
                 "trust radius at vanishing gradient and convergence threshold."
             test_saddle_point_step = .false.
@@ -3864,18 +3868,20 @@ contains
             write(stderr, *) "test_bisection_ah failed: Produced error."
             test_bisection_ah = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Solution does not respect "// &
                 "trust radius."
             test_bisection_ah = .false.
         end if
-        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                         mu * red_space_solution) + grad) > tol) then
+        if (.not. norm2( &
+            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
+                   red_space_solution) + grad) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Step does not satisfy "// &
                 "level-shifted Newton equation."
             test_bisection_ah = .false.
         end if
-        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+        if (.not. all( &
+            abs(solution - matmul(red_space_basis, red_space_solution)) <= tol)) then
             write(stderr, *) "test_bisection_ah failed: Full space solution not "// &
                 "correct for symmetric Hessian."
             test_bisection_ah = .false.
@@ -3919,13 +3925,14 @@ contains
                 "has to be increased."
             test_bisection_ah = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Solution does not respect "// &
                 "trust radius when alpha has to be increased."
             test_bisection_ah = .false.
         end if
-        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                         mu * red_space_solution) + grad) > tol) then
+        if (.not. norm2( &
+            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
+                   red_space_solution) + grad) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Step does not satisfy "// &
                 "level-shifted Newton equation when alpha has to be increased."
             test_bisection_ah = .false.
@@ -3979,7 +3986,7 @@ contains
                 "falling back to Newton step."
             test_bisection_ah = .false.
         end if
-        if (abs(mu) > tol) then
+        if (.not. abs(mu) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Level shift not zero for "// &
                 "Newton step fallback."
             test_bisection_ah = .false.
@@ -3988,12 +3995,12 @@ contains
             red_space_hess_right_eigvecs, &
             red_space_hess_left_eigvecs(1, :) / red_space_hess_eigvals)
         newton_solution = matmul(red_space_basis, newton_red_space_solution)
-        if (any(abs(red_space_solution - newton_red_space_solution) > tol)) then
+        if (.not. all(abs(red_space_solution - newton_red_space_solution) <= tol)) then
             write(stderr, *) "test_bisection_ah failed: Newton step fallback "// &
                 "reduced space solution not correct."
             test_bisection_ah = .false.
         end if
-        if (any(abs(solution - newton_solution) > tol)) then
+        if (.not. all(abs(solution - newton_solution) <= tol)) then
             write(stderr, *) "test_bisection_ah failed: Newton step fallback full "// &
                 "space solution not correct."
             test_bisection_ah = .false.
@@ -4019,26 +4026,27 @@ contains
             write(stderr, *) "test_bisection_ah failed: Produced error for hard case."
             test_bisection_ah = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution does "// &
                 "not respect trust radius."
             test_bisection_ah = .false.
         end if
-        if (abs(mu - minval(red_space_hess_eigvals)) > tol) then
+        if (.not. abs(mu - minval(red_space_hess_eigvals)) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Hard case level shift not "// &
                 "equal to lowest reduced space Hessian eigenvalue."
             test_bisection_ah = .false.
         end if
         grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals) - &
                                               maxval(red_space_hess_eigvals))
-        if (any(abs(red_space_solution - [ &
+        if (.not. all(abs(red_space_solution - [ &
             grad_coupled_component, sqrt(trust_radius**2 - grad_coupled_component**2), &
-            0.0_rp]) > tol)) then
+            0.0_rp]) <= tol)) then
             write(stderr, *) "test_bisection_ah failed: Hard case reduced space "// &
                 "solution not correct."
             test_bisection_ah = .false.
         end if
-        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+        if (.not. all( &
+            abs(solution - matmul(red_space_basis, red_space_solution)) <= tol)) then
             write(stderr, *) "test_bisection_ah failed: Hard case full space "// &
                 "solution not correct."
             test_bisection_ah = .false.
@@ -4062,25 +4070,27 @@ contains
                 "case with crossover step outside trust region."
             test_bisection_ah = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
                 "crossover step outside trust region does not respect trust radius."
             test_bisection_ah = .false.
         end if
-        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                         mu * red_space_solution) + grad) > tol) then
+        if (.not. norm2( &
+            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
+                   red_space_solution) + grad) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
                 "crossover step outside trust region does not satisfy "// &
                 "level-shifted Newton equation."
             test_bisection_ah = .false.
         end if
-        if (abs(mu + 5.0_rp) > tol) then
+        if (.not. abs(mu + 5.0_rp) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Hard case level shift with "// &
                 "crossover step outside trust region not that of the step along "// &
                 "gradient direction."
             test_bisection_ah = .false.
         end if
-        if (any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > tol)) then
+        if (.not. all( &
+            abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) <= tol)) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
                 "crossover step outside trust region not along gradient direction."
             test_bisection_ah = .false.
@@ -4112,30 +4122,31 @@ contains
                 "solution contains NaN."
             test_bisection_ah = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case "// &
                 "solution does not respect trust radius."
             test_bisection_ah = .false.
         end if
-        if (abs(mu - minval(red_space_hess_eigvals)) > tol) then
+        if (.not. abs(mu - minval(red_space_hess_eigvals)) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case level "// &
                 "shift not equal to lowest reduced space Hessian eigenvalue."
             test_bisection_ah = .false.
         end if
         grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals) - &
                                               maxval(red_space_hess_eigvals))
-        if (abs(red_space_solution(1) - grad_coupled_component) > tol) then
+        if (.not. abs(red_space_solution(1) - grad_coupled_component) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case "// &
                 "component along non-degenerate eigenvector not correct."
             test_bisection_ah = .false.
         end if
-        if (abs(norm2(red_space_solution(2:3)) - &
-                sqrt(trust_radius**2 - grad_coupled_component**2)) > tol) then
+        if (.not. abs(norm2(red_space_solution(2:3)) - &
+                      sqrt(trust_radius**2 - grad_coupled_component**2)) <= tol) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case fill "// &
                 "magnitude within degenerate eigenspace not correct."
             test_bisection_ah = .false.
         end if
-        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+        if (.not. all( &
+            abs(solution - matmul(red_space_basis, red_space_solution)) <= tol)) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case full "// &
                 "space solution not correct."
             test_bisection_ah = .false.
@@ -4206,19 +4217,19 @@ contains
             end if
             if ((positive_definite .and. norm2(solution) > trust_radius) .or. &
                 (.not. positive_definite .and. &
-                 abs(norm2(solution) - trust_radius) > tol)) then
+                 .not. abs(norm2(solution) - trust_radius) <= tol)) then
                 write(stderr, *) "test_bisection_mu failed: Solution does not "// &
                     "respect trust radius for "//trim(case_names(i_case))//" Hessian."
                 test_bisection_mu = .false.
             end if
-            if (positive_definite .and. abs(mu) > tol) then
+            if (positive_definite .and. .not. abs(mu) <= tol) then
                 write(stderr, *) "test_bisection_mu failed: Level shift does not "// &
                     "vanish for "//trim(case_names(i_case))//" Hessian."
                 test_bisection_mu = .false.
             end if
-            if (norm2( &
+            if (.not. norm2( &
                 matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                       mu * red_space_solution) + grad) > tol) then
+                       mu * red_space_solution) + grad) <= tol) then
                 write(stderr, *) "test_bisection_mu failed: Step does not satisfy "// &
                     "level-shifted Newton equation for "//trim(case_names(i_case))// &
                     " Hessian."
@@ -4263,13 +4274,13 @@ contains
                     "hard case with "//trim(hard_case_names(i_case))//"."
                 test_bisection_mu = .false.
             end if
-            if (abs(norm2(solution) - trust_radius) > tol) then
+            if (.not. abs(norm2(solution) - trust_radius) <= tol) then
                 write(stderr, *) "test_bisection_mu failed: Hard case solution "// &
                     "does not respect trust radius for "// &
                     trim(hard_case_names(i_case))//"."
                 test_bisection_mu = .false.
             end if
-            if (abs(mu - minval(red_space_hess_eigvals%re)) > tol) then
+            if (.not. abs(mu - minval(red_space_hess_eigvals%re)) <= tol) then
                 write(stderr, *) "test_bisection_mu failed: Hard case level shift "// &
                     "not equal to lowest reduced space Hessian eigenvalue for "// &
                     trim(hard_case_names(i_case))//"."
@@ -4291,7 +4302,8 @@ contains
                     sqrt(trust_radius**2 - grad_norm**2 / 98.0_rp) * &
                     [1.0_rp, 1.0_rp, 0.0_rp] / sqrt(2.0_rp)
             end if
-            if (any(abs(red_space_solution - expected_red_space_solution) > tol)) then
+            if (.not. all( &
+                abs(red_space_solution - expected_red_space_solution) <= tol)) then
                 write(stderr, *) "test_bisection_mu failed: Hard case reduced "// &
                     "space solution not correct for "//trim(hard_case_names(i_case))// &
                     "."
@@ -4325,26 +4337,28 @@ contains
                 "case with step at lowest eigenvalue outside trust region."
             test_bisection_mu = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
                 "step at lowest eigenvalue outside trust region does not respect "// &
                 "trust radius."
             test_bisection_mu = .false.
         end if
-        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                         mu * red_space_solution) + grad) > tol) then
+        if (.not. norm2( &
+            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
+                   red_space_solution) + grad) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
                 "step at lowest eigenvalue outside trust region does not satisfy "// &
                 "level-shifted Newton equation."
             test_bisection_mu = .false.
         end if
-        if (abs(mu + 5.0_rp) > tol) then
+        if (.not. abs(mu + 5.0_rp) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Hard case level shift with "// &
                 "step at lowest eigenvalue outside trust region not that of the "// &
                 "step along gradient direction."
             test_bisection_mu = .false.
         end if
-        if (any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > tol)) then
+        if (.not. all( &
+            abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) <= tol)) then
             write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
                 "step at lowest eigenvalue outside trust region not along gradient "// &
                 "direction."
@@ -4373,13 +4387,13 @@ contains
                 "eigenvector nearly orthogonal to gradient direction."
             test_bisection_mu = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Solution does not respect "// &
                 "trust radius for lowest eigenvector nearly orthogonal to gradient "// &
                 "direction."
             test_bisection_mu = .false.
         end if
-        if (abs(mu + 2.0_rp) > tol) then
+        if (.not. abs(mu + 2.0_rp) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Level shift not equal to "// &
                 "lowest eigenvalue for lowest eigenvector nearly orthogonal to "// &
                 "gradient direction."
@@ -4415,30 +4429,31 @@ contains
                 "solution contains NaN."
             test_bisection_mu = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case "// &
                 "solution does not respect trust radius."
             test_bisection_mu = .false.
         end if
-        if (abs(mu - minval(red_space_hess_eigvals%re)) > tol) then
+        if (.not. abs(mu - minval(red_space_hess_eigvals%re)) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case level "// &
                 "shift not equal to lowest reduced space Hessian eigenvalue."
             test_bisection_mu = .false.
         end if
         grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals%re) - &
                                               maxval(red_space_hess_eigvals%re))
-        if (abs(red_space_solution(1) - grad_coupled_component) > tol) then
+        if (.not. abs(red_space_solution(1) - grad_coupled_component) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case "// &
                 "component along non-degenerate eigenvector not correct."
             test_bisection_mu = .false.
         end if
-        if (abs(norm2(red_space_solution(2:3)) - &
-                sqrt(trust_radius**2 - grad_coupled_component**2)) > tol) then
+        if (.not. abs(norm2(red_space_solution(2:3)) - &
+                      sqrt(trust_radius**2 - grad_coupled_component**2)) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case fill "// &
                 "magnitude within degenerate eigenspace not correct."
             test_bisection_mu = .false.
         end if
-        if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > tol)) then
+        if (.not. all( &
+            abs(solution - matmul(red_space_basis, red_space_solution)) <= tol)) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case full "// &
                 "space solution not correct."
             test_bisection_mu = .false.
@@ -4468,7 +4483,7 @@ contains
                     "Newton step "//trim(newton_case_names(i_case))//"."
                 test_bisection_mu = .false.
             end if
-            if (abs(mu) > tol) then
+            if (.not. abs(mu) <= tol) then
                 write(stderr, *) "test_bisection_mu failed: Level shift does not "// &
                     "vanish for Newton step "//trim(newton_case_names(i_case))//"."
                 test_bisection_mu = .false.
@@ -4500,13 +4515,14 @@ contains
                 "vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
-        if (abs(norm2(solution) - trust_radius) > tol) then
+        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Solution does not respect "// &
                 "trust radius for vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
-        if (norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                         mu * red_space_solution) + grad) > tol) then
+        if (.not. norm2( &
+            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
+                   red_space_solution) + grad) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Step does not satisfy "// &
                 "level-shifted Newton equation for vanishing lowest eigenvalue."
             test_bisection_mu = .false.
@@ -4537,7 +4553,7 @@ contains
                 "lowest eigenvalues."
             test_bisection_mu = .false.
         end if
-        if (abs(mu + 2.0_rp) > tol) then
+        if (.not. abs(mu + 2.0_rp) <= tol) then
             write(stderr, *) "test_bisection_mu failed: Level shift not the real "// &
                 "part of complex lowest eigenvalues."
             test_bisection_mu = .false.
@@ -4593,24 +4609,26 @@ contains
         real(rp) :: n
         integer(ip) :: error, i, i_call, n_calls, n_obj_func
         character(len=20) :: call_number
-        integer(ip), parameter :: n_cases = 9
+        integer(ip), parameter :: n_cases = 10
         real(rp), parameter :: direction(1) = [1.0_rp]
         character(len=*), parameter :: case_names(n_cases) = &
             [character(len=26) :: "(x - 3)^2", "(x - 2)^4", "exp(-x) + x / 100", &
              "|x - 2.2|", "sqrt(|x - 5|)", "(x - 1000)^2", "(x - 2)^2 with bump at 2", &
-             "-x", "constant"]
+             "-x", "constant", "(x - 3)^2, NaN beyond 2"]
         logical, parameter :: expect_error(n_cases) = &
             [.false., .false., .false., .false., .false., .false., .false., .true., &
-             .true.]
+             .true., .false.]
 
         ! expected multipliers, the first one at the minimum where the parabolic fit
         ! is exact, the golden ratio steps 1 + phi and 3 + sqrt(5) for functions that
-        ! reject the parabolic fits and the remaining ones reproduced with an
-        ! independent implementation of the bracketing algorithm
+        ! reject the parabolic fits, the upper bound for the function which is not a
+        ! number at the first golden ratio step, which counts as infinite there, and
+        ! the remaining ones reproduced with an independent implementation of the
+        ! bracketing algorithm
         real(rp), parameter :: expected_n(n_cases) = &
             [3.0_rp, 1.8567627457812104_rp, 4.141367271592155_rp, &
              (3.0_rp + sqrt(5.0_rp)) / 2.0_rp, 3.0_rp + sqrt(5.0_rp), &
-             1000.0000000003488_rp, 1.0_rp, 0.0_rp, 0.0_rp]
+             1000.0000000003488_rp, 1.0_rp, 0.0_rp, 0.0_rp, 1.0_rp]
         type(bracket_context_type), target :: context
 
         ! assume tests pass
@@ -6370,13 +6388,12 @@ contains
         ! setup settings object
         call setup_settings(settings, context)
 
-        ! generate vector to be orthogonalized, scaled to a norm between the threshold
-        ! of the routine for a numerically zero vector and the one for linear
-        ! dependence, so that the check for linear dependence has to be relative to
-        ! the size of the vector, and orthonormal space spanned by eigenvectors of a
-        ! symmetric matrix
+        ! generate vector to be orthogonalized, scaled to a tiny norm as a
+        ! preconditioned residual can have, so that the checks for a vanishing vector
+        ! and for linear dependence have to be relative to the size of the vector, and
+        ! orthonormal space spanned by eigenvectors of a symmetric matrix
         call random_number(vector)
-        vector = 1e-15_rp * vector / norm2(vector)
+        vector = 1e-20_rp * vector / norm2(vector)
         call ref_symm_mat_diag(generate_random_symm_matrix(n_param), eigvals, eigvecs)
         space = eigvecs(:, :2)
 
@@ -6539,10 +6556,11 @@ contains
         ! setup settings object
         call setup_settings(settings, context)
 
-        ! initialize quantities
+        ! initialize quantities, with a level-shifted Hessian diagonal element that
+        ! vanishes and one that is negative, whose sign the preconditioner keeps
         vector = [1.0_rp, 1.0_rp, 1.0_rp]
         mu = -2.0_rp
-        h_diag = [-2.0_rp, 1.0_rp, 2.0_rp]
+        h_diag = [-2.0_rp, 1.0_rp, -3.0_rp]
 
         ! call subroutine and check if results match
         call level_shifted_diag_precond(vector, mu, h_diag, precond_vector, settings, &
@@ -6552,7 +6570,7 @@ contains
                 "error for default preconditioner."
             test_level_shifted_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - [1e10_rp, 1.0_rp / 3, 0.25_rp]) > tol)) then
+        if (any(abs(precond_vector - [1e10_rp, 1.0_rp / 3, -1.0_rp]) > tol)) then
             write(stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for default preconditioner."
             test_level_shifted_diag_precond = .false.
@@ -6569,7 +6587,7 @@ contains
                 "error for custom projection function."
             test_level_shifted_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - [2e10_rp, 2.0_rp / 3, 0.5_rp]) > tol)) then
+        if (any(abs(precond_vector - [2e10_rp, 2.0_rp / 3, -2.0_rp]) > tol)) then
             write(stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for custom projection function."
             test_level_shifted_diag_precond = .false.

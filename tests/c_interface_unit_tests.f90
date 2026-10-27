@@ -78,7 +78,9 @@ contains
                                         context_c) result(error) bind(C)
         !
         ! this function is a test function for an orbital update C function which
-        ! reports success but does not provide a Hessian linear transformation
+        ! reports success but does not provide a Hessian linear transformation, so it
+        ! leaves the function pointer as it received it, which the wrapper has to
+        ! have cleared
         !
         real(c_rp), intent(in) :: kappa(*)
         real(c_rp), intent(out) :: func, grad(*), h_diag(*)
@@ -86,8 +88,16 @@ contains
         type(c_ptr), intent(in), value :: context_c
         integer(c_ip) :: error
 
+        type(c_funptr) :: received_hess_x_c_funptr
+
+        received_hess_x_c_funptr = hess_x_c_funptr
         error = mock_update_orbs(kappa, func, grad, h_diag, hess_x_c_funptr, context_c)
-        hess_x_c_funptr = c_null_funptr
+        hess_x_c_funptr = received_hess_x_c_funptr
+        if (c_associated(received_hess_x_c_funptr)) then
+            write(stderr, *) "test_update_orbs_f_wrapper failed: Hessian linear "// &
+                "transformation not cleared before the orbital update."
+            error = 3
+        end if
 
     end function mock_update_orbs_no_hess_x
 

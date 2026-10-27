@@ -22,6 +22,7 @@ from ctypes import (
     addressof,
     Array,
     byref,
+    cast,
     CFUNCTYPE,
     Structure,
     POINTER,
@@ -61,6 +62,10 @@ from pyopentrustregion.python_interface import (
     call_library,
     check_struct_sizes,
     hess_x_interface_type,
+    precond_interface_type,
+    project_interface_type,
+    get_extra_trial_vectors_interface_type,
+    conv_check_interface_type,
 )
 
 # load the testsuite library
@@ -481,6 +486,40 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 "function was not reported."
             )
 
+        # an orbital update that raises makes the solver fail with the exception as the
+        # cause of the reported error, which a library calling it right away shows
+        update_orbs_failure = ValueError("orbital update failure")
+
+        def raising_update_orbs(kappa, grad, h_diag):
+            raise update_orbs_failure
+
+        def library_calling_update_orbs(update_orbs_interface, *args):
+            vector = np.zeros(n_param)
+            vector_ptr = vector.ctypes.data_as(POINTER(c_real))
+            return update_orbs_interface(
+                vector_ptr,
+                pointer(c_real()),
+                vector_ptr,
+                vector_ptr,
+                pointer(hess_x_interface_type()),
+                None,
+            )
+
+        update_orbs_error_reported = False
+        with patch(
+            "pyopentrustregion.python_interface.lib.solver",
+            library_calling_update_orbs,
+        ):
+            try:
+                solver(raising_update_orbs, mock_obj_func, n_param)
+            except RuntimeError as e:
+                update_orbs_error_reported = e.__cause__ is update_orbs_failure
+        if not update_orbs_error_reported:
+            print(
+                " test_solver_py_interface failed: Exception raised by orbital update "
+                "was not reported."
+            )
+
         # the solver marks the library as innermost while it runs, around the callback
         # function marked within it, and raises an interruption of a callback function
         # as it is
@@ -525,6 +564,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             and callbacks_called
             and logger_error_reported
             and callback_error_reported
+            and update_orbs_error_reported
             and interruption_raised
             and no_settings_passed,
             "test_solver_py_interface failed",
@@ -868,6 +908,75 @@ class PyInterfaceUnitTests(unittest.TestCase):
                     print(
                         f" {test_name} failed: Callback function wrong for the "
                         f"{case}."
+                    )
+                    test_passed = False
+
+        return test_passed
+
+    @staticmethod
+    def _callbacks_wired(test_name, settings_class):
+        """
+        this function checks that the interfaces a settings object sets up for a call
+        report an exception raised by an optional callback function as an error and
+        keep it with the exceptions of the call, also for the nested stability check
+        settings
+        """
+        test_passed = True
+        n_param = 2
+        vector = np.zeros(n_param)
+        vector_ptr = vector.ctypes.data_as(POINTER(c_real))
+        callbacks = {
+            "precond": (
+                precond_interface_type,
+                (vector_ptr, pointer(c_real(1.0)), vector_ptr),
+            ),
+            "project": (project_interface_type, (vector_ptr,)),
+            "get_extra_trial_vectors": (
+                get_extra_trial_vectors_interface_type,
+                (vector_ptr, 1),
+            ),
+            "conv_check": (conv_check_interface_type, (pointer(c_bool()),)),
+        }
+
+        def raising(failure):
+            def callback(*args):
+                raise failure
+
+            return callback
+
+        # every optional callback function raises an exception of its own
+        settings = settings_class()
+        all_settings = [(settings, "")]
+        if hasattr(settings, "stability_settings"):
+            all_settings.append((settings.stability_settings, "stability_settings."))
+        failures = {}
+        for some_settings, prefix in all_settings:
+            for name in callbacks:
+                failures[prefix + name] = ValueError(prefix + name)
+                setattr(some_settings, name, raising(failures[prefix + name]))
+
+        # set up the interfaces in a copy of the C struct and call each of them
+        settings_c = settings.c_struct.from_buffer_copy(settings.settings_c)
+        exception = {}
+        interfaces = []
+        settings.set_optional_callbacks(settings_c, interfaces, n_param, exception)
+        all_settings_c = [(settings_c, "")]
+        if hasattr(settings, "stability_settings"):
+            all_settings_c.append(
+                (settings_c.stability_settings, "stability_settings.")
+            )
+        for some_settings_c, prefix in all_settings_c:
+            for name, (interface_type, args) in callbacks.items():
+                exception.clear()
+                interface = cast(
+                    c_void_p(getattr(some_settings_c, name)), interface_type
+                )
+                if interface(*args, None) != 1 or (
+                    exception.get("exc") is not failures[prefix + name]
+                ):
+                    print(
+                        f" {test_name} failed: Exception raised by {prefix}{name} not "
+                        "reported as error or not kept."
                     )
                     test_passed = False
 
@@ -1545,6 +1654,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             "test_solver_settings", settings, ""
         )
         test_passed &= self._settings_safeguarded("test_solver_settings", settings)
+        test_passed &= self._callbacks_wired("test_solver_settings", SolverSettings)
 
         dummy_error_code = 42
 
@@ -1612,6 +1722,9 @@ class PyInterfaceUnitTests(unittest.TestCase):
             "test_stability_settings", settings, "stability_settings."
         )
         test_passed &= self._settings_safeguarded("test_stability_settings", settings)
+        test_passed &= self._callbacks_wired(
+            "test_stability_settings", StabilitySettings
+        )
         self.assertTrue(test_passed, "test_stability_settings failed")
         print(" test_stability_settings PASSED")
 

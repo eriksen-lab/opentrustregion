@@ -643,7 +643,7 @@ contains
         ! determine if saddle point
         stable = eigval > local_settings%stability_thresh
         if (.not. stable) then
-            write(msg, '(A, F0.4)') unstable_warning_msg, eigval
+            write(msg, '(A, ES11.4)') unstable_warning_msg, eigval
             call local_settings%log(msg, verbosity_warning)
         end if
 
@@ -1325,13 +1325,9 @@ contains
         n_kappa = 0.0_rp
 
         ! evaluate function at upper and lower bounds
-        f_lower = obj_func(lower * kappa, error, settings%context)
-        n_obj_func = n_obj_func + 1
-        call add_error_origin(error, error_obj_func, settings)
+        call evaluate(lower, f_lower)
         if (error /= 0) return
-        f_upper = obj_func(upper * kappa, error, settings%context)
-        n_obj_func = n_obj_func + 1
-        call add_error_origin(error, error_obj_func, settings)
+        call evaluate(upper, f_upper)
         if (error /= 0) return
 
         ! ensure f_a > f_b
@@ -1349,9 +1345,7 @@ contains
 
         ! default step
         n_c = n_b + golden_ratio * (n_b - n_a)
-        f_c = obj_func(n_c * kappa, error, settings%context)
-        n_obj_func = n_obj_func + 1
-        call add_error_origin(error, error_obj_func, settings)
+        call evaluate(n_c, f_c)
         if (error /= 0) return
 
         ! continue looping until function at middle point is lower than at brackets
@@ -1370,9 +1364,7 @@ contains
             ! check if u is between n_b and n_c
             if ((n_u - n_c) * (n_b - n_u) > 0.0_rp) then
                 ! evaluate function at n_u
-                f_u = obj_func(n_u * kappa, error, settings%context)
-                n_obj_func = n_obj_func + 1
-                call add_error_origin(error, error_obj_func, settings)
+                call evaluate(n_u, f_u)
                 if (error /= 0) return
 
                 ! check if minimum between n_b and n_c
@@ -1391,23 +1383,17 @@ contains
 
                 ! parabolic fit did not help, default step
                 n_u = n_c + golden_ratio * (n_c - n_b)
-                f_u = obj_func(n_u * kappa, error, settings%context)
-                n_obj_func = n_obj_func + 1
-                call add_error_origin(error, error_obj_func, settings)
+                call evaluate(n_u, f_u)
                 if (error /= 0) return
             ! limit parabolic fit to its maximum allowed value
             else if ((n_u - n_u_lim) * (n_u_lim - n_c) >= 0.0_rp) then
                 n_u = n_u_lim
-                f_u = obj_func(n_u * kappa, error, settings%context)
-                n_obj_func = n_obj_func + 1
-                call add_error_origin(error, error_obj_func, settings)
+                call evaluate(n_u, f_u)
                 if (error /= 0) return
             ! parabolic fit is between n_c and its allowed limit
             else if ((n_u - n_u_lim) * (n_c - n_u) > 0.0_rp) then
                 ! evaluate function at n_u
-                f_u = obj_func(n_u * kappa, error, settings%context)
-                n_obj_func = n_obj_func + 1
-                call add_error_origin(error, error_obj_func, settings)
+                call evaluate(n_u, f_u)
                 if (error /= 0) return
 
                 if (f_u < f_c) then
@@ -1416,17 +1402,13 @@ contains
                     n_u = n_c + golden_ratio * (n_c - n_b)
                     f_b = f_c
                     f_c = f_u
-                    f_u = obj_func(n_u * kappa, error, settings%context)
-                    n_obj_func = n_obj_func + 1
-                    call add_error_origin(error, error_obj_func, settings)
+                    call evaluate(n_u, f_u)
                     if (error /= 0) return
                 end if
             ! reject parabolic fit and use default step
             else
                 n_u = n_c + golden_ratio * (n_c - n_b)
-                f_u = obj_func(n_u * kappa, error, settings%context)
-                n_obj_func = n_obj_func + 1
-                call add_error_origin(error, error_obj_func, settings)
+                call evaluate(n_u, f_u)
                 if (error /= 0) return
             end if
             ! remove oldest point
@@ -1458,6 +1440,27 @@ contains
 
         ! set new multiplier
         n_kappa = n_b
+
+    contains
+
+        subroutine evaluate(n, f)
+            !
+            ! this subroutine evaluates the objective function at a multiple of the
+            ! step, where a value that is not a number counts as an infinite one, so
+            ! that the line search moves away from it as from an overflowing value
+            !
+            use, intrinsic :: ieee_arithmetic, only: ieee_is_nan, ieee_value, &
+                                                     ieee_positive_inf
+
+            real(rp), intent(in) :: n
+            real(rp), intent(out) :: f
+
+            f = obj_func(n * kappa, error, settings%context)
+            n_obj_func = n_obj_func + 1
+            call add_error_origin(error, error_obj_func, settings)
+            if (ieee_is_nan(f)) f = ieee_value(f, ieee_positive_inf)
+
+        end subroutine evaluate
 
     end function bracket
 
@@ -2277,7 +2280,7 @@ contains
         real(rp), allocatable :: orth(:)
         real(rp) :: norm
         integer(ip) :: n_param, n_vectors, iter, i
-        real(rp), parameter :: zero_thres = 1e-16_rp, orth_thres = 1e-14_rp
+        real(rp), parameter :: orth_thres = 1e-14_rp
         real(rp), external :: ddot, dnrm2
         external :: dgemv
 
@@ -2291,7 +2294,7 @@ contains
         n_vectors = size(space, 2)
 
         norm = dnrm2(n_param, vector, 1_ip)
-        if (norm < zero_thres) then
+        if (norm < tiny(1.0_rp)) then
             call settings%log("Vector passed to Gram-Schmidt procedure is "// &
                               "numerically zero.", verbosity_error, .true.)
             error = 1
