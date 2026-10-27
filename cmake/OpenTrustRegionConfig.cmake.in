@@ -99,7 +99,7 @@ if(NOT TARGET ${otr}::opentrustregion)
     if(_seek_int32 GREATER -1)
         set(_target "opentrustregion32")
         include("${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-32.cmake")
-    # check if find_package requests 32-bit integer version
+    # check if find_package requests 64-bit integer version
     elseif(_seek_int64 GREATER -1)
         set(_target "opentrustregion64")
         include("${CMAKE_CURRENT_LIST_DIR}/${otr}Targets-64.cmake")
