@@ -1437,6 +1437,30 @@ class PyInterfaceUnitTests(unittest.TestCase):
                 test_passed = False
             test_passed &= check_restored("after an interruption")
 
+            # an interruption that arrives while the handler is restored, which Python
+            # handles while it switches the handler, is raised when the call returns,
+            # after the handler is restored
+            real_signal = signal.signal
+
+            def signal_handling_pending(signum, handler):
+                if handler is signal.default_int_handler:
+                    signal.getsignal(signum)(signum, None)
+                return real_signal(signum, handler)
+
+            raised = None
+            with patch.object(signal, "signal", signal_handling_pending):
+                try:
+                    call_library(library)
+                except KeyboardInterrupt as e:
+                    raised = e
+            if raised is None or interruption_state.pending is not None:
+                print(
+                    " test_call_library failed: Interruption that arrives while the "
+                    "handler is restored not raised when the call returns."
+                )
+                test_passed = False
+            test_passed &= check_restored("after an interruption while it is restored")
+
             # another handler is kept
             def custom_handler(signum, frame):
                 pass

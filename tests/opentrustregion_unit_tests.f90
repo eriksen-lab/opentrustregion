@@ -5623,25 +5623,28 @@ contains
         end if
         deallocate(red_space_basis)
 
-        ! fill a trial vector behind the first unit vector with a projection onto the
-        ! first unit vector, so that every attempt produces a linearly dependent
-        ! vector, and determine whether an error is returned and an error message is
-        ! printed once the maximum number of attempts is reached
+        ! fill the trial vectors behind the first unit vector with a projection onto
+        ! the first unit vector, which leaves no further direction, and determine
+        ! whether the trial space ends with the first unit vector without an error
         call setup_settings(settings, context)
-        allocate(red_space_basis(n_param, 2))
+        allocate(red_space_basis(n_param, n_fill + 1))
         red_space_basis = 0.0_rp
         red_space_basis(1, 1) = 1.0_rp
         settings%project => mock_project_first_component
-        call setup_error_logging(settings, context)
-        call generate_random_trial_vectors(red_space_basis, 1_ip, settings, error)
-        if (error /= 1) then
-            write(stderr, *) "test_generate_random_trial_vectors failed: No error "// &
-                "returned when no linearly independent vector can be generated."
+        call generate_random_trial_vectors(red_space_basis, n_fill, settings, error)
+        if (error /= 0) then
+            write(stderr, *) "test_generate_random_trial_vectors failed: Produced "// &
+                "error when the projection leaves no further direction."
             test_generate_random_trial_vectors = .false.
         end if
-        if (len_trim(context%log_message) == 0) then
-            write(stderr, *) "test_generate_random_trial_vectors failed: No error "// &
-                "message printed when no linearly independent vector can be generated."
+        if (size(red_space_basis, 2) /= 1) then
+            write(stderr, *) "test_generate_random_trial_vectors failed: Trial "// &
+                "space does not end when the projection leaves no further direction."
+            test_generate_random_trial_vectors = .false.
+        else if (any(abs(red_space_basis(2:, 1)) > 0.0_rp) .or. &
+                 abs(red_space_basis(1, 1) - 1.0_rp) > tol) then
+            write(stderr, *) "test_generate_random_trial_vectors failed: First "// &
+                "basis vector changed when the projection leaves no further direction."
             test_generate_random_trial_vectors = .false.
         end if
 
@@ -9365,18 +9368,19 @@ contains
         use opentrustregion_core, only: &
             solver_settings_type, solver_sanity_check, project_warning_msg, &
             random_trial_vector_warning_msg, subsystem_solver_options
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_positive_inf
 
         ! the subsystem solvers in mixed case, settings which the sanity check rejects
         ! and the settings that carry a projection
         character(len=*), parameter :: mixed_case_subsystem_solvers(5) = &
             [character(len=18) :: "Davidson_LS", "Davidson_AH", "Jacobi-Davidson_LS", &
              "Jacobi-Davidson_AH", "TCG"]
-        character(len=*), parameter :: error_case_names(9) = &
+        character(len=*), parameter :: error_case_names(10) = &
             [character(len=55) :: "vanishing number of parameters", &
              "negative number of parameters", "vanishing number of micro iterations", &
-             "negative number of random trial vectors", &
-             "vanishing starting trust radius", "negative starting trust radius", &
-             "extra trial vector function without extra trial vectors", &
+             "negative number of random trial vectors", "vanishing starting trust "// &
+             "radius", "negative starting trust radius", "infinite starting trust "// &
+             "radius", "extra trial vector function without extra trial vectors", &
              "unknown subsystem solver", "rejected nested stability check settings"]
         character(len=*), parameter :: projection_case_names(2) = &
             [character(len=42) :: "solver settings", &
@@ -9448,11 +9452,13 @@ contains
             case (6)
                 settings%start_trust_radius = -1.0_rp
             case (7)
+                settings%start_trust_radius = ieee_value(1.0_rp, ieee_positive_inf)
+            case (8)
                 settings%get_extra_trial_vectors => mock_get_extra_trial_vectors
                 settings%n_extra_trial_vectors = 0
-            case (8)
-                settings%subsystem_solver = "unknown"
             case (9)
+                settings%subsystem_solver = "unknown"
+            case (10)
                 ! the nested settings print the error message of their own check
                 call setup_error_logging(settings%stability_settings, context)
                 settings%stability_settings%diag_solver = "unknown"

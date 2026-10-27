@@ -1900,9 +1900,10 @@ contains
         !
         ! this subroutine generates random trial vectors, filling the trailing columns
         ! of the provided space, projecting them and orthogonalizing them against the
-        ! leading ones
+        ! leading ones, and drops the columns that are left once the projection leaves
+        ! no further direction
         !
-        real(rp), intent(inout) :: red_space_basis(:, :)
+        real(rp), allocatable, intent(inout) :: red_space_basis(:, :)
         integer(ip), intent(in) :: n_fill
         class(settings_type), intent(in) :: settings
         integer(ip), intent(out) :: error
@@ -1926,12 +1927,13 @@ contains
             n_attempts = 0
             do while (error == error_gram_schmidt_lin_dep)
                 n_attempts = n_attempts + 1
+
+                ! a random vector which stays linearly dependent on the columns before
+                ! it can only come from a projection whose directions these columns
+                ! already span, so the trial space ends there
                 if (n_attempts > max_rnd_trial_attempts) then
-                    call settings%log("Maximum number of attempts to generate a "// &
-                                      "random trial vector linearly independent of "// &
-                                      "the existing trial space reached.", &
-                                      verbosity_error, .true.)
-                    error = 1
+                    red_space_basis = red_space_basis(:, :i - 1)
+                    error = 0
                     return
                 end if
                 call random_number(red_space_basis(:, i))
@@ -3611,6 +3613,8 @@ contains
         !
         ! this subroutine performs a sanity check for solver input parameters
         !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
         type(solver_settings_type), intent(inout) :: settings
         integer(ip), intent(in) :: n_param
         integer(ip), intent(out) :: error
@@ -3645,10 +3649,11 @@ contains
             return
         end if
 
-        ! check that the starting trust radius is positive
-        if (.not. settings%start_trust_radius > 0.0_rp) then
-            call settings%log("Starting trust radius should be larger than 0.", &
-                              verbosity_error, .true.)
+        ! check that the starting trust radius is positive and finite
+        if (.not. (settings%start_trust_radius > 0.0_rp .and. &
+                   ieee_is_finite(settings%start_trust_radius))) then
+            call settings%log("Starting trust radius should be finite and larger "// &
+                              "than 0.", verbosity_error, .true.)
             error = 1
             return
         end if

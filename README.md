@@ -30,6 +30,8 @@ cmake --build .
 
 The installation can be tested by running the ```testsuite.py``` file in the ```pyopentrustregion``` directory.
 
+C programs that link the static library, the default, also need the Fortran runtime, e.g. by enabling Fortran in their CMake project or by building the library with `-DBUILD_SHARED_LIBS=ON`.
+
 A program that compiles the sources with its own build system instead has to preprocess them (`-cpp` for gfortran, `-fpp` for Intel), with `USE_ILP64` defined for 64-bit integers, and compile them for recursion (see [Nested and Concurrent Calls](#nested-and-concurrent-calls)).
 
 A new major version changes the interfaces, while a new minor version can change the settings and state types, so a Fortran or C program has to be rebuilt against the modules or the header of the minor version it links. The shared library is therefore versioned by its minor version, and `find_package(OpenTrustRegion <version>)` only accepts the requested one. A patch version can replace the library without a rebuild. Fortran programs use the module `opentrustregion`, whose entities form the interface, while the module `opentrustregion_core` in the same file holds the implementation, whose other entities can change in any version. Python programs need no rebuild, but the Python package and the library it loads have to come from the same minor version.
@@ -125,7 +127,7 @@ The optimization process is initiated by calling a `solver` subroutine. This rou
   - Returns an integer error code (0 for success, positive integers < 100 for errors)
   - Receives the host context as its last argument.
 - **`obj_func`** (function):  
-  Accepts and applies a variable update (e.g., orbital rotation) and returns:
+  Evaluates the objective function after a variable update (e.g., orbital rotation) without applying the update and returns:
   - Objective function value (real)
   - An integer error code (0 for success, positive integers < 100 for errors)
   - Receives the host context as its last argument.
@@ -266,7 +268,7 @@ The optimization process can be fine-tuned using the following settings:
 - **`conv_tol`** (real): Specifies the convergence criterion for the RMS gradient, which a custom `conv_check` replaces.
 - **`n_random_trial_vectors`** (integer): Number of random trial vectors used to initialize the micro iterations of the Davidson-family subsystem solvers.
 - **`n_extra_trial_vectors`** (integer): Number of non-random trial vectors added alongside the gradient direction to initialize the micro iterations of the Davidson-family subsystem solvers, on top of the `n_random_trial_vectors` random ones. These are taken from `get_extra_trial_vectors` when that callback is provided, and are otherwise unit vectors along the lowest Hessian diagonal elements, added only where those indicate negative curvature. Vectors that vanish or are linearly dependent on the gradient direction are dropped.
-- **`start_trust_radius`** (real): Initial trust radius. A step that changes any parameter by more than π/4 is rejected regardless of the trust radius.
+- **`start_trust_radius`** (real): Initial trust radius. A trust-region step that changes any parameter by more than π/4 is rejected regardless of the trust radius.
 - **`n_macro`** (integer): Maximum number of macro iterations.
 - **`n_micro`** (integer): Maximum number of micro iterations per attempted trust-region step.
 - **`jacobi_davidson_start`** (integer): Number of micro iterations after which the subsystem solver switches to the Jacobi-Davidson method.
@@ -322,7 +324,7 @@ use opentrustregion, only: ip, rp, stability_settings_type, stability_state_type
 
 real(rp), allocatable :: h_diag(:), kappa(:)
 procedure(hess_x_type), pointer :: hess_x_funptr
-integer(ip) :: n_param, error
+integer(ip) :: error
 logical :: stable
 type(stability_settings_type) :: settings
 type(stability_state_type) :: state
@@ -338,6 +340,9 @@ settings%diag_solver = "jacobi-davidson"
 ! hand the callback functions whatever the host needs to reach its own data
 settings%context => host_data
 
+! array for the lowest eigenvector
+allocate(kappa(size(h_diag)))
+
 ! run stability check
 call stability_check(h_diag, hess_x_funptr, stable, error, settings, state, &
                      kappa=kappa)
@@ -348,7 +353,7 @@ print *, "Number of Hessian linear transformations:", state%n_hess_x
 ```
 
 - `hess_x_funptr` points to an existing Hessian-vector product implementation elsewhere in the program.
-- `n_param` is also assumed to be defined elsewhere.
+- `h_diag` is also assumed to be defined elsewhere.
 - A declared settings object holds the default settings, which can be overridden (here, `conv_tol`, `n_iter` and `diag_solver`); assigning `stability_settings_type()` resets an object to them.
 - `host_data` is a variable of any type declared with the `target` attribute. Every callback function receives it as its last argument, declared as `class(*), intent(in), pointer :: context`, and recovers its own type with `select type`. The `intent(in)` applies to the pointer rather than the data, so a callback function may modify `host_data` but not point `context` elsewhere. Leaving `settings%context` unset is fine; the callback functions then receive an unassociated pointer.
 - The `stable` logical output receives the result of the stability check.

@@ -1007,9 +1007,12 @@ def call_library(function: Callable[..., int], *args) -> int:
         interruption_state.stack = outer + (False,)
         error = function(*args)
     finally:
-        interruption_state.stack = outer
+        # restore the handler while the library is still marked as innermost, since
+        # Python handles a pending signal while it switches the handler, which
+        # defer_interruption then records instead of raising it here
         if install:
             signal.signal(signal.SIGINT, signal.default_int_handler)
+        interruption_state.stack = outer
     if interruption_state.pending is not None:
         pending, interruption_state.pending = interruption_state.pending, None
         raise pending
