@@ -31,56 +31,33 @@ from types import SimpleNamespace
 from pathlib import Path
 import numpy as np
 
-# check if pyopentrustregion is installed or import it from the source tree
-try:
-    from pyopentrustregion.python_interface import (
-        SolverSettings,
-        StabilitySettings,
-        SolverState,
-        StabilityState,
-        solver,
-        stability_check,
-        c_int,
-        c_real,
-        ext,
-        conda_prefix,
-        ObjFuncInterface,
-        HessXInterface,
-        UpdateOrbsInterface,
-        PrecondInterface,
-        ProjectInterface,
-        GetExtraTrialVectorsInterface,
-        ConvCheckInterface,
-        LoggerInterface,
-        raise_on_failure,
-        check_struct_sizes,
-        hess_x_interface_type,
-    )
-except ImportError:
+# when run as a script, import the package this file belongs to rather than another
+# one that is installed
+if not __package__:
     sys.path.insert(0, str(Path(__file__).parent.parent.absolute()))
-    from pyopentrustregion.python_interface import (
-        SolverSettings,
-        StabilitySettings,
-        SolverState,
-        StabilityState,
-        solver,
-        stability_check,
-        c_int,
-        c_real,
-        ext,
-        conda_prefix,
-        ObjFuncInterface,
-        HessXInterface,
-        UpdateOrbsInterface,
-        PrecondInterface,
-        ProjectInterface,
-        GetExtraTrialVectorsInterface,
-        ConvCheckInterface,
-        LoggerInterface,
-        raise_on_failure,
-        check_struct_sizes,
-        hess_x_interface_type,
-    )
+from pyopentrustregion.python_interface import (
+    SolverSettings,
+    StabilitySettings,
+    SolverState,
+    StabilityState,
+    solver,
+    stability_check,
+    c_int,
+    c_real,
+    ext,
+    conda_prefix,
+    ObjFuncInterface,
+    HessXInterface,
+    UpdateOrbsInterface,
+    PrecondInterface,
+    ProjectInterface,
+    GetExtraTrialVectorsInterface,
+    ConvCheckInterface,
+    LoggerInterface,
+    raise_on_failure,
+    check_struct_sizes,
+    hess_x_interface_type,
+)
 
 lib = None
 
