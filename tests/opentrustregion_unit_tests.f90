@@ -7940,9 +7940,10 @@ contains
             test_level_shifted_davidson = .false.
         end if
 
-        ! run level-shifted Davidson near the saddle point with a single micro iteration
-        ! allowed per step and check that every step, accepted or rejected, performs
-        ! exactly one micro iteration before the objective function is evaluated
+        ! run level-shifted Davidson near the saddle point with a single micro
+        ! iteration allowed per step and check that every step, accepted or rejected,
+        ! performs exactly one micro iteration before the objective function is
+        ! evaluated
         call setup_settings(settings, context)
         settings%grad_noise = .false.
         settings%n_micro = 1

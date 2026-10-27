@@ -1094,6 +1094,7 @@ class PyInterfaceUnitTests(unittest.TestCase):
             if np.any(vector != 0.0):
                 print(f" test_callback_interfaces failed: Input of the {name} changed.")
                 test_passed = False
+                vector[:] = 0.0
 
         # the orbital update interface leaves the Hessian linear transformation unset
         # without an error when the orbital update does not provide one, so that the

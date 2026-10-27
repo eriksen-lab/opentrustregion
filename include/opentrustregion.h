@@ -200,7 +200,7 @@ c_int solver(update_orbs_fp update_orbs_ptr, obj_func_fp obj_func_ptr, c_int n_p
 /**
  * C interface to the stability check
  *
- * @param h_diag_ptr        Pointer to diagonal Hessian array of n_param elements,
+ * @param h_diag_ptr        Pointer to diagonal Hessian array of n_param elements
  * @param hess_x_ptr        Pointer to Hessian–vector product callback
  * @param n_param           Number of parameters
  * @param stable            Pointer to bool that receives stability result

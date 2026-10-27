@@ -3526,8 +3526,8 @@ contains
 
         ! decrease trust radius if micro iterations are unable to converge, if the step
         ! is not predicted to decrease the function value (e. g. Newton step along a
-        ! slightly negative curvature) if function value has not decreased, if
-        ! the function changes are not finite, as for an objective function which
+        ! slightly negative curvature), if function value has not decreased, if the
+        ! function changes are not finite, as for an objective function which
         ! overflows at the step, or if individual orbitals change too much
         finite_changes = ieee_is_finite(actual_func_diff) .and. &
                          ieee_is_finite(pred_func_diff)
