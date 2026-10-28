@@ -233,6 +233,27 @@ contains
 
     end function constant_obj_func
 
+    function infinite_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes an objective function evaluation that returns an
+        ! infinite value at every displacement
+        !
+        use test_reference, only: check_host_context
+        use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_positive_inf
+
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        func = ieee_value(sum(delta_vars), ieee_positive_inf)
+
+    end function infinite_obj_func
+
     subroutine mock_precond(residual, mu, precond_residual, error, context)
         !
         ! this subroutine is a test subroutine for the preconditioner subroutine
@@ -3176,9 +3197,14 @@ contains
         context%n_hess_x_calls = 0
         call stability_check([ieee_value(1.0_rp, ieee_quiet_nan), h_diag(2:)], &
                              hess_x_funptr, stable, error, settings)
-        if (error /= error_stability_check + 1 .or. context%n_hess_x_calls /= 0) then
+        if (error /= error_stability_check + 1) then
             write(stderr, *) "test_stability_check failed: Did not return error of "// &
                 "sanity check for a Hessian diagonal which is not a number."
+            test_stability_check = .false.
+        end if
+        if (context%n_hess_x_calls /= 0) then
+            write(stderr, *) "test_stability_check failed: Hessian linear "// &
+                "transformation called for a Hessian diagonal which is not a number."
             test_stability_check = .false.
         end if
 
@@ -7988,6 +8014,21 @@ contains
             test_level_shifted_davidson = .false.
         end if
 
+        ! run level-shifted Davidson with an objective function which is infinite at
+        ! every step, so that every step is rejected until the predicted change can not
+        ! be resolved, and check that it stops with an error rather than at maximum
+        ! precision
+        obj_func_funptr => infinite_obj_func
+        state%trust_radius = 0.4_rp
+        call level_shifted_davidson(0.5_rp, grad, norm2(grad), h_diag, n_param, &
+                                    obj_func_funptr, hess_x_funptr, settings, .false., &
+                                    state, solution, solution_norm, mu, error)
+        if (error /= 1) then
+            write(stderr, *) "test_level_shifted_davidson failed: Did not report "// &
+                "an objective function which is infinite at every step."
+            test_level_shifted_davidson = .false.
+        end if
+
         ! run level-shifted Davidson near the saddle point with a single micro
         ! iteration allowed per step and check that every step, accepted or rejected,
         ! performs exactly one micro iteration before the objective function is
@@ -8835,6 +8876,21 @@ contains
             test_truncated_conjugate_gradient = .false.
         end if
 
+        ! run truncated conjugate gradient on the quadratic model with an objective
+        ! function which is infinite at every step, so that every step is rejected
+        ! until the predicted change can not be resolved, and check that the subproblem
+        ! stops with an error rather than at maximum precision
+        obj_func_funptr => infinite_obj_func
+        state%trust_radius = 0.4_rp
+        call truncated_conjugate_gradient( &
+            0.5_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
+            hess_x_funptr, settings, state, solution, solution_norm, error)
+        if (error /= 1) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Did not "// &
+                "report an objective function which is infinite at every step."
+            test_truncated_conjugate_gradient = .false.
+        end if
+
         ! run truncated conjugate gradient on a quadratic model without curvature,
         ! along whose first direction the model has no minimum, and check that the step
         ! goes to the trust region boundary, where the objective function accepts it
@@ -9030,10 +9086,10 @@ contains
         real(rp) :: rejecting_actual(5), rejecting_predicted(5)
 
         ! cases of a step whose norm is not finite, as from a Hessian linear
-        ! transformation or a preconditioner which returns values that are not finite,
-        ! and of a function change which is not finite at a step whose predicted change
-        ! can not be resolved, as from an objective function which fails, which are
-        ! errors
+        ! transformation or a preconditioner whose finite values are large enough to
+        ! overflow, and of a function change which is not finite at a step whose
+        ! predicted change can not be resolved, as from an objective function which
+        ! fails, which are errors
         character(len=*), parameter :: error_case_names(3) = &
             [character(len=51) :: "step norm not a number", &
              "function not a number at an unresolvable prediction", &
@@ -9836,11 +9892,19 @@ contains
             test_invoke_update_orbs = .false.
         end if
         call hartmann6d_gradient(near_minimum + kappa, ref_grad)
-        if (.not. (is_close(func, hartmann6d_func(near_minimum + kappa)) .and. &
-                   all(is_close(grad, ref_grad)) .and. &
-                   all(is_close(h_diag, [(context%hess(i, i), i=1, n_param)])))) then
-            write(stderr, *) "test_invoke_update_orbs failed: Objective function, "// &
-                "gradient or Hessian diagonal of the orbital update not returned."
+        if (.not. is_close(func, hartmann6d_func(near_minimum + kappa))) then
+            write(stderr, *) "test_invoke_update_orbs failed: Objective function "// &
+                "of the orbital update not returned."
+            test_invoke_update_orbs = .false.
+        end if
+        if (.not. all(is_close(grad, ref_grad))) then
+            write(stderr, *) "test_invoke_update_orbs failed: Gradient of the "// &
+                "orbital update not returned."
+            test_invoke_update_orbs = .false.
+        end if
+        if (.not. all(is_close(h_diag, [(context%hess(i, i), i=1, n_param)]))) then
+            write(stderr, *) "test_invoke_update_orbs failed: Hessian diagonal of "// &
+                "the orbital update not returned."
             test_invoke_update_orbs = .false.
         end if
         if (.not. associated(hess_x_funptr, hess_x_fun)) then

@@ -19,7 +19,6 @@ module test_reference
 
     ! tolerance for real comparisons
     real(rp), parameter :: tol = 1e-10_rp
-    real(c_rp), parameter :: tol_c = real(tol, kind=c_rp)
 
     ! number of parameters
     integer(ip), parameter :: n_param = 3_ip

@@ -10,7 +10,7 @@ module opentrustregion_mock
                                     solver_settings_type, stability_settings_type, &
                                     solver_state_type, stability_state_type
     use c_interface, only: c_callbacks_type
-    use test_reference, only: tol
+    use test_reference, only: is_close
 
     implicit none
 
@@ -204,7 +204,7 @@ contains
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal has wrong size."
             test_passed = .false.
-        else if (any(abs(h_diag - 3.0_rp) > tol)) then
+        else if (.not. all(is_close(h_diag, 3.0_rp))) then
             write(stderr, *) "test_stability_check_c_wrapper failed: Passed "// &
                 "Hessian diagonal wrong."
             test_passed = .false.

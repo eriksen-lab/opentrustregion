@@ -173,7 +173,7 @@ contains
         !
         use c_interface, only: stability_settings_type_c, stability_state_type_c, &
                                logger_c_type, hess_x_c_type
-        use test_reference, only: tol_c, check_hess_x_c_funptr, &
+        use test_reference, only: is_close, check_hess_x_c_funptr, &
                                   check_precond_c_funptr, check_project_c_funptr, &
                                   check_get_extra_trial_vectors_c_funptr, &
                                   check_conv_check_c_funptr, &
@@ -216,7 +216,7 @@ contains
         end if
 
         ! check if Hessian diagonal is passed correctly
-        if (any(abs(h_diag_c(:n_param_c) - 3.0_c_rp) > tol_c)) then
+        if (.not. all(is_close(h_diag_c(:n_param_c), 3.0_c_rp))) then
             write(stderr, *) "test_stability_check_py_interface failed: Passed "// &
                 "Hessian diagonal wrong."
             test_stability_check_interface = .false.
