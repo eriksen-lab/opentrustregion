@@ -8,6 +8,7 @@ module opentrustregion_system_tests
 
     use opentrustregion, only: rp, ip
     use opentrustregion_core, only: stderr
+    use test_reference, only: is_close, is_below
     use, intrinsic :: iso_c_binding, only: c_bool, c_ptr, c_char, c_f_pointer, &
                                            c_null_char
 
@@ -453,13 +454,13 @@ contains
             context_ptr => context
             call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, &
                              context_ptr)
-            if (norm2(grad) / sqrt(real(n_param, kind=rp)) > solver_settings%conv_tol) &
-                then
+            if (.not. is_below(norm2(grad) / sqrt(real(n_param, kind=rp)), &
+                               solver_settings%conv_tol)) then
                 write(stderr, *) "test_"//test_name//" failed: Gradient not "// &
                     "converged from the "//trim(start_names(i_start))//"."
                 check_h2o_fb_solver = .false.
             end if
-            if (abs(func - ref_func) > func_tol) then
+            if (.not. is_close(func, ref_func, func_tol)) then
                 write(stderr, *) "test_"//test_name//" failed: Objective function "// &
                     "does not reach the minimum from the "// &
                     trim(start_names(i_start))//"."
@@ -589,7 +590,8 @@ contains
                 check_h2o_fb_stability_check = .false.
                 cycle
             end if
-            if (abs(abs(dot_product(kappa, hess(:, 1))) - 1.0_rp) > direction_tol) then
+            if (.not. is_close(abs(dot_product(kappa, hess(:, 1))), 1.0_rp, &
+                               direction_tol)) then
                 write(stderr, *) "test_"//test_name//" failed: Returned direction "// &
                     "at the saddle point is not the lowest eigenvector of the Hessian."
                 check_h2o_fb_stability_check = .false.

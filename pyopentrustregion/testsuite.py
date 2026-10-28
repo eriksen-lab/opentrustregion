@@ -2259,7 +2259,7 @@ class PyIntegrationTests(unittest.TestCase):
                 "counter was not populated."
             )
             test_passed = False
-        if stability_state.min_eigval <= 0.0:
+        if not stability_state.min_eigval > 0.0:
             print(
                 " test_stability_check_py failed: State does not hold a positive "
                 "lowest eigenvalue for minimum."
@@ -2293,19 +2293,19 @@ class PyIntegrationTests(unittest.TestCase):
                 "stability of saddle point."
             )
             test_passed = False
-        if stability_state.min_eigval >= 0.0:
+        if not stability_state.min_eigval < 0.0:
             print(
                 " test_stability_check_py failed: State does not hold a negative "
                 "lowest eigenvalue for saddle point."
             )
             test_passed = False
-        if abs(np.linalg.norm(kappa) - 1.0) > 1e-6:
+        if not np.isclose(np.linalg.norm(kappa), 1.0, rtol=0.0, atol=1e-6):
             print(
                 " test_stability_check_py failed: Stability check does not return a "
                 "normalized direction for saddle point."
             )
             test_passed = False
-        if kappa @ H @ kappa >= 0.0:
+        if not kappa @ H @ kappa < 0.0:
             print(
                 " test_stability_check_py failed: Stability check does not return a "
                 "direction of negative curvature for saddle point."

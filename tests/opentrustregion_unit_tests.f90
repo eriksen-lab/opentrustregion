@@ -9,7 +9,8 @@ module opentrustregion_unit_tests
     use opentrustregion_core, only: rp, ip, stderr, solver_state_type, &
                                     stability_state_type
     use c_interface, only: c_rp, c_ip
-    use test_reference, only: tol, host_context_type
+    use test_reference, only: tol, is_close, is_below, is_at_most, is_above, &
+                              is_at_least, host_context_type
     use, intrinsic :: iso_c_binding, only: c_bool
 
     implicit none
@@ -2106,7 +2107,7 @@ contains
             check_reset_state_seen = .false.
         else if (context%seen_states(1)%micro_iteration /= micro_iteration .or. &
                  context%seen_states(1)%jacobi_davidson_iteration /= 0 .or. &
-                 abs(context%seen_states(1)%relative_residual - 1.0_rp) > tol) then
+                 .not. is_close(context%seen_states(1)%relative_residual, 1.0_rp)) then
             write(stderr, *) "test_"//test_name//" failed: State of an earlier "// &
                 "subproblem seen by the first call of the "//callback_name//"."
             check_reset_state_seen = .false.
@@ -2173,14 +2174,14 @@ contains
             test_solver = .false.
         end if
         call hartmann6d_gradient(context%vars, final_grad)
-        if (norm2(final_grad) / sqrt(real(n_param, kind=rp)) > &
-            default_settings%conv_tol) then
+        if (.not. is_below(norm2(final_grad) / sqrt(real(n_param, kind=rp)), &
+                           default_settings%conv_tol)) then
             write(stderr, *) "test_solver failed: Solver did not find stationary "// &
                 "point from saddle point."
             test_solver = .false.
         end if
-        if (any(abs(context%vars - minimum1) > var_thres) .and. &
-            any(abs(context%vars - minimum2) > var_thres)) then
+        if (.not. all(is_close(context%vars, minimum1, var_thres)) .and. &
+            .not. all(is_close(context%vars, minimum2, var_thres))) then
             write(stderr, *) "test_solver failed: Solver did not find minimum from "// &
                 "saddle point."
             test_solver = .false.
@@ -2269,7 +2270,8 @@ contains
                 "exceeding n_macro."
             test_solver = .false.
         end if
-        if (norm2(context%last_delta_vars) > settings%start_trust_radius + tol) then
+        if (.not. is_at_most(norm2(context%last_delta_vars), &
+                             settings%start_trust_radius + tol)) then
             write(stderr, *) "test_solver failed: First step exceeds start trust "// &
                 "radius."
             test_solver = .false.
@@ -2315,7 +2317,7 @@ contains
                 "step not taken once maximum precision is reached."
             test_solver = .false.
         end if
-        if (abs(state%step_size) > 0.0_rp) then
+        if (.not. is_at_most(abs(state%step_size), 0.0_rp)) then
             write(stderr, *) "test_solver failed: Step not taken once maximum "// &
                 "precision is reached has a size."
             test_solver = .false.
@@ -2389,7 +2391,7 @@ contains
                 "check passes."
             test_solver = .false.
         end if
-        if (any(abs(context%vars - near_minimum) > tol)) then
+        if (.not. all(is_close(context%vars, near_minimum))) then
             write(stderr, *) "test_solver failed: Solver did not stop when "// &
                 "convergence check passed."
             test_solver = .false.
@@ -2410,7 +2412,7 @@ contains
                 "check replaces gradient criterion."
             test_solver = .false.
         end if
-        if (any(abs(context%vars - minimum1) > var_thres)) then
+        if (.not. all(is_close(context%vars, minimum1, var_thres))) then
             write(stderr, *) "test_solver failed: Solver stopped by gradient "// &
                 "criterion which convergence check replaces."
             test_solver = .false.
@@ -2496,7 +2498,7 @@ contains
             write(stderr, *) "test_solver failed: Produced error without settings."
             test_solver = .false.
         end if
-        if (any(abs(settingless_context%vars - final_vars) > 0.0_rp) .or. &
+        if (.not. all(is_close(settingless_context%vars, final_vars, 0.0_rp)) .or. &
             state%n_update_orbs /= explicit_state%n_update_orbs .or. &
             state%n_obj_func /= explicit_state%n_obj_func .or. &
             state%n_hess_x /= explicit_state%n_hess_x .or. &
@@ -2584,7 +2586,7 @@ contains
                 "subproblem with gradient perturbation."
             test_solver = .false.
         end if
-        if (state%relative_residual <= settings%local_red_factor) then
+        if (.not. is_above(state%relative_residual, settings%local_red_factor)) then
             write(stderr, *) "test_solver failed: First subproblem with gradient "// &
                 "perturbation not solved for the global region."
             test_solver = .false.
@@ -2608,7 +2610,7 @@ contains
                 "perturbation before a second subproblem was solved."
             test_solver = .false.
         end if
-        if (state%relative_residual > settings%local_red_factor) then
+        if (.not. is_at_most(state%relative_residual, settings%local_red_factor)) then
             write(stderr, *) "test_solver failed: Subproblem with gradient "// &
                 "perturbation not solved for the local region of the previous one."
             test_solver = .false.
@@ -2634,12 +2636,13 @@ contains
                 "of macro iterations for line search."
             test_solver = .false.
         end if
-        if (any(abs(half_step_context%first_step + 2.0_rp * start_vars) > tol)) then
+        if (.not. all(is_close(half_step_context%first_step, -2.0_rp * start_vars))) &
+            then
             write(stderr, *) "test_solver failed: Step not scaled by multiplier of "// &
                 "line search."
             test_solver = .false.
         end if
-        if (abs(state%step_size - norm2(half_step_context%first_step)) > tol) then
+        if (.not. is_close(state%step_size, norm2(half_step_context%first_step))) then
             write(stderr, *) "test_solver failed: Step size in the state not "// &
                 "scaled by multiplier of line search."
             test_solver = .false.
@@ -2676,8 +2679,8 @@ contains
                     "record for "//trim(case_name)//"."
                 test_solver = .false.
             end if
-            if (abs(abs(state_context%vars(2)) - 1.0_rp / sqrt(2.0_rp)) > var_thres) &
-                then
+            if (.not. is_close(abs(state_context%vars(2)), 1.0_rp / sqrt(2.0_rp), &
+                               var_thres)) then
                 write(stderr, *) "test_solver failed: Did not continue from the "// &
                     "saddle point of the double well function to a minimum for "// &
                     trim(case_name)//"."
@@ -2690,11 +2693,11 @@ contains
             if (allocated(state_context%seen_states)) &
                 n_updates = size(state_context%seen_states)
             if (state%macro_iteration /= n_updates - 1 .or. &
-                abs(state%func - double_well_func(state_context%vars)) > tol .or. &
-                abs(state%grad_rms - norm2([ &
+                .not. is_close(state%func, double_well_func(state_context%vars)) .or. &
+                .not. is_close(state%grad_rms, norm2([ &
                     2.0_rp * state_context%vars(1), -2.0_rp * state_context%vars(2) + &
-                    4.0_rp * state_context%vars(2)**3]) / sqrt(2.0_rp)) > tol .or. &
-                state%trust_radius <= 0.0_rp) then
+                    4.0_rp * state_context%vars(2)**3]) / sqrt(2.0_rp)) .or. &
+                .not. is_above(state%trust_radius, 0.0_rp)) then
                 write(stderr, *) "test_solver failed: Returned state not that of "// &
                     "the converged point for "//trim(case_name)//"."
                 test_solver = .false.
@@ -2736,8 +2739,10 @@ contains
                     where (seen%micro_iteration > 0) step_norms = &
                     state_context%precond_step_norms
                 if (seen(1)%macro_iteration /= 0 .or. seen(1)%n_update_orbs /= 0 .or. &
-                    abs(seen(1)%trust_radius - settings%start_trust_radius) > tol .or. &
-                    seen(1)%micro_iteration /= 0 .or. abs(seen(1)%step_size) > tol) then
+                    .not. is_close(seen(1)%trust_radius, &
+                                   settings%start_trust_radius) .or. &
+                    seen(1)%micro_iteration /= 0 .or. &
+                    .not. is_close(seen(1)%step_size, 0.0_rp)) then
                     write(stderr, *) "test_solver failed: State wrong before the "// &
                         "starting point is evaluated for "//trim(case_name)//"."
                     test_solver = .false.
@@ -2750,20 +2755,21 @@ contains
                         "optimization for "//trim(case_name)//"."
                     test_solver = .false.
                 end if
-                if (any([(abs(seen(i_update)%step_size - step_norms(i_update)) > tol, &
-                          i_update=2, n_updates)])) then
+                if (.not. all([( &
+                    is_close(seen(i_update)%step_size, step_norms(i_update)), &
+                    i_update=2, n_updates)])) then
                     write(stderr, *) "test_solver failed: Step size in the state "// &
                         "wrong during the optimization for "//trim(case_name)//"."
                     test_solver = .false.
                 end if
                 if (settings%subsystem_solver == "tcg") then
-                    if (any([(abs(seen(i_update)%level_shift) > 0.0_rp, i_update=2, &
-                              n_updates)])) then
+                    if (.not. all([(is_at_most(abs(seen(i_update)%level_shift), &
+                                               0.0_rp), i_update=2, n_updates)])) then
                         write(stderr, *) "test_solver failed: Level shift in the "// &
                             "state does not vanish for "//trim(case_name)//"."
                         test_solver = .false.
                     end if
-                else if (seen(2)%level_shift <= 0.0_rp) then
+                else if (.not. is_above(seen(2)%level_shift, 0.0_rp)) then
                     write(stderr, *) "test_solver failed: Level shift of the step "// &
                         "the trust radius truncates not in the state for "// &
                         trim(case_name)//"."
@@ -2775,13 +2781,14 @@ contains
                         "negative zero in the state for "//trim(case_name)//"."
                     test_solver = .false.
                 end if
-                if (.not. any([(seen(i_update)%micro_iteration == 0 .and. &
-                                seen(i_update)%jacobi_davidson_iteration == 0 .and. &
-                                abs(seen(i_update)%level_shift) < tol .and. &
-                                abs(seen(i_update)%relative_residual) < tol .and. &
-                                seen(i_update)%step_size > 0.0_rp .and. &
-                                seen(i_update - 1)%micro_iteration > 0, i_update=3, &
-                                n_updates)])) then
+                if (.not. any([( &
+                    seen(i_update)%micro_iteration == 0 .and. &
+                    seen(i_update)%jacobi_davidson_iteration == 0 .and. &
+                    is_close(seen(i_update)%level_shift, 0.0_rp) .and. &
+                    is_close(seen(i_update)%relative_residual, 0.0_rp) .and. &
+                    is_above(seen(i_update)%step_size, 0.0_rp) .and. &
+                    seen(i_update - 1)%micro_iteration > 0, i_update=3, n_updates)])) &
+                    then
                     write(stderr, *) "test_solver failed: Step along the unstable "// &
                         "mode after steps of the subsystem solver not in the state "// &
                         "for "//trim(case_name)//"."
@@ -2826,8 +2833,8 @@ contains
                     "vanishing gradient "//trim(case_name)//"."
                 test_solver = .false.
             end if
-            if (abs(abs(double_well_context%vars(2)) - 1.0_rp / sqrt(2.0_rp)) > &
-                var_thres) then
+            if (.not. is_close(abs(double_well_context%vars(2)), &
+                               1.0_rp / sqrt(2.0_rp), var_thres)) then
                 write(stderr, *) "test_solver failed: Did not continue from the "// &
                     "saddle point of the double well function at an exactly "// &
                     "vanishing gradient to a minimum "//trim(case_name)//"."
@@ -3033,13 +3040,13 @@ contains
                     "incorrectly classified for "//trim(case_name)//"."
                 test_stability_check = .false.
             end if
-            if (abs(state%min_eigval - hess_eigvals(1)) > tol) then
+            if (.not. is_close(state%min_eigval, hess_eigvals(1))) then
                 write(stderr, *) "test_stability_check failed: Lowest eigenvalue "// &
                     "not held by the state for "//trim(case_name)//"."
                 test_stability_check = .false.
             end if
-            if (abs(abs(dot_product(direction, hess_eigvecs(:, 1))) - 1.0_rp) > tol) &
-                then
+            if (.not. is_close(abs(dot_product(direction, hess_eigvecs(:, 1))), &
+                               1.0_rp)) then
                 write(stderr, *) "test_stability_check failed: Eigenvector of the "// &
                     "lowest eigenvalue not returned for "//trim(case_name)//"."
                 test_stability_check = .false.
@@ -3049,7 +3056,7 @@ contains
                     "the state for "//trim(case_name)//"."
                 test_stability_check = .false.
             end if
-            if (state%residual_rms >= settings%conv_tol) then
+            if (.not. is_below(state%residual_rms, settings%conv_tol)) then
                 write(stderr, *) "test_stability_check failed: Converged residual "// &
                     "of the lowest eigenvalue not in the state for "// &
                     trim(case_name)//"."
@@ -3101,8 +3108,9 @@ contains
         end if
         if (.not. host_context_reached("stability_check", context)) &
             test_stability_check = .false.
-        if (abs(context%seen_residual_rms - state%residual_rms) > tol * &
-            state%residual_rms .or. state%residual_rms <= 0.0_rp) then
+        if (.not. is_close(context%seen_residual_rms, state%residual_rms, &
+                           tol * state%residual_rms) .or. &
+            .not. is_above(state%residual_rms, 0.0_rp)) then
             write(stderr, *) "test_stability_check failed: Convergence check did "// &
                 "not read the final state in the caller's record."
             test_stability_check = .false.
@@ -3170,7 +3178,8 @@ contains
                 "printed when exceeding n_iter."
             test_stability_check = .false.
         end if
-        if (state%iteration /= 1 .or. state%residual_rms < settings%conv_tol) then
+        if (state%iteration /= 1 .or. &
+            .not. is_at_least(state%residual_rms, settings%conv_tol)) then
             write(stderr, *) "test_stability_check failed: Iteration or "// &
                 "unconverged residual not in the state when exceeding n_iter."
             test_stability_check = .false.
@@ -3195,7 +3204,8 @@ contains
                 "space grows to dimension of full parameter space."
             test_stability_check = .false.
         end if
-        if (abs(abs(dot_product(direction, hess_eigvecs(:, 1))) - 1.0_rp) > tol) then
+        if (.not. is_close(abs(dot_product(direction, hess_eigvecs(:, 1))), 1.0_rp)) &
+            then
             write(stderr, *) "test_stability_check failed: Stability check does "// &
                 "not return correct direction for saddle point when reduced space "// &
                 "grows to dimension of full parameter space."
@@ -3255,8 +3265,9 @@ contains
         end if
         if (state%n_hess_x /= explicit_state%n_hess_x .or. &
             state%iteration /= explicit_state%iteration .or. &
-            abs(state%min_eigval - explicit_state%min_eigval) > 0.0_rp .or. &
-            abs(state%residual_rms - explicit_state%residual_rms) > 0.0_rp) then
+            .not. is_close(state%min_eigval, explicit_state%min_eigval, 0.0_rp) .or. &
+            .not. is_close(state%residual_rms, explicit_state%residual_rms, 0.0_rp)) &
+            then
             write(stderr, *) "test_stability_check failed: Did not use the default "// &
                 "settings without settings."
             test_stability_check = .false.
@@ -3314,9 +3325,10 @@ contains
                 "non-symmetric Hessian."
             test_stability_check = .false.
         end if
-        if (abs(state%min_eigval - minval(h_diag)) > 0.5_rp .or. &
-            norm2(matmul(context%hess, direction) - state%min_eigval * direction) / &
-            sqrt(real(n_param, kind=rp)) >= settings%conv_tol) then
+        if (.not. is_close(state%min_eigval, minval(h_diag), 0.5_rp) .or. &
+            .not. is_below(norm2(matmul(context%hess, direction) - state%min_eigval * &
+                                 direction) / sqrt(real(n_param, kind=rp)), &
+                           settings%conv_tol)) then
             write(stderr, *) "test_stability_check failed: Lowest eigenpair of "// &
                 "non-symmetric Hessian not returned."
             test_stability_check = .false.
@@ -3478,12 +3490,13 @@ contains
                 "found to be unstable."
             test_check_stationary_point = .false.
         end if
-        if (abs(kappa(1)) > tol .or. abs(kappa(2)) < tol) then
+        if (.not. is_close(kappa(1), 0.0_rp) .or. &
+            .not. is_at_least(abs(kappa(2)), tol)) then
             write(stderr, *) "test_check_stationary_point failed: Step not along "// &
                 "unstable mode."
             test_check_stationary_point = .false.
         end if
-        if (abs(kappa_norm - norm2(kappa)) > tol) then
+        if (.not. is_close(kappa_norm, norm2(kappa))) then
             write(stderr, *) "test_check_stationary_point failed: Norm of step "// &
                 "along unstable mode not returned."
             test_check_stationary_point = .false.
@@ -3492,15 +3505,15 @@ contains
         ! the step along the unstable mode, whose eigenvalue -2 the stability check
         ! leaves in its state, has to raise the RMS of the linearized gradient from the
         ! given converged one to ten times the convergence threshold, pointing against
-        ! the gradient, comparing such that a NaN fails
-        if (.not. abs(norm2(grad - 2.0_rp * kappa) / sqrt(2.0_rp) - &
-                      10.0_rp * settings%conv_tol) <= tol) then
+        ! the gradient
+        if (.not. is_close(norm2(grad - 2.0_rp * kappa) / sqrt(2.0_rp), &
+                           10.0_rp * settings%conv_tol)) then
             write(stderr, *) "test_check_stationary_point failed: Step along "// &
                 "unstable mode does not raise the linearized gradient RMS to ten "// &
                 "times the convergence threshold."
             test_check_stationary_point = .false.
         end if
-        if (.not. dot_product(grad, kappa) < 0.0_rp) then
+        if (.not. is_below(dot_product(grad, kappa), 0.0_rp)) then
             write(stderr, *) "test_check_stationary_point failed: Step along "// &
                 "unstable mode does not point against the gradient."
             test_check_stationary_point = .false.
@@ -3577,7 +3590,7 @@ contains
                 "at saddle point without gradient perturbation."
             test_check_stationary_point = .false.
         end if
-        if (abs(kappa_norm - state%trust_radius) > tol) then
+        if (.not. is_close(kappa_norm, state%trust_radius)) then
             write(stderr, *) "test_check_stationary_point failed: Step along "// &
                 "unstable mode does not reach trust radius of the state at "// &
                 "vanishing gradient and convergence threshold."
@@ -3630,7 +3643,6 @@ contains
         ! this function tests the saddle-point step subroutine
         !
         use opentrustregion_core, only: solver_settings_type, saddle_point_step
-        use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
 
         ! cases with a gradient RMS below and well above the convergence threshold and
         ! a direction of negative curvature orthogonal to the gradient or overlapping
@@ -3696,18 +3708,17 @@ contains
             ! targeted gradient RMS
             predicted_grad_rms = norm2(grad + min_eigval * kappa) / &
                                  sqrt(real(n_param, kind=rp))
-            if (ieee_is_nan(predicted_grad_rms) .or. &
-                .not. abs(predicted_grad_rms - target_grad_rms) <= tol) then
+            if (.not. is_close(predicted_grad_rms, target_grad_rms)) then
                 write(stderr, *) "test_saddle_point_step failed: Step does not "// &
                     "reach targeted gradient RMS "//trim(case_names(i))//"."
                 test_saddle_point_step = .false.
             end if
-            if (.not. abs(kappa_norm - norm2(kappa)) <= tol) then
+            if (.not. is_close(kappa_norm, norm2(kappa))) then
                 write(stderr, *) "test_saddle_point_step failed: Returned norm "// &
                     "does not match step "//trim(case_names(i))//"."
                 test_saddle_point_step = .false.
             end if
-            if (i > 2 .and. dot_product(grad, kappa) >= 0.0_rp) then
+            if (i > 2 .and. .not. is_below(dot_product(grad, kappa), 0.0_rp)) then
                 write(stderr, *) "test_saddle_point_step failed: Step does not "// &
                     "point against the gradient "//trim(case_names(i))//"."
                 test_saddle_point_step = .false.
@@ -3722,8 +3733,8 @@ contains
         kappa = kappa_dir
         call saddle_point_step(grad, 0.0_rp, min_eigval, trust_radius, settings, &
                                kappa, kappa_norm)
-        if (.not. norm2(kappa - trust_radius * kappa_dir) <= tol .or. &
-            .not. abs(kappa_norm - trust_radius) <= tol) then
+        if (.not. is_at_most(norm2(kappa - trust_radius * kappa_dir), tol) .or. &
+            .not. is_close(kappa_norm, trust_radius)) then
             write(stderr, *) "test_saddle_point_step failed: Step does not reach "// &
                 "trust radius at vanishing gradient and convergence threshold."
             test_saddle_point_step = .false.
@@ -3741,12 +3752,12 @@ contains
         trust_radius = 1e-5_rp
         call saddle_point_step(grad, grad_rms, min_eigval, trust_radius, settings, &
                                kappa, kappa_norm)
-        if (.not. abs(norm2(kappa) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(kappa), trust_radius)) then
             write(stderr, *) "test_saddle_point_step failed: Step not limited to "// &
                 "the trust radius."
             test_saddle_point_step = .false.
         end if
-        if (.not. dot_product(grad, kappa) < 0.0_rp) then
+        if (.not. is_below(dot_product(grad, kappa), 0.0_rp)) then
             write(stderr, *) "test_saddle_point_step failed: Step limited to the "// &
                 "trust radius does not point against the gradient."
             test_saddle_point_step = .false.
@@ -3808,15 +3819,15 @@ contains
             end if
             call newton_step(grad_norm, red_space_basis, eigvals, right_eigvecs, &
                              left_eigvecs, solution, red_space_solution)
-            if (.not. norm2(matmul(red_space_basis, matmul( &
-                red_space_hess, red_space_solution)) + grad) <= tol) then
+            if (.not. is_at_most(norm2(matmul(red_space_basis, matmul( &
+                red_space_hess, red_space_solution)) + grad), tol)) then
                 write(stderr, *) "test_newton_step failed: Newton step does not "// &
                     "satisfy Newton equation for "//trim(case_names(i_case))// &
                     " Hessian."
                 test_newton_step = .false.
             end if
-            if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > &
-                    tol)) then
+            if (.not. all(is_close(solution, &
+                                   matmul(red_space_basis, red_space_solution)))) then
                 write(stderr, *) "test_newton_step failed: Full space solution not "// &
                     "correct for "//trim(case_names(i_case))//" Hessian."
                 test_newton_step = .false.
@@ -3868,25 +3879,25 @@ contains
             write(stderr, *) "test_bisection_ah failed: Produced error."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_ah failed: Solution does not respect "// &
                 "trust radius."
             test_bisection_ah = .false.
         end if
-        if (.not. norm2( &
-            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
-                   red_space_solution) + grad) <= tol) then
+        if (.not. is_at_most( &
+            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad), tol)) then
             write(stderr, *) "test_bisection_ah failed: Step does not satisfy "// &
                 "level-shifted Newton equation."
             test_bisection_ah = .false.
         end if
-        if (.not. all( &
-            abs(solution - matmul(red_space_basis, red_space_solution)) <= tol)) then
+        if (.not. all(is_close(solution, &
+                               matmul(red_space_basis, red_space_solution)))) then
             write(stderr, *) "test_bisection_ah failed: Full space solution not "// &
                 "correct for symmetric Hessian."
             test_bisection_ah = .false.
         end if
-        if (mu >= minval(red_space_hess_eigvals)) then
+        if (.not. is_below(mu, minval(red_space_hess_eigvals))) then
             write(stderr, *) "test_bisection_ah failed: Level shift not below "// &
                 "lowest reduced space Hessian eigenvalue."
             test_bisection_ah = .false.
@@ -3925,19 +3936,19 @@ contains
                 "has to be increased."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_ah failed: Solution does not respect "// &
                 "trust radius when alpha has to be increased."
             test_bisection_ah = .false.
         end if
-        if (.not. norm2( &
-            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
-                   red_space_solution) + grad) <= tol) then
+        if (.not. is_at_most( &
+            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad), tol)) then
             write(stderr, *) "test_bisection_ah failed: Step does not satisfy "// &
                 "level-shifted Newton equation when alpha has to be increased."
             test_bisection_ah = .false.
         end if
-        if (mu >= minval(red_space_hess_eigvals)) then
+        if (.not. is_below(mu, minval(red_space_hess_eigvals))) then
             write(stderr, *) "test_bisection_ah failed: Level shift not below "// &
                 "lowest reduced space Hessian eigenvalue when alpha has to be "// &
                 "increased."
@@ -3986,7 +3997,7 @@ contains
                 "falling back to Newton step."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(mu) <= tol) then
+        if (.not. is_close(mu, 0.0_rp)) then
             write(stderr, *) "test_bisection_ah failed: Level shift not zero for "// &
                 "Newton step fallback."
             test_bisection_ah = .false.
@@ -3995,12 +4006,12 @@ contains
             red_space_hess_right_eigvecs, &
             red_space_hess_left_eigvecs(1, :) / red_space_hess_eigvals)
         newton_solution = matmul(red_space_basis, newton_red_space_solution)
-        if (.not. all(abs(red_space_solution - newton_red_space_solution) <= tol)) then
+        if (.not. all(is_close(red_space_solution, newton_red_space_solution))) then
             write(stderr, *) "test_bisection_ah failed: Newton step fallback "// &
                 "reduced space solution not correct."
             test_bisection_ah = .false.
         end if
-        if (.not. all(abs(solution - newton_solution) <= tol)) then
+        if (.not. all(is_close(solution, newton_solution))) then
             write(stderr, *) "test_bisection_ah failed: Newton step fallback full "// &
                 "space solution not correct."
             test_bisection_ah = .false.
@@ -4026,27 +4037,27 @@ contains
             write(stderr, *) "test_bisection_ah failed: Produced error for hard case."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution does "// &
                 "not respect trust radius."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(mu - minval(red_space_hess_eigvals)) <= tol) then
+        if (.not. is_close(mu, minval(red_space_hess_eigvals))) then
             write(stderr, *) "test_bisection_ah failed: Hard case level shift not "// &
                 "equal to lowest reduced space Hessian eigenvalue."
             test_bisection_ah = .false.
         end if
         grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals) - &
                                               maxval(red_space_hess_eigvals))
-        if (.not. all(abs(red_space_solution - [ &
+        if (.not. all(is_close(red_space_solution, [ &
             grad_coupled_component, sqrt(trust_radius**2 - grad_coupled_component**2), &
-            0.0_rp]) <= tol)) then
+            0.0_rp]))) then
             write(stderr, *) "test_bisection_ah failed: Hard case reduced space "// &
                 "solution not correct."
             test_bisection_ah = .false.
         end if
-        if (.not. all( &
-            abs(solution - matmul(red_space_basis, red_space_solution)) <= tol)) then
+        if (.not. all(is_close(solution, &
+                               matmul(red_space_basis, red_space_solution)))) then
             write(stderr, *) "test_bisection_ah failed: Hard case full space "// &
                 "solution not correct."
             test_bisection_ah = .false.
@@ -4070,27 +4081,27 @@ contains
                 "case with crossover step outside trust region."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
                 "crossover step outside trust region does not respect trust radius."
             test_bisection_ah = .false.
         end if
-        if (.not. norm2( &
-            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
-                   red_space_solution) + grad) <= tol) then
+        if (.not. is_at_most( &
+            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad), tol)) then
             write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
                 "crossover step outside trust region does not satisfy "// &
                 "level-shifted Newton equation."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(mu + 5.0_rp) <= tol) then
+        if (.not. is_close(mu, -5.0_rp)) then
             write(stderr, *) "test_bisection_ah failed: Hard case level shift with "// &
                 "crossover step outside trust region not that of the step along "// &
                 "gradient direction."
             test_bisection_ah = .false.
         end if
-        if (.not. all( &
-            abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) <= tol)) then
+        if (.not. all(is_close(red_space_solution, [-trust_radius, 0.0_rp, 0.0_rp]))) &
+            then
             write(stderr, *) "test_bisection_ah failed: Hard case solution with "// &
                 "crossover step outside trust region not along gradient direction."
             test_bisection_ah = .false.
@@ -4122,31 +4133,31 @@ contains
                 "solution contains NaN."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case "// &
                 "solution does not respect trust radius."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(mu - minval(red_space_hess_eigvals)) <= tol) then
+        if (.not. is_close(mu, minval(red_space_hess_eigvals))) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case level "// &
                 "shift not equal to lowest reduced space Hessian eigenvalue."
             test_bisection_ah = .false.
         end if
         grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals) - &
                                               maxval(red_space_hess_eigvals))
-        if (.not. abs(red_space_solution(1) - grad_coupled_component) <= tol) then
+        if (.not. is_close(red_space_solution(1), grad_coupled_component)) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case "// &
                 "component along non-degenerate eigenvector not correct."
             test_bisection_ah = .false.
         end if
-        if (.not. abs(norm2(red_space_solution(2:3)) - &
-                      sqrt(trust_radius**2 - grad_coupled_component**2)) <= tol) then
+        if (.not. is_close(norm2(red_space_solution(2:3)), &
+                           sqrt(trust_radius**2 - grad_coupled_component**2))) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case fill "// &
                 "magnitude within degenerate eigenspace not correct."
             test_bisection_ah = .false.
         end if
-        if (.not. all( &
-            abs(solution - matmul(red_space_basis, red_space_solution)) <= tol)) then
+        if (.not. all(is_close(solution, &
+                               matmul(red_space_basis, red_space_solution)))) then
             write(stderr, *) "test_bisection_ah failed: Degenerate hard case full "// &
                 "space solution not correct."
             test_bisection_ah = .false.
@@ -4215,28 +4226,29 @@ contains
                     trim(case_names(i_case))//" Hessian."
                 test_bisection_mu = .false.
             end if
-            if ((positive_definite .and. norm2(solution) > trust_radius) .or. &
+            if ((positive_definite .and. &
+                 .not. is_at_most(norm2(solution), trust_radius)) .or. &
                 (.not. positive_definite .and. &
-                 .not. abs(norm2(solution) - trust_radius) <= tol)) then
+                 .not. is_close(norm2(solution), trust_radius))) then
                 write(stderr, *) "test_bisection_mu failed: Solution does not "// &
                     "respect trust radius for "//trim(case_names(i_case))//" Hessian."
                 test_bisection_mu = .false.
             end if
-            if (positive_definite .and. .not. abs(mu) <= tol) then
+            if (positive_definite .and. .not. is_close(mu, 0.0_rp)) then
                 write(stderr, *) "test_bisection_mu failed: Level shift does not "// &
                     "vanish for "//trim(case_names(i_case))//" Hessian."
                 test_bisection_mu = .false.
             end if
-            if (.not. norm2( &
+            if (.not. is_at_most(norm2( &
                 matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
-                       mu * red_space_solution) + grad) <= tol) then
+                       mu * red_space_solution) + grad), tol)) then
                 write(stderr, *) "test_bisection_mu failed: Step does not satisfy "// &
                     "level-shifted Newton equation for "//trim(case_names(i_case))// &
                     " Hessian."
                 test_bisection_mu = .false.
             end if
-            if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > &
-                    tol)) then
+            if (.not. all(is_close(solution, &
+                                   matmul(red_space_basis, red_space_solution)))) then
                 write(stderr, *) "test_bisection_mu failed: Full space solution "// &
                     "not correct for "//trim(case_names(i_case))//" Hessian."
                 test_bisection_mu = .false.
@@ -4274,13 +4286,13 @@ contains
                     "hard case with "//trim(hard_case_names(i_case))//"."
                 test_bisection_mu = .false.
             end if
-            if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+            if (.not. is_close(norm2(solution), trust_radius)) then
                 write(stderr, *) "test_bisection_mu failed: Hard case solution "// &
                     "does not respect trust radius for "// &
                     trim(hard_case_names(i_case))//"."
                 test_bisection_mu = .false.
             end if
-            if (.not. abs(mu - minval(red_space_hess_eigvals%re)) <= tol) then
+            if (.not. is_close(mu, minval(red_space_hess_eigvals%re))) then
                 write(stderr, *) "test_bisection_mu failed: Hard case level shift "// &
                     "not equal to lowest reduced space Hessian eigenvalue for "// &
                     trim(hard_case_names(i_case))//"."
@@ -4302,15 +4314,15 @@ contains
                     sqrt(trust_radius**2 - grad_norm**2 / 98.0_rp) * &
                     [1.0_rp, 1.0_rp, 0.0_rp] / sqrt(2.0_rp)
             end if
-            if (.not. all( &
-                abs(red_space_solution - expected_red_space_solution) <= tol)) then
+            if (.not. all(is_close(red_space_solution, expected_red_space_solution))) &
+                then
                 write(stderr, *) "test_bisection_mu failed: Hard case reduced "// &
                     "space solution not correct for "//trim(hard_case_names(i_case))// &
                     "."
                 test_bisection_mu = .false.
             end if
-            if (any(abs(solution - matmul(red_space_basis, red_space_solution)) > &
-                    tol)) then
+            if (.not. all(is_close(solution, &
+                                   matmul(red_space_basis, red_space_solution)))) then
                 write(stderr, *) "test_bisection_mu failed: Hard case full space "// &
                     "solution not correct for "//trim(hard_case_names(i_case))//"."
                 test_bisection_mu = .false.
@@ -4337,28 +4349,28 @@ contains
                 "case with step at lowest eigenvalue outside trust region."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
                 "step at lowest eigenvalue outside trust region does not respect "// &
                 "trust radius."
             test_bisection_mu = .false.
         end if
-        if (.not. norm2( &
-            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
-                   red_space_solution) + grad) <= tol) then
+        if (.not. is_at_most( &
+            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad), tol)) then
             write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
                 "step at lowest eigenvalue outside trust region does not satisfy "// &
                 "level-shifted Newton equation."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(mu + 5.0_rp) <= tol) then
+        if (.not. is_close(mu, -5.0_rp)) then
             write(stderr, *) "test_bisection_mu failed: Hard case level shift with "// &
                 "step at lowest eigenvalue outside trust region not that of the "// &
                 "step along gradient direction."
             test_bisection_mu = .false.
         end if
-        if (.not. all( &
-            abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) <= tol)) then
+        if (.not. all(is_close(red_space_solution, [-trust_radius, 0.0_rp, 0.0_rp]))) &
+            then
             write(stderr, *) "test_bisection_mu failed: Hard case solution with "// &
                 "step at lowest eigenvalue outside trust region not along gradient "// &
                 "direction."
@@ -4387,19 +4399,20 @@ contains
                 "eigenvector nearly orthogonal to gradient direction."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_mu failed: Solution does not respect "// &
                 "trust radius for lowest eigenvector nearly orthogonal to gradient "// &
                 "direction."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(mu + 2.0_rp) <= tol) then
+        if (.not. is_close(mu, -2.0_rp)) then
             write(stderr, *) "test_bisection_mu failed: Level shift not equal to "// &
                 "lowest eigenvalue for lowest eigenvector nearly orthogonal to "// &
                 "gradient direction."
             test_bisection_mu = .false.
         end if
-        if (dot_product(red_space_solution, rotation(:, 2)) >= 0.0_rp) then
+        if (.not. is_below(dot_product(red_space_solution, rotation(:, 2)), 0.0_rp)) &
+            then
             write(stderr, *) "test_bisection_mu failed: Step not against gradient "// &
                 "along lowest eigenvector nearly orthogonal to gradient direction."
             test_bisection_mu = .false.
@@ -4429,31 +4442,31 @@ contains
                 "solution contains NaN."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case "// &
                 "solution does not respect trust radius."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(mu - minval(red_space_hess_eigvals%re)) <= tol) then
+        if (.not. is_close(mu, minval(red_space_hess_eigvals%re))) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case level "// &
                 "shift not equal to lowest reduced space Hessian eigenvalue."
             test_bisection_mu = .false.
         end if
         grad_coupled_component = grad_norm / (minval(red_space_hess_eigvals%re) - &
                                               maxval(red_space_hess_eigvals%re))
-        if (.not. abs(red_space_solution(1) - grad_coupled_component) <= tol) then
+        if (.not. is_close(red_space_solution(1), grad_coupled_component)) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case "// &
                 "component along non-degenerate eigenvector not correct."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(norm2(red_space_solution(2:3)) - &
-                      sqrt(trust_radius**2 - grad_coupled_component**2)) <= tol) then
+        if (.not. is_close(norm2(red_space_solution(2:3)), &
+                           sqrt(trust_radius**2 - grad_coupled_component**2))) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case fill "// &
                 "magnitude within degenerate eigenspace not correct."
             test_bisection_mu = .false.
         end if
-        if (.not. all( &
-            abs(solution - matmul(red_space_basis, red_space_solution)) <= tol)) then
+        if (.not. all(is_close(solution, &
+                               matmul(red_space_basis, red_space_solution)))) then
             write(stderr, *) "test_bisection_mu failed: Degenerate hard case full "// &
                 "space solution not correct."
             test_bisection_mu = .false.
@@ -4483,13 +4496,14 @@ contains
                     "Newton step "//trim(newton_case_names(i_case))//"."
                 test_bisection_mu = .false.
             end if
-            if (.not. abs(mu) <= tol) then
+            if (.not. is_close(mu, 0.0_rp)) then
                 write(stderr, *) "test_bisection_mu failed: Level shift does not "// &
                     "vanish for Newton step "//trim(newton_case_names(i_case))//"."
                 test_bisection_mu = .false.
             end if
-            if (any(abs(red_space_solution - [-trust_radius, 0.0_rp, 0.0_rp]) > &
-                    tol * trust_radius)) then
+            if (.not. all(is_close(red_space_solution, &
+                                   [-trust_radius, 0.0_rp, 0.0_rp], &
+                                   tol * trust_radius))) then
                 write(stderr, *) "test_bisection_mu failed: Newton step "// &
                     trim(newton_case_names(i_case))//" not taken."
                 test_bisection_mu = .false.
@@ -4515,19 +4529,19 @@ contains
                 "vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(norm2(solution) - trust_radius) <= tol) then
+        if (.not. is_close(norm2(solution), trust_radius)) then
             write(stderr, *) "test_bisection_mu failed: Solution does not respect "// &
                 "trust radius for vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
-        if (.not. norm2( &
-            matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - mu * &
-                   red_space_solution) + grad) <= tol) then
+        if (.not. is_at_most( &
+            norm2(matmul(red_space_basis, matmul(red_space_hess, red_space_solution) - &
+                         mu * red_space_solution) + grad), tol)) then
             write(stderr, *) "test_bisection_mu failed: Step does not satisfy "// &
                 "level-shifted Newton equation for vanishing lowest eigenvalue."
             test_bisection_mu = .false.
         end if
-        if (mu >= 0.0_rp) then
+        if (.not. is_below(mu, 0.0_rp)) then
             write(stderr, *) "test_bisection_mu failed: Level shift not negative "// &
                 "for vanishing lowest eigenvalue."
             test_bisection_mu = .false.
@@ -4553,12 +4567,12 @@ contains
                 "lowest eigenvalues."
             test_bisection_mu = .false.
         end if
-        if (.not. abs(mu + 2.0_rp) <= tol) then
+        if (.not. is_close(mu, -2.0_rp)) then
             write(stderr, *) "test_bisection_mu failed: Level shift not the real "// &
                 "part of complex lowest eigenvalues."
             test_bisection_mu = .false.
         end if
-        if (norm2(solution) >= trust_radius) then
+        if (.not. is_below(norm2(solution), trust_radius - tol)) then
             write(stderr, *) "test_bisection_mu failed: Trust radius filled for "// &
                 "complex lowest eigenvalues."
             test_bisection_mu = .false.
@@ -4667,7 +4681,7 @@ contains
                         "function "//trim(case_names(i))//"."
                     test_bracket = .false.
                 end if
-                if (abs(n - expected_n(i)) > tol * abs(expected_n(i))) then
+                if (.not. is_close(n, expected_n(i), tol * abs(expected_n(i)))) then
                     write(stderr, *) "test_bracket failed: Returned multiplier not "// &
                         "correct for the function "//trim(case_names(i))//"."
                     test_bracket = .false.
@@ -4683,7 +4697,7 @@ contains
             write(stderr, *) "test_bracket failed: Produced error for swapped bounds."
             test_bracket = .false.
         end if
-        if (abs(n - expected_n(1)) > tol * abs(expected_n(1))) then
+        if (.not. is_close(n, expected_n(1), tol * abs(expected_n(1)))) then
             write(stderr, *) "test_bracket failed: Returned multiplier not correct "// &
                 "for swapped bounds."
             test_bracket = .false.
@@ -4776,7 +4790,7 @@ contains
             test_extend_matrix = .false.
             return
         end if
-        if (norm2(matrix - expected) > tol) then
+        if (.not. is_at_most(norm2(matrix - expected), tol)) then
             write(stderr, *) "test_extend_matrix failed: Incorrect matrix values "// &
                 "after extending."
             test_extend_matrix = .false.
@@ -4813,8 +4827,8 @@ contains
             test_add_column = .false.
             return
         end if
-        if (any(abs(matrix(:, :2) - initial_matrix) > tol) .or. &
-            any(abs(matrix(:, 3) - new_col) > tol)) then
+        if (.not. all(is_close(matrix(:, :2), initial_matrix)) .or. &
+            .not. all(is_close(matrix(:, 3), new_col))) then
             write(stderr, *) "test_add_column failed: Incorrect matrix values "// &
                 "after adding column."
             test_add_column = .false.
@@ -4858,15 +4872,15 @@ contains
                 "matrix."
             test_mat_diag = .false.
         end if
-        if (any(abs(eigvals%re - ref_eigvals) > tol) .or. &
-            any(abs(eigvals%im) > 0.0_rp)) then
+        if (.not. all(is_close(eigvals%re, ref_eigvals)) .or. &
+            .not. all(is_at_most(abs(eigvals%im), 0.0_rp))) then
             write(stderr, *) "test_mat_diag failed: Incorrect eigenvalues for "// &
                 "symmetric matrix."
             test_mat_diag = .false.
         end if
-        if (norm2(matmul(matrix, right_eigvecs) - &
-                  right_eigvecs * spread(eigvals%re, 1, n_param)) > tol .or. &
-            norm2(left_eigvecs - right_eigvecs) > 0.0_rp) then
+        if (.not. is_at_most(norm2(matmul(matrix, right_eigvecs) - right_eigvecs * &
+                                   spread(eigvals%re, 1, n_param)), tol) .or. &
+            .not. all(is_close(left_eigvecs, right_eigvecs, 0.0_rp))) then
             write(stderr, *) "test_mat_diag failed: Incorrect eigenvectors for "// &
                 "symmetric matrix."
             test_mat_diag = .false.
@@ -4884,15 +4898,15 @@ contains
             test_mat_diag = .false.
         end if
         do i = 1, n_param
-            if (minval(abs(eigvals%re - matrix(i, i))) > tol) then
+            if (.not. any(is_close(eigvals%re, matrix(i, i)))) then
                 write(stderr, *) "test_mat_diag failed: Incorrect eigenvalues for "// &
                     "general matrix."
                 test_mat_diag = .false.
                 exit
             end if
         end do
-        if (norm2(matmul(matrix, right_eigvecs) - &
-                  right_eigvecs * spread(eigvals%re, 1, n_param)) > tol) then
+        if (.not. is_at_most(norm2(matmul(matrix, right_eigvecs) - right_eigvecs * &
+                                   spread(eigvals%re, 1, n_param)), tol)) then
             write(stderr, *) "test_mat_diag failed: Incorrect right eigenvectors "// &
                 "for general matrix."
             test_mat_diag = .false.
@@ -4929,14 +4943,14 @@ contains
             write(stderr, *) "test_symm_mat_diag failed: Produced error."
             test_symm_mat_diag = .false.
         end if
-        if (norm2(matmul(matrix, eigvecs) - eigvecs * &
-                  spread(eigvals, dim=1, ncopies=size(eigvecs, 1))) > tol) then
+        if (.not. is_at_most(norm2(matmul(matrix, eigvecs) - eigvecs * spread( &
+            eigvals, dim=1, ncopies=size(eigvecs, 1))), tol)) then
             write(stderr, *) "test_symm_mat_diag failed: Incorrect eigenvectors "// &
                 "and eigenvalues for matrix."
             test_symm_mat_diag = .false.
         end if
-        if (norm2(matmul(transpose(eigvecs), eigvecs) - identity_matrix(n_param)) > &
-            tol) then
+        if (.not. is_at_most(norm2(matmul(transpose(eigvecs), eigvecs) - &
+                                   identity_matrix(n_param)), tol)) then
             write(stderr, *) "test_symm_mat_diag failed: Eigenvectors are not "// &
                 "orthonormal."
             test_symm_mat_diag = .false.
@@ -4985,26 +4999,26 @@ contains
         eigval_diag = 0.0_rp
         do i = 1, n_param
             eigval_diag(i, i) = eigvals(i)%re
-            if (minval(abs(eigvals%re - matrix(i, i))) > tol) then
+            if (.not. any(is_close(eigvals%re, matrix(i, i)))) then
                 write(stderr, *) "test_general_mat_diag failed: Diagonal element "// &
                     "of triangular matrix not among the eigenvalues."
                 test_general_mat_diag = .false.
             end if
         end do
-        if (norm2(matmul(transpose(left_eigvecs), right_eigvecs) - &
-                  identity_matrix(n_param)) > tol) then
+        if (.not. is_at_most(norm2(matmul(transpose(left_eigvecs), right_eigvecs) - &
+                                   identity_matrix(n_param)), tol)) then
             write(stderr, *) "test_general_mat_diag failed: Left and right "// &
                 "eigenvectors are not biorthonormal."
             test_general_mat_diag = .false.
         end if
-        if (norm2(matmul(matrix, right_eigvecs) - &
-                  matmul(right_eigvecs, eigval_diag)) > tol) then
+        if (.not. is_at_most(norm2(matmul(matrix, right_eigvecs) - &
+                                   matmul(right_eigvecs, eigval_diag)), tol)) then
             write(stderr, *) "test_general_mat_diag failed: Incorrect right "// &
                 "eigenvectors or eigenvalues for matrix."
             test_general_mat_diag = .false.
         end if
-        if (norm2(matmul(transpose(left_eigvecs), matrix) - &
-                  matmul(eigval_diag, transpose(left_eigvecs))) > tol) then
+        if (.not. is_at_most(norm2(matmul(transpose(left_eigvecs), matrix) - matmul( &
+            eigval_diag, transpose(left_eigvecs))), tol)) then
             write(stderr, *) "test_general_mat_diag failed: Incorrect left "// &
                 "eigenvectors or eigenvalues for matrix."
             test_general_mat_diag = .false.
@@ -5027,9 +5041,9 @@ contains
                 "complex eigenvalues."
             test_general_mat_diag = .false.
         end if
-        if (any(abs(rotation_eigvals%re - 0.6_rp) > tol) .or. &
-            any(abs(abs(rotation_eigvals%im) - 0.8_rp) > tol) .or. &
-            abs(sum(rotation_eigvals%im)) > tol) then
+        if (.not. all(is_close(rotation_eigvals%re, 0.6_rp)) .or. &
+            .not. all(is_close(abs(rotation_eigvals%im), 0.8_rp)) .or. &
+            .not. is_close(sum(rotation_eigvals%im), 0.0_rp)) then
             write(stderr, *) "test_general_mat_diag failed: Incorrect complex "// &
                 "eigenvalues."
             test_general_mat_diag = .false.
@@ -5037,24 +5051,25 @@ contains
 
         ! determine whether the complex left and right eigenvectors of the first
         ! eigenvalue, whose real and imaginary parts are stored in consecutive columns,
-        ! are eigenvectors and biorthonormal, comparing such that a NaN fails
+        ! are eigenvectors and biorthonormal
         right_eigvec = cmplx(rotation_right_eigvecs(:, 1), &
                              rotation_right_eigvecs(:, 2), kind=rp)
         left_eigvec = cmplx(rotation_left_eigvecs(:, 1), rotation_left_eigvecs(:, 2), &
                             kind=rp)
-        if (.not. abs(dot_product(left_eigvec, right_eigvec) - 1.0_rp) <= tol) then
+        if (.not. is_close(dot_product(left_eigvec, right_eigvec), (1.0_rp, 0.0_rp))) &
+            then
             write(stderr, *) "test_general_mat_diag failed: Left and right "// &
                 "eigenvectors of complex eigenvalue are not biorthonormal."
             test_general_mat_diag = .false.
         end if
-        if (.not. all(abs(matmul(rotation, right_eigvec) - &
-                          rotation_eigvals(1) * right_eigvec) <= tol)) then
+        if (.not. all(is_close(matmul(rotation, right_eigvec), &
+                               rotation_eigvals(1) * right_eigvec))) then
             write(stderr, *) "test_general_mat_diag failed: Incorrect right "// &
                 "eigenvector for complex eigenvalue."
             test_general_mat_diag = .false.
         end if
-        if (.not. all(abs(matmul(conjg(left_eigvec), rotation) - &
-                          rotation_eigvals(1) * conjg(left_eigvec)) <= tol)) then
+        if (.not. all(is_close(matmul(conjg(left_eigvec), rotation), &
+                               rotation_eigvals(1) * conjg(left_eigvec)))) then
             write(stderr, *) "test_general_mat_diag failed: Incorrect left "// &
                 "eigenvector for complex eigenvalue."
             test_general_mat_diag = .false.
@@ -5133,20 +5148,21 @@ contains
                     " matrix."
                 test_mat_min_eig = .false.
             end if
-            if (abs(eigval - ref_min_eigval) > tol) then
+            if (.not. is_close(eigval, ref_min_eigval)) then
                 write(stderr, *) "test_mat_min_eig failed: Incorrect minimum "// &
                     "eigenvalue for "//trim(merge("symmetric    ", "non-symmetric", &
                                                   i_case == 1))//" matrix."
                 test_mat_min_eig = .false.
             end if
-            if (norm2(matmul(matrix, eigvec) - eigval * eigvec) > tol) then
+            if (.not. is_at_most(norm2(matmul(matrix, eigvec) - eigval * eigvec), &
+                                 tol)) then
                 write(stderr, *) "test_mat_min_eig failed: Incorrect eigenvector "// &
                     "corresponding to minimum eigenvalue for "// &
                     trim(merge("symmetric    ", "non-symmetric", i_case == 1))// &
                     " matrix."
                 test_mat_min_eig = .false.
             end if
-            if (abs(norm2(eigvec) - 1.0_rp) > tol) then
+            if (.not. is_close(norm2(eigvec), 1.0_rp)) then
                 write(stderr, *) "test_mat_min_eig failed: Eigenvector "// &
                     "corresponding to minimum eigenvalue not normalized for "// &
                     trim(merge("symmetric    ", "non-symmetric", i_case == 1))// &
@@ -5204,15 +5220,15 @@ contains
                                        i_case == 1))//" matrix."
                 test_mat_lowest_eigpairs = .false.
             end if
-            if (any(abs(eigvals - ref_eigvals(:n_target)) > tol)) then
+            if (.not. all(is_close(eigvals, ref_eigvals(:n_target)))) then
                 write(stderr, *) "test_mat_lowest_eigpairs failed: Incorrect "// &
                     "lowest eigenvalues for "// &
                     trim(merge("symmetric    ", "non-symmetric", i_case == 1))// &
                     " matrix."
                 test_mat_lowest_eigpairs = .false.
             end if
-            if (norm2(matmul(matrix, eigvecs) - &
-                      eigvecs * spread(eigvals, 1, n_param)) > tol) then
+            if (.not. is_at_most(norm2(matmul(matrix, eigvecs) - eigvecs * &
+                                       spread(eigvals, 1, n_param)), tol)) then
                 write(stderr, *) "test_mat_lowest_eigpairs failed: Returned "// &
                     "eigenvectors are not eigenvectors for "// &
                     trim(merge("symmetric    ", "non-symmetric", i_case == 1))// &
@@ -5244,17 +5260,17 @@ contains
                 "complex conjugate pair."
             test_mat_lowest_eigpairs = .false.
         end if
-        if (any(abs(eigvals) > tol)) then
+        if (.not. all(is_close(eigvals, 0.0_rp))) then
             write(stderr, *) "test_mat_lowest_eigpairs failed: Real part of "// &
                 "complex conjugate pair not returned."
             test_mat_lowest_eigpairs = .false.
         end if
-        if (any(abs(norm2(eigvecs, dim=1) - 1.0_rp) > tol)) then
+        if (.not. all(is_close(norm2(eigvecs, dim=1), 1.0_rp))) then
             write(stderr, *) "test_mat_lowest_eigpairs failed: Vectors of complex "// &
                 "conjugate pair not normalized."
             test_mat_lowest_eigpairs = .false.
         end if
-        if (any(abs(eigvecs(3:, :)) > tol)) then
+        if (.not. all(is_close(eigvecs(3:, :), 0.0_rp))) then
             write(stderr, *) "test_mat_lowest_eigpairs failed: Vectors of complex "// &
                 "conjugate pair not in its invariant subspace."
             test_mat_lowest_eigpairs = .false.
@@ -5297,14 +5313,14 @@ contains
         call random_number(rand_seq3)
 
         ! check reproducibility
-        if (any(abs(rand_seq1 - rand_seq2) > tol)) then
+        if (.not. all(is_close(rand_seq1, rand_seq2))) then
             write(stderr, *) "test_init_rng failed: RNG does not produce "// &
                 "consistent sequences for the same seed."
             test_init_rng = .false.
         end if
 
         ! check variation
-        if (all(abs(rand_seq1 - rand_seq3) < tol)) then
+        if (all(is_close(rand_seq1, rand_seq3))) then
             write(stderr, *) "test_init_rng failed: RNG produces identical "// &
                 "sequences for different seeds."
             test_init_rng = .false.
@@ -5336,7 +5352,7 @@ contains
         do i = 1, n_vectors
             expected = 0.0_rp
             expected(ref_idx(i)) = 1.0_rp
-            if (norm2(unit_vectors(:, i) - expected) > tol) then
+            if (.not. is_at_most(norm2(unit_vectors(:, i) - expected), tol)) then
                 write(stderr, *) "test_lowest_h_diag_unit_vectors failed: "// &
                     "Incorrect unit vector when any sign is accepted."
                 test_lowest_h_diag_unit_vectors = .false.
@@ -5349,13 +5365,14 @@ contains
         do i = 1, count(h_diag < 0.0_rp)
             expected = 0.0_rp
             expected(ref_idx(i)) = 1.0_rp
-            if (norm2(unit_vectors(:, i) - expected) > tol) then
+            if (.not. is_at_most(norm2(unit_vectors(:, i) - expected), tol)) then
                 write(stderr, *) "test_lowest_h_diag_unit_vectors failed: "// &
                     "Incorrect unit vector when negative curvature is required."
                 test_lowest_h_diag_unit_vectors = .false.
             end if
         end do
-        if (norm2(unit_vectors(:, count(h_diag < 0.0_rp) + 1:)) > tol) then
+        if (.not. is_at_most(norm2(unit_vectors(:, count(h_diag < 0.0_rp) + 1:)), &
+                             tol)) then
             write(stderr, *) "test_lowest_h_diag_unit_vectors failed: Column "// &
                 "without a negative diagonal element does not vanish."
             test_lowest_h_diag_unit_vectors = .false.
@@ -5455,21 +5472,22 @@ contains
                 test_generate_trial_vectors = .false.
                 cycle
             end if
-            if (norm2(matmul(transpose(red_space_basis), red_space_basis) - &
-                      identity_matrix(size(red_space_basis, 2, kind=ip))) > tol) then
+            if (.not. is_at_most( &
+                norm2(matmul(transpose(red_space_basis), red_space_basis) - &
+                      identity_matrix(size(red_space_basis, 2, kind=ip))), tol)) then
                 write(stderr, *) "test_generate_trial_vectors failed: Reduced "// &
                     "space basis not orthonormal for "//trim(case_names(i_case))//"."
                 test_generate_trial_vectors = .false.
             end if
-            if (any(abs(red_space_basis(:, 1) - grad / grad_norm) > tol)) then
+            if (.not. all(is_close(red_space_basis(:, 1), grad / grad_norm))) then
                 write(stderr, *) "test_generate_trial_vectors failed: First vector "// &
                     "is not the normalized gradient for "//trim(case_names(i_case))//"."
                 test_generate_trial_vectors = .false.
             end if
             associate (leading => red_space_basis(:, :n_leading), &
                        extra => unit_vectors(:, :n_extra_ref(i_case)))
-                if (norm2(extra - matmul(leading, &
-                                         matmul(transpose(leading), extra))) > tol) then
+                if (.not. is_at_most(norm2(extra - matmul( &
+                    leading, matmul(transpose(leading), extra))), tol)) then
                     write(stderr, *) "test_generate_trial_vectors failed: Leading "// &
                         "vectors do not span the extra trial vectors for "// &
                         trim(case_names(i_case))//"."
@@ -5507,9 +5525,10 @@ contains
             write(stderr, *) "test_generate_trial_vectors failed: Produced error "// &
                 "with projection."
             test_generate_trial_vectors = .false.
-        else if (norm2(projected_extra - matmul(red_space_basis(:, :2), matmul( &
-            transpose(red_space_basis(:, :2)), projected_extra))) > tol .or. &
-                 any(abs(sum(red_space_basis(1:2, :), dim=1)) > tol)) then
+        else if (.not. is_at_most(norm2(projected_extra - matmul( &
+            red_space_basis(:, :2), &
+            matmul(transpose(red_space_basis(:, :2)), projected_extra))), tol) .or. &
+                 .not. all(is_close(sum(red_space_basis(1:2, :), dim=1), 0.0_rp))) then
             write(stderr, *) "test_generate_trial_vectors failed: Trial vectors "// &
                 "not projected."
             test_generate_trial_vectors = .false.
@@ -5586,20 +5605,20 @@ contains
                 "error."
             test_generate_random_trial_vectors = .false.
         end if
-        if (any(abs(red_space_basis(:, 1) - first_vector) > tol)) then
+        if (.not. all(is_close(red_space_basis(:, 1), first_vector))) then
             write(stderr, *) "test_generate_random_trial_vectors failed: First "// &
                 "basis vector changed."
             test_generate_random_trial_vectors = .false.
         end if
-        if (any(abs(norm2(red_space_basis(:, 2:), dim=1) - 1.0_rp) > tol)) then
+        if (.not. all(is_close(norm2(red_space_basis(:, 2:), dim=1), 1.0_rp))) then
             write(stderr, *) "test_generate_random_trial_vectors failed: Generated "// &
                 "vectors are not normalized."
             test_generate_random_trial_vectors = .false.
         end if
         do i = 1, size(red_space_basis, 2)
             do j = i + 1, size(red_space_basis, 2)
-                if (abs(dot_product(red_space_basis(:, i), red_space_basis(:, j))) > &
-                    tol) then
+                if (.not. is_close(dot_product(red_space_basis(:, i), &
+                                               red_space_basis(:, j)), 0.0_rp)) then
                     write(stderr, *) "test_generate_random_trial_vectors failed: "// &
                         "Generated vectors are not orthogonal."
                     test_generate_random_trial_vectors = .false.
@@ -5621,7 +5640,7 @@ contains
                 "error with projection."
             test_generate_random_trial_vectors = .false.
         end if
-        if (any(abs(sum(red_space_basis(1:2, 2:), dim=1)) > tol)) then
+        if (.not. all(is_close(sum(red_space_basis(1:2, 2:), dim=1), 0.0_rp))) then
             write(stderr, *) "test_generate_random_trial_vectors failed: Generated "// &
                 "vectors are not projected."
             test_generate_random_trial_vectors = .false.
@@ -5659,8 +5678,8 @@ contains
             write(stderr, *) "test_generate_random_trial_vectors failed: Trial "// &
                 "space does not end when the projection leaves no further direction."
             test_generate_random_trial_vectors = .false.
-        else if (any(abs(red_space_basis(2:, 1)) > 0.0_rp) .or. &
-                 abs(red_space_basis(1, 1) - 1.0_rp) > tol) then
+        else if (.not. all(is_at_most(abs(red_space_basis(2:, 1)), 0.0_rp)) .or. &
+                 .not. is_close(red_space_basis(1, 1), 1.0_rp)) then
             write(stderr, *) "test_generate_random_trial_vectors failed: First "// &
                 "basis vector changed when the projection leaves no further direction."
             test_generate_random_trial_vectors = .false.
@@ -5735,7 +5754,7 @@ contains
                 "of eigenpairs."
             test_block_davidson = .false.
         end if
-        if (context%seen_residual_rms >= 0.0_rp) then
+        if (.not. is_below(context%seen_residual_rms, 0.0_rp)) then
             write(stderr, *) "test_block_davidson failed: Convergence check called "// &
                 "despite a residual threshold."
             test_block_davidson = .false.
@@ -5748,18 +5767,18 @@ contains
             test_block_davidson = .false.
         end if
         do i = 1, n_block
-            if (abs(eigvals(i) - ref_eigvals(i)) > tol) then
+            if (.not. is_close(eigvals(i), ref_eigvals(i))) then
                 write(stderr, *) "test_block_davidson failed: Block of eigenpairs "// &
                     "does not return the lowest eigenvalues."
                 test_block_davidson = .false.
             end if
-            if (norm2(matmul(context%hess, eigvecs(:, i)) - &
-                      eigvals(i) * eigvecs(:, i)) > res_tol) then
+            if (.not. is_at_most(norm2(matmul(context%hess, eigvecs(:, i)) - &
+                                       eigvals(i) * eigvecs(:, i)), res_tol)) then
                 write(stderr, *) "test_block_davidson failed: Block of eigenpairs "// &
                     "does not return converged eigenvectors."
                 test_block_davidson = .false.
             end if
-            if (abs(norm2(eigvecs(:, i)) - 1.0_rp) > tol) then
+            if (.not. is_close(norm2(eigvecs(:, i)), 1.0_rp)) then
                 write(stderr, *) "test_block_davidson failed: Block of eigenpairs "// &
                     "does not return normalized eigenvectors."
                 test_block_davidson = .false.
@@ -5776,7 +5795,7 @@ contains
         call block_davidson(hess_x_funptr, h_diag, trial_space, .true., 1_ip, 200_ip, &
                             eigvals(:1), eigvecs(:, :1), converged, settings, state, &
                             error)
-        if (abs(context%recorded_mu - settings%stability_thresh) > tol) then
+        if (.not. is_close(context%recorded_mu, settings%stability_thresh)) then
             write(stderr, *) "test_block_davidson failed: Preconditioner not "// &
                 "level-shifted to the stability threshold."
             test_block_davidson = .false.
@@ -5791,7 +5810,7 @@ contains
                 "converge."
             test_block_davidson = .false.
         end if
-        if (abs(eigvals(1) - ref_eigvals(1)) > tol) then
+        if (.not. is_close(eigvals(1), ref_eigvals(1))) then
             write(stderr, *) "test_block_davidson failed: Single eigenpair does "// &
                 "not return the lowest eigenvalue."
             test_block_davidson = .false.
@@ -5805,10 +5824,10 @@ contains
                 "eigenpair not in the state."
             test_block_davidson = .false.
         end if
-        if (abs(state%min_eigval - eigvals(1)) > tol .or. abs( &
-            state%residual_rms - &
+        if (.not. is_close(state%min_eigval, eigvals(1)) .or. .not. is_close( &
+            state%residual_rms, &
             norm2(matmul(context%hess, eigvecs(:, 1)) - eigvals(1) * eigvecs(:, 1)) / &
-            sqrt(real(n_param, kind=rp))) > tol) then
+            sqrt(real(n_param, kind=rp)))) then
             write(stderr, *) "test_block_davidson failed: Lowest eigenvalue or the "// &
                 "RMS of its residual of single eigenpair not in the state."
             test_block_davidson = .false.
@@ -5832,15 +5851,16 @@ contains
                 "convergence check."
             test_block_davidson = .false.
         end if
-        if (.not. converged .or. state%iteration < 2 .or. &
+        if (.not. converged .or. state%iteration < 2 .or. .not. is_below( &
             norm2(matmul(context%hess, eigvecs(:, 1)) - eigvals(1) * eigvecs(:, 1)) / &
-            sqrt(real(n_param, kind=rp)) >= tol * abs(eigvals(1))) then
+            sqrt(real(n_param, kind=rp)), tol * abs(eigvals(1)))) then
             write(stderr, *) "test_block_davidson failed: Convergence check not "// &
                 "used instead of the convergence threshold."
             test_block_davidson = .false.
         end if
-        if (abs(context%seen_residual_rms - state%residual_rms) > tol * &
-            state%residual_rms .or. state%residual_rms <= 0.0_rp) then
+        if (.not. is_close(context%seen_residual_rms, state%residual_rms, &
+                           tol * state%residual_rms) .or. &
+            .not. is_above(state%residual_rms, 0.0_rp)) then
             write(stderr, *) "test_block_davidson failed: Convergence check did "// &
                 "not read the lowest eigenpair of the current iteration from the state."
             test_block_davidson = .false.
@@ -5866,7 +5886,7 @@ contains
                 "the trial space spans the full space."
             test_block_davidson = .false.
         end if
-        if (abs(eigvals(1) - ref_eigvals(1)) > tol) then
+        if (.not. is_close(eigvals(1), ref_eigvals(1))) then
             write(stderr, *) "test_block_davidson failed: Lowest eigenvalue not "// &
                 "returned when trial space spans the full space."
             test_block_davidson = .false.
@@ -5983,14 +6003,14 @@ contains
             test_block_davidson = .false.
         end if
         do i = 1, n_block
-            if (abs(eigvals(i) - ref_eigvals(i)) > tol) then
+            if (.not. is_close(eigvals(i), ref_eigvals(i))) then
                 write(stderr, *) "test_block_davidson failed: Non-symmetric block "// &
                     "of eigenpairs does not return the eigenvalues with the lowest "// &
                     "real parts."
                 test_block_davidson = .false.
             end if
-            if (norm2(matmul(context%hess, eigvecs(:, i)) - &
-                      eigvals(i) * eigvecs(:, i)) > res_tol) then
+            if (.not. is_at_most(norm2(matmul(context%hess, eigvecs(:, i)) - &
+                                       eigvals(i) * eigvecs(:, i)), res_tol)) then
                 write(stderr, *) "test_block_davidson failed: Non-symmetric block "// &
                     "of eigenpairs does not return converged eigenvectors."
                 test_block_davidson = .false.
@@ -6044,7 +6064,7 @@ contains
                 "established instability when stopping at instability."
             test_block_davidson = .false.
         end if
-        if (abs(eigvals(1) + 1.0_rp) > tol) then
+        if (.not. is_close(eigvals(1), -1.0_rp)) then
             write(stderr, *) "test_block_davidson failed: Incorrect Ritz value "// &
                 "when stopping at instability."
             test_block_davidson = .false.
@@ -6192,8 +6212,9 @@ contains
                 test_get_stability_trial_space = .false.
                 cycle
             end if
-            if (norm2(matmul(transpose(red_space_basis), red_space_basis) - &
-                      identity_matrix(size(red_space_basis, 2, kind=ip))) > tol) then
+            if (.not. is_at_most( &
+                norm2(matmul(transpose(red_space_basis), red_space_basis) - &
+                      identity_matrix(size(red_space_basis, 2, kind=ip))), tol)) then
                 write(stderr, *) "test_get_stability_trial_space failed: Trial "// &
                     "space not orthonormal for "//trim(case_names(i_case))//"."
                 test_get_stability_trial_space = .false.
@@ -6204,8 +6225,8 @@ contains
             ! sign
             if (any(i_case == [1, 2])) then
                 leading_idx = merge([1_ip, 2_ip], ref_idx, i_case == 2)
-                if (any(abs(abs([(red_space_basis(leading_idx(i), i), i=1, 2)]) - &
-                            1.0_rp) > tol)) then
+                if (.not. all(is_close( &
+                    abs([(red_space_basis(leading_idx(i), i), i=1, 2)]), 1.0_rp))) then
                     write(stderr, *) "test_get_stability_trial_space failed: "// &
                         "Leading vectors not along the expected unit vectors for "// &
                         trim(case_names(i_case))//"."
@@ -6251,9 +6272,9 @@ contains
             write(stderr, *) "test_get_stability_trial_space failed: Produced "// &
                 "error with projection."
             test_get_stability_trial_space = .false.
-        else if (abs(abs(dot_product(red_space_basis(:, 1), projected_extra)) - &
-                     1.0_rp) > tol .or. &
-                 any(abs(sum(red_space_basis(1:2, :), dim=1)) > tol)) then
+        else if (.not. is_close( &
+            abs(dot_product(red_space_basis(:, 1), projected_extra)), 1.0_rp) .or. &
+                 .not. all(is_close(sum(red_space_basis(1:2, :), dim=1), 0.0_rp))) then
             write(stderr, *) "test_get_stability_trial_space failed: Trial vectors "// &
                 "not projected."
             test_get_stability_trial_space = .false.
@@ -6326,14 +6347,15 @@ contains
                 "dependent or vanishing vector was not removed."
             test_orthogonalize_trial_vectors = .false.
         end if
-        if (norm2(matmul(transpose(red_space_basis), red_space_basis) - &
-                  identity_matrix(size(red_space_basis, 2, kind=ip))) > tol) then
+        if (.not. is_at_most( &
+            norm2(matmul(transpose(red_space_basis), red_space_basis) - &
+                  identity_matrix(size(red_space_basis, 2, kind=ip))), tol)) then
             write(stderr, *) "test_orthogonalize_trial_vectors failed: Vectors are "// &
                 "not orthonormal."
             test_orthogonalize_trial_vectors = .false.
         end if
-        if (norm2(vectors - matmul(red_space_basis, matmul(transpose(red_space_basis), &
-                                                           vectors))) > tol) then
+        if (.not. is_at_most(norm2(vectors - matmul( &
+            red_space_basis, matmul(transpose(red_space_basis), vectors))), tol)) then
             write(stderr, *) "test_orthogonalize_trial_vectors failed: Vectors do "// &
                 "not span the random vectors."
             test_orthogonalize_trial_vectors = .false.
@@ -6405,13 +6427,13 @@ contains
                 "linear transformation."
             test_gram_schmidt = .false.
         end if
-        if (abs(dot_product(vector, space(:, 1))) > tol .or. &
-            abs(dot_product(vector, space(:, 2))) > tol) then
+        if (.not. is_close(dot_product(vector, space(:, 1)), 0.0_rp) .or. &
+            .not. is_close(dot_product(vector, space(:, 2)), 0.0_rp)) then
             write(stderr, *) "test_gram_schmidt failed: Added vector not "// &
                 "orthogonal without linear transformation."
             test_gram_schmidt = .false.
         end if
-        if (abs(norm2(vector) - 1.0_rp) > tol) then
+        if (.not. is_close(norm2(vector), 1.0_rp)) then
             write(stderr, *) "test_gram_schmidt failed: Added vector not "// &
                 "normalized without linear transformation."
             test_gram_schmidt = .false.
@@ -6434,18 +6456,19 @@ contains
                 "transformation."
             test_gram_schmidt = .false.
         end if
-        if (abs(dot_product(vector, space(:, 1))) > tol .or. &
-            abs(dot_product(vector, space(:, 2))) > tol) then
+        if (.not. is_close(dot_product(vector, space(:, 1)), 0.0_rp) .or. &
+            .not. is_close(dot_product(vector, space(:, 2)), 0.0_rp)) then
             write(stderr, *) "test_gram_schmidt failed: Added vector not "// &
                 "orthogonal with linear transformation."
             test_gram_schmidt = .false.
         end if
-        if (abs(norm2(vector) - 1.0_rp) > tol) then
+        if (.not. is_close(norm2(vector), 1.0_rp)) then
             write(stderr, *) "test_gram_schmidt failed: Added vector not "// &
                 "normalized with linear transformation."
             test_gram_schmidt = .false.
         end if
-        if (norm2(lin_trans_vector - matmul(symm_matrix, vector)) > tol) then
+        if (.not. is_at_most(norm2(lin_trans_vector - matmul(symm_matrix, vector)), &
+                             tol)) then
             write(stderr, *) "test_gram_schmidt failed: Added linear "// &
                 "transformation not correct."
             test_gram_schmidt = .false.
@@ -6483,12 +6506,12 @@ contains
                 "close to the space."
             test_gram_schmidt = .false.
         end if
-        if (maxval(abs(matmul(vector, space))) > 1e-14_rp) then
+        if (.not. all(is_close(matmul(vector, space), 0.0_rp, 1e-14_rp))) then
             write(stderr, *) "test_gram_schmidt failed: Vector close to the space "// &
                 "not orthogonalized to it."
             test_gram_schmidt = .false.
         end if
-        if (abs(norm2(vector) - 1.0_rp) > tol) then
+        if (.not. is_close(norm2(vector), 1.0_rp)) then
             write(stderr, *) "test_gram_schmidt failed: Vector close to the space "// &
                 "not normalized."
             test_gram_schmidt = .false.
@@ -6570,7 +6593,7 @@ contains
                 "error for default preconditioner."
             test_level_shifted_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - [1e10_rp, 1.0_rp / 3, -1.0_rp]) > tol)) then
+        if (.not. all(is_close(precond_vector, [1e10_rp, 1.0_rp / 3, -1.0_rp]))) then
             write(stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for default preconditioner."
             test_level_shifted_diag_precond = .false.
@@ -6587,7 +6610,7 @@ contains
                 "error for custom projection function."
             test_level_shifted_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - [2e10_rp, 2.0_rp / 3, -2.0_rp]) > tol)) then
+        if (.not. all(is_close(precond_vector, [2e10_rp, 2.0_rp / 3, -2.0_rp]))) then
             write(stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for custom projection function."
             test_level_shifted_diag_precond = .false.
@@ -6604,7 +6627,7 @@ contains
                 "error for custom preconditioner."
             test_level_shifted_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - [-2.0_rp, -2.0_rp, -2.0_rp]) > tol)) then
+        if (.not. all(is_close(precond_vector, [-2.0_rp, -2.0_rp, -2.0_rp]))) then
             write(stderr, *) "test_level_shifted_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for custom preconditioner."
             test_level_shifted_diag_precond = .false.
@@ -6668,7 +6691,7 @@ contains
                 "default preconditioner."
             test_abs_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - [0.5_rp, 1e10_rp, 0.5_rp]) > tol)) then
+        if (.not. all(is_close(precond_vector, [0.5_rp, 1e10_rp, 0.5_rp]))) then
             write(stderr, *) "test_abs_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for default preconditioner."
             test_abs_diag_precond = .false.
@@ -6684,7 +6707,7 @@ contains
                 "custom projection function."
             test_abs_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - [1.0_rp, 2e10_rp, 1.0_rp]) > tol)) then
+        if (.not. all(is_close(precond_vector, [1.0_rp, 2e10_rp, 1.0_rp]))) then
             write(stderr, *) "test_abs_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for custom projection function."
             test_abs_diag_precond = .false.
@@ -6700,7 +6723,7 @@ contains
                 "custom preconditioner."
             test_abs_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - [0.0_rp, 0.0_rp, 0.0_rp]) > tol)) then
+        if (.not. all(is_close(precond_vector, [0.0_rp, 0.0_rp, 0.0_rp]))) then
             write(stderr, *) "test_abs_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for custom preconditioner."
             test_abs_diag_precond = .false.
@@ -6717,7 +6740,7 @@ contains
                 "custom preconditioner ignoring the level shift."
             test_abs_diag_precond = .false.
         end if
-        if (any(abs(precond_vector - vector) > tol)) then
+        if (.not. all(is_close(precond_vector, vector))) then
             write(stderr, *) "test_abs_diag_precond failed: Returned "// &
                 "preconditioned vector not correct for custom preconditioner "// &
                 "ignoring the level shift."
@@ -6770,13 +6793,13 @@ contains
         ! perform orthogonal projection and determine whether the result contains the
         ! direction and whether only a component along the direction was removed
         complement = orthogonal_projection(vector, direction)
-        if (abs(dot_product(complement, direction)) > tol) then
+        if (.not. is_close(dot_product(complement, direction), 0.0_rp)) then
             write(stderr, *) "test_orthogonal_projection failed: Vector contains "// &
                 "component from direction to be projected out."
             test_orthogonal_projection = .false.
         end if
-        if (norm2(vector - complement - &
-                  dot_product(vector - complement, direction) * direction) > tol) then
+        if (.not. is_at_most(norm2(vector - complement - dot_product( &
+            vector - complement, direction) * direction), tol)) then
             write(stderr, *) "test_orthogonal_projection failed: Removed component "// &
                 "not along direction to be projected out."
             test_orthogonal_projection = .false.
@@ -6833,7 +6856,7 @@ contains
             test_jacobi_davidson_correction = .false.
         end if
         proj_vector = vector - dot_product(vector, solution) * solution
-        if (any(abs(hess_vector - matmul(context%hess, proj_vector)) > tol)) then
+        if (.not. all(is_close(hess_vector, matmul(context%hess, proj_vector)))) then
             write(stderr, *) "test_jacobi_davidson_correction failed: Returned "// &
                 "Hessian linear transformation wrong for valid input."
             test_jacobi_davidson_correction = .false.
@@ -6841,7 +6864,7 @@ contains
         expected_corr_vector = matmul(context%hess, proj_vector) - eigval * proj_vector
         expected_corr_vector = expected_corr_vector - &
                                dot_product(expected_corr_vector, solution) * solution
-        if (any(abs(corr_vector - expected_corr_vector) > tol)) then
+        if (.not. all(is_close(corr_vector, expected_corr_vector))) then
             write(stderr, *) "test_jacobi_davidson_correction failed: Returned "// &
                 "correction vector wrong for valid input."
             test_jacobi_davidson_correction = .false.
@@ -6940,13 +6963,14 @@ contains
         corr_vector = vector - dot_product(vector, solution) * solution
         corr_vector = matmul(context%hess, corr_vector) - mu * corr_vector
         corr_vector = corr_vector - dot_product(corr_vector, solution) * solution
-        if (sum(abs(corr_vector + rhs)) > tol) then
+        if (.not. is_at_most(sum(abs(corr_vector + rhs)), tol)) then
             write(stderr, *) "test_minres failed: Returned solution does not solve "// &
                 "Jacobi-Davidson correction equation."
             test_minres = .false.
         end if
-        if (sum(abs(hess_vector + dot_product(vector, solution) * matmul( &
-            context%hess, solution) - matmul(context%hess, vector))) > tol) then
+        if (.not. is_at_most(sum(abs(hess_vector + dot_product(vector, solution) * &
+                                     matmul(context%hess, solution) - &
+                                     matmul(context%hess, vector))), tol)) then
             write(stderr, *) "test_minres failed: Returned Hessian linear "// &
                 "transformation wrong."
             test_minres = .false.
@@ -6960,12 +6984,12 @@ contains
             write(stderr, *) "test_minres failed: Produced error for vanishing rhs."
             test_minres = .false.
         end if
-        if (sum(abs(vector)) > tol) then
+        if (.not. is_at_most(sum(abs(vector)), tol)) then
             write(stderr, *) "test_minres failed: Returned solution is not zero "// &
                 "for a vanishing rhs."
             test_minres = .false.
         end if
-        if (sum(abs(hess_vector)) > tol) then
+        if (.not. is_at_most(sum(abs(hess_vector)), tol)) then
             write(stderr, *) "test_minres failed: Returned Hessian linear "// &
                 "transformation is not zero for a vanishing rhs."
             test_minres = .false.
@@ -6986,7 +7010,7 @@ contains
         corr_vector = vector - dot_product(vector, solution) * solution
         corr_vector = matmul(context%hess, corr_vector) - mu * corr_vector
         corr_vector = corr_vector - dot_product(corr_vector, solution) * solution
-        if (sum(abs(corr_vector + rhs)) > tol) then
+        if (.not. is_at_most(sum(abs(corr_vector + rhs)), tol)) then
             write(stderr, *) "test_minres failed: Returned solution does not solve "// &
                 "Jacobi-Davidson correction equation for initial guess."
             test_minres = .false.
@@ -7018,7 +7042,7 @@ contains
                 "initial guess which solves the equation not counted."
             test_minres = .false.
         end if
-        if (any(abs(vector - guess) > tol)) then
+        if (.not. all(is_close(vector, guess))) then
             write(stderr, *) "test_minres failed: Initial guess which solves the "// &
                 "equation not returned."
             test_minres = .false.
@@ -7043,13 +7067,13 @@ contains
         end if
         corr_vector = matmul(context%hess, rhs) - mu * rhs
         corr_vector = corr_vector - dot_product(corr_vector, solution) * solution
-        if (any(abs(vector + dot_product(rhs, corr_vector) / &
-                    dot_product(corr_vector, corr_vector) * rhs) > tol)) then
+        if (.not. all(is_close(vector, -dot_product(rhs, corr_vector) / &
+                               dot_product(corr_vector, corr_vector) * rhs))) then
             write(stderr, *) "test_minres failed: Returned solution is not the "// &
                 "iterate of the single iteration when iteration limit is reached."
             test_minres = .false.
         end if
-        if (any(abs(hess_vector - matmul(context%hess, vector)) > tol)) then
+        if (.not. all(is_close(hess_vector, matmul(context%hess, vector)))) then
             write(stderr, *) "test_minres failed: Returned Hessian linear "// &
                 "transformation wrong when iteration limit is reached."
             test_minres = .false.
@@ -7065,12 +7089,12 @@ contains
                 "and vanishing rhs."
             test_minres = .false.
         end if
-        if (sum(abs(vector)) > tol) then
+        if (.not. is_at_most(sum(abs(vector)), tol)) then
             write(stderr, *) "test_minres failed: Returned solution is not zero "// &
                 "for initial guess and vanishing rhs."
             test_minres = .false.
         end if
-        if (sum(abs(hess_vector)) > tol) then
+        if (.not. is_at_most(sum(abs(hess_vector)), tol)) then
             write(stderr, *) "test_minres failed: Returned Hessian linear "// &
                 "transformation of solution is not zero for initial guess and "// &
                 "vanishing rhs."
@@ -7108,7 +7132,7 @@ contains
         corr_vector = vector - dot_product(vector, solution) * solution
         corr_vector = matmul(context%hess, corr_vector) - mu * corr_vector
         corr_vector = corr_vector - dot_product(corr_vector, solution) * solution
-        if (sum(abs(corr_vector + rhs)) > tol) then
+        if (.not. is_at_most(sum(abs(corr_vector + rhs)), tol)) then
             write(stderr, *) "test_minres failed: Returned solution does not solve "// &
                 "Jacobi-Davidson correction equation for vanishing tolerance."
             test_minres = .false.
@@ -7165,13 +7189,14 @@ contains
             test_minres = .false.
         end if
         large_residual = matmul(quadratic_context%hess, large_vector) + large_rhs
-        if (norm2(large_residual(3:)) > 1e-1_rp * norm2(large_rhs(3:))) then
+        if (.not. is_at_most(norm2(large_residual(3:)), &
+                             1e-1_rp * norm2(large_rhs(3:)))) then
             write(stderr, *) "test_minres failed: Returned solution does not "// &
                 "reduce the residual outside the singular direction for singular "// &
                 "correction equation."
             test_minres = .false.
         end if
-        if (abs(large_vector(2)) > 1e2_rp * large_rhs(2)) then
+        if (.not. is_at_most(abs(large_vector(2)), 1e2_rp * large_rhs(2))) then
             write(stderr, *) "test_minres failed: Iterations did not stop at the "// &
                 "least-squares solution of singular correction equation."
             test_minres = .false.
@@ -7254,13 +7279,13 @@ contains
             expected_vec = expected_vec - &
                            matmul(initial_basis, matmul(expected_vec, initial_basis))
             expected_vec = expected_vec / norm2(expected_vec)
-            if (any(abs(red_space_basis(:, 3) - expected_vec) > tol)) then
+            if (.not. all(is_close(red_space_basis(:, 3), expected_vec))) then
                 write(stderr, *) "test_add_trial_vector failed: New trial vector "// &
                     "is not the orthonormalized preconditioned residual for Davidson."
                 test_add_trial_vector = .false.
             end if
-            if (any(abs(h_basis(:, 3) - matmul(context%hess, red_space_basis(:, 3))) > &
-                    tol)) then
+            if (.not. all(is_close(h_basis(:, 3), &
+                                   matmul(context%hess, red_space_basis(:, 3))))) then
                 write(stderr, *) "test_add_trial_vector failed: Hessian linear "// &
                     "transformation of new trial vector wrong for Davidson."
                 test_add_trial_vector = .false.
@@ -7312,14 +7337,14 @@ contains
                 "for Jacobi-Davidson."
             test_add_trial_vector = .false.
         else
-            if (any(abs(red_space_basis(:, 3) - expected_vec) > tol)) then
+            if (.not. all(is_close(red_space_basis(:, 3), expected_vec))) then
                 write(stderr, *) "test_add_trial_vector failed: New trial vector "// &
                     "is not the orthonormalized solution of the correction "// &
                     "equations for Jacobi-Davidson."
                 test_add_trial_vector = .false.
             end if
-            if (any(abs(h_basis(:, 3) - matmul(context%hess, red_space_basis(:, 3))) > &
-                    tol)) then
+            if (.not. all(is_close(h_basis(:, 3), &
+                                   matmul(context%hess, red_space_basis(:, 3))))) then
                 write(stderr, *) "test_add_trial_vector failed: Hessian linear "// &
                     "transformation of new trial vector wrong for Jacobi-Davidson."
                 test_add_trial_vector = .false.
@@ -7351,8 +7376,8 @@ contains
             expected_vec = residual - &
                            matmul(initial_basis, matmul(residual, initial_basis))
             expected_vec = expected_vec / norm2(expected_vec)
-            if (abs(abs(dot_product(red_space_basis(:, 3), expected_vec)) - 1.0_rp) > &
-                tol) then
+            if (.not. is_close(abs(dot_product(red_space_basis(:, 3), expected_vec)), &
+                               1.0_rp)) then
                 write(stderr, *) "test_add_trial_vector failed: New trial vector "// &
                     "is not the orthonormalized residual for first Jacobi-Davidson "// &
                     "iteration."
@@ -7392,7 +7417,7 @@ contains
                 "transformation", n_hess_x=n_hess_x)) test_add_trial_vector = .false.
             call hess_x_funptr(red_space_basis(:, 3), expected_vec, error, &
                                settings%context)
-            if (any(abs(h_basis(:, 3) - expected_vec) > tol)) then
+            if (.not. all(is_close(h_basis(:, 3), expected_vec))) then
                 write(stderr, *) "test_add_trial_vector failed: Linear "// &
                     "transformation of new trial vector not recalculated for "// &
                     "asymmetric Hessian linear transformation."
@@ -7745,19 +7770,21 @@ contains
                 "near minimum with trust radius shorter than Newton step."
             test_level_shifted_davidson = .false.
         end if
-        if (abs(norm2(solution) - 1e-3_rp) > tol) then
+        if (.not. is_close(norm2(solution), 1e-3_rp)) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not lie at trust region boundary near minimum with trust radius "// &
                 "shorter than Newton step."
             test_level_shifted_davidson = .false.
         end if
-        if (ref_hartmann6d_ratio(context, solution) < trust_radius_expand_ratio) then
+        if (.not. is_at_least(ref_hartmann6d_ratio(context, solution), &
+                              trust_radius_expand_ratio)) then
             write(stderr, *) "test_level_shifted_davidson failed: Step at trust "// &
                 "region boundary near minimum not predicted well enough to expand "// &
                 "the trust radius."
             test_level_shifted_davidson = .false.
         end if
-        if (abs(state%trust_radius - trust_radius_expand_factor * 1e-3_rp) > tol) then
+        if (.not. is_close(state%trust_radius, trust_radius_expand_factor * 1e-3_rp)) &
+            then
             write(stderr, *) "test_level_shifted_davidson failed: Trust radius not "// &
                 "expanded for a well predicted step at the trust region boundary "// &
                 "near minimum."
@@ -7829,18 +7856,19 @@ contains
                 "for non-symmetric Hessian."
             test_level_shifted_davidson = .false.
         end if
-        if (abs(solution_norm - 0.5_rp) > tol) then
+        if (.not. is_close(solution_norm, 0.5_rp)) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution not on "// &
                 "the trust region boundary for non-symmetric Hessian."
             test_level_shifted_davidson = .false.
         end if
-        if (mu >= minval(h_diag)) then
+        if (.not. is_below(mu, minval(h_diag))) then
             write(stderr, *) "test_level_shifted_davidson failed: Level shift not "// &
                 "below the lowest eigenvalue for non-symmetric Hessian."
             test_level_shifted_davidson = .false.
         end if
-        if (norm2(grad + matmul(quadratic_context%hess, solution) - mu * solution) > &
-            settings%global_red_factor * norm2(grad)) then
+        if (.not. is_at_most( &
+            norm2(grad + matmul(quadratic_context%hess, solution) - mu * solution), &
+            settings%global_red_factor * norm2(grad))) then
             write(stderr, *) "test_level_shifted_davidson failed: Solution does "// &
                 "not describe level-shifted Newton step of non-symmetric Hessian."
             test_level_shifted_davidson = .false.
@@ -8136,15 +8164,15 @@ contains
                     "space for the rotated Hessian."
                 test_level_shifted_davidson = .false.
             end if
-            if (abs(norm2(solution) - 1.0_rp) > residual_tol) then
+            if (.not. is_close(norm2(solution), 1.0_rp, residual_tol)) then
                 write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                     "does not lie at trust region boundary when reduced space "// &
                     "stops growing for the "//trim(growth_case_names(i_case))// &
                     " Hessian."
                 test_level_shifted_davidson = .false.
             end if
-            if (norm2(quadratic_context%grad + matmul( &
-                quadratic_context%hess, solution) - mu * solution) > residual_tol) then
+            if (.not. is_at_most(norm2(quadratic_context%grad + matmul( &
+                quadratic_context%hess, solution) - mu * solution), residual_tol)) then
                 write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                     "does not describe level-shifted Newton step when reduced "// &
                     "space stops growing for the "//trim(growth_case_names(i_case))// &
@@ -8198,22 +8226,22 @@ contains
                     trim(merge("local ", "global", local_region))//" region."
                 test_level_shifted_davidson = .false.
             end if
-            if (norm2(solution - newton_solution) < &
-                0.1_rp * noise * grad_norm / maxval(h_diag)) then
+            if (.not. is_at_least(norm2(solution - newton_solution), &
+                                  0.1_rp * noise * grad_norm / maxval(h_diag))) then
                 write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                     "does not solve a perturbed system for perturbed gradient in "// &
                     trim(merge("local ", "global", local_region))//" region."
                 test_level_shifted_davidson = .false.
             end if
-            if (norm2(solution - newton_solution) > &
-                10.0_rp * noise * grad_norm / minval(h_diag)) then
+            if (.not. is_at_most(norm2(solution - newton_solution), &
+                                 10.0_rp * noise * grad_norm / minval(h_diag))) then
                 write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                     "deviates from the Newton step by more than the perturbation "// &
                     "for perturbed gradient in "// &
                     trim(merge("local ", "global", local_region))//" region."
                 test_level_shifted_davidson = .false.
             end if
-            if (abs(solution(1) + solution(2)) > tol) then
+            if (.not. is_close(solution(1), -solution(2))) then
                 write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                     "leaves the range of the projection for perturbed gradient in "// &
                     trim(merge("local ", "global", local_region))//" region."
@@ -8351,25 +8379,26 @@ contains
 
             select case (region)
             case ("near minimum")
-                if (abs(mu) > tol) then
+                if (.not. is_close(mu, 0.0_rp)) then
                     write(stderr, *) "test_level_shifted_davidson failed: Level "// &
                         "shift is not zero "//trim(case_name)//"."
                     test_level_shifted_davidson = .false.
                 end if
-                if (norm2(grad + matmul(context%hess, solution)) > &
-                    settings%local_red_factor * grad_norm) then
+                if (.not. is_at_most(norm2(grad + matmul(context%hess, solution)), &
+                                     settings%local_red_factor * grad_norm)) then
                     write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                         "does not describe Newton step "//trim(case_name)//"."
                     test_level_shifted_davidson = .false.
                 end if
             case ("near saddle point")
-                if (mu >= 0.0_rp) then
+                if (.not. is_below(mu, 0.0_rp)) then
                     write(stderr, *) "test_level_shifted_davidson failed: Level "// &
                         "shift is not negative "//trim(case_name)//"."
                     test_level_shifted_davidson = .false.
                 end if
-                if (norm2(grad + matmul(context%hess, solution) - mu * solution) > &
-                    settings%global_red_factor * grad_norm) then
+                if (.not. is_at_most( &
+                    norm2(grad + matmul(context%hess, solution) - mu * solution), &
+                    settings%global_red_factor * grad_norm)) then
                     write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                         "does not describe level-shifted Newton step "// &
                         trim(case_name)//"."
@@ -8378,8 +8407,8 @@ contains
             end select
 
             ! the relative residual is that of the returned level-shifted Newton step
-            if (abs(state%relative_residual - norm2(grad + matmul( &
-                context%hess, solution) - mu * solution) / grad_norm) > tol) then
+            if (.not. is_close(state%relative_residual, norm2(grad + matmul( &
+                context%hess, solution) - mu * solution) / grad_norm)) then
                 write(stderr, *) "test_level_shifted_davidson failed: Relative "// &
                     "residual wrong "//trim(case_name)//"."
                 test_level_shifted_davidson = .false.
@@ -8388,16 +8417,16 @@ contains
             ! the step stays within the trust region near the minimum and lies at its
             ! boundary near the saddle point
             ratio = ref_hartmann6d_ratio(context, solution)
-            if (region == "near minimum" .and. &
-                norm2(solution) > ref_step_trust_radius(state%trust_radius, ratio, &
-                                                        norm2(solution)) + tol) then
+            if (region == "near minimum" .and. .not. is_at_most( &
+                norm2(solution), ref_step_trust_radius(state%trust_radius, ratio, &
+                                                       norm2(solution)) + tol)) then
                 write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                     "does not stay within trust region "//trim(case_name)//"."
                 test_level_shifted_davidson = .false.
             end if
-            if (region == "near saddle point" .and. abs( &
-                norm2(solution) - ref_step_trust_radius(state%trust_radius, ratio, &
-                                                        norm2(solution))) > tol) then
+            if (region == "near saddle point" .and. .not. is_close( &
+                norm2(solution), &
+                ref_step_trust_radius(state%trust_radius, ratio, norm2(solution)))) then
                 write(stderr, *) "test_level_shifted_davidson failed: Solution "// &
                     "does not lie at trust region boundary "//trim(case_name)//"."
                 test_level_shifted_davidson = .false.
@@ -8479,14 +8508,14 @@ contains
         if (state%micro_iteration < 1 .or. &
             state%micro_iteration /= context%n_hess_x_calls .or. &
             state%jacobi_davidson_iteration /= 0 .or. &
-            state%relative_residual <= 0.0_rp .or. state%relative_residual > 1e-3_rp) &
-            then
+            .not. is_above(state%relative_residual, 0.0_rp) .or. &
+            .not. is_at_most(state%relative_residual, 1e-3_rp)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Micro "// &
                 "iterations or converged relative residual not in the state near "// &
                 "minimum."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (hartmann6d_func(context%vars + solution) >= func) then
+        if (.not. is_below(hartmann6d_func(context%vars + solution), func)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not reduce function value near minimum."
             test_truncated_conjugate_gradient = .false.
@@ -8494,13 +8523,13 @@ contains
         ratio = ref_hartmann6d_ratio(context, solution)
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
-        if (metric_norm > &
-            ref_step_trust_radius(state%trust_radius, ratio, metric_norm) + tol) then
+        if (.not. is_at_most(metric_norm, ref_step_trust_radius( &
+            state%trust_radius, ratio, metric_norm) + tol)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not stay within trust region near minimum."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (abs(solution_norm - metric_norm) > tol) then
+        if (.not. is_close(solution_norm, metric_norm)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
                 "the solution in the metric of the absolute diagonal "// &
                 "preconditioner not returned near minimum."
@@ -8520,7 +8549,7 @@ contains
                 "error near minimum with preconditioner."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (abs(solution_norm - norm2(solution)) > tol) then
+        if (.not. is_close(solution_norm, norm2(solution))) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
                 "the solution not measured with the preconditioner near minimum."
             test_truncated_conjugate_gradient = .false.
@@ -8546,7 +8575,8 @@ contains
                 "exactly one micro iteration performed when a single one is allowed."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (state%max_precision_reached .or. norm2(solution) <= 0.0_rp) then
+        if (state%max_precision_reached .or. .not. is_above(norm2(solution), 0.0_rp)) &
+            then
             write(stderr, *) "test_truncated_conjugate_gradient failed: No step "// &
                 "taken with a single micro iteration."
             test_truncated_conjugate_gradient = .false.
@@ -8567,7 +8597,7 @@ contains
                 "error for a step inside the trust region."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (abs(state%trust_radius - 2.0_rp * metric_norm) > tol) then
+        if (.not. is_close(state%trust_radius, 2.0_rp * metric_norm)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Trust "// &
                 "radius expanded for a step inside the trust region."
             test_truncated_conjugate_gradient = .false.
@@ -8586,7 +8616,7 @@ contains
                 "error near minimum with trust radius shorter than step."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (hartmann6d_func(context%vars + solution) >= func) then
+        if (.not. is_below(hartmann6d_func(context%vars + solution), func)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not reduce function value near minimum with trust radius "// &
                 "shorter than step."
@@ -8595,8 +8625,8 @@ contains
         ratio = ref_hartmann6d_ratio(context, solution)
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
-        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio, &
-                                                    metric_norm)) > tol) then
+        if (.not. is_close(metric_norm, ref_step_trust_radius(state%trust_radius, &
+                                                              ratio, metric_norm))) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not lie at trust region boundary near minimum with trust "// &
                 "radius shorter than step."
@@ -8617,7 +8647,7 @@ contains
                 "error near saddle point."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (hartmann6d_func(context%vars + solution) >= func) then
+        if (.not. is_below(hartmann6d_func(context%vars + solution), func)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not reduce function value near saddle point."
             test_truncated_conjugate_gradient = .false.
@@ -8625,8 +8655,8 @@ contains
         ratio = ref_hartmann6d_ratio(context, solution)
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
-        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio, &
-                                                    metric_norm)) > tol) then
+        if (.not. is_close(metric_norm, ref_step_trust_radius(state%trust_radius, &
+                                                              ratio, metric_norm))) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Solution "// &
                 "does not lie at trust region boundary near saddle point."
             test_truncated_conjugate_gradient = .false.
@@ -8699,7 +8729,8 @@ contains
                     " gradient perturbation."
                 test_truncated_conjugate_gradient = .false.
             end if
-            if ((maxval(abs(solution(2:))) > 0.0_rp) .neqv. settings%grad_noise) then
+            if (.not. all(is_at_most(abs(solution(2:)), 0.0_rp)) .neqv. &
+                settings%grad_noise) then
                 write(stderr, *) "test_truncated_conjugate_gradient failed: "// &
                     "Solution "//trim(merge("left  ", "stayed", i_case == 1))// &
                     " along the gradient "// &
@@ -8707,9 +8738,9 @@ contains
                     " gradient perturbation."
                 test_truncated_conjugate_gradient = .false.
             end if
-            if (settings%grad_noise .and. abs(norm2( &
-                matmul(quadratic_context%hess, solution) + quadratic_context%grad) - &
-                settings%local_red_factor * norm2(quadratic_context%grad)) > tol) then
+            if (settings%grad_noise .and. .not. is_close(norm2( &
+                matmul(quadratic_context%hess, solution) + quadratic_context%grad), &
+                settings%local_red_factor * norm2(quadratic_context%grad))) then
                 write(stderr, *) "test_truncated_conjugate_gradient failed: "// &
                     "Gradient not perturbed by the reduction factor of the local "// &
                     "region."
@@ -8737,13 +8768,13 @@ contains
                 "error with a large gradient perturbation."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (state%relative_residual > settings%local_red_factor) then
+        if (.not. is_at_most(state%relative_residual, settings%local_red_factor)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Micro "// &
                 "iterations stopped above the relative size of the gradient "// &
                 "perturbation."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (state%relative_residual <= 1e-3_rp) then
+        if (.not. is_above(state%relative_residual, 1e-3_rp)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Micro "// &
                 "iterations converged below the relative size of the gradient "// &
                 "perturbation."
@@ -8775,7 +8806,7 @@ contains
                 "precision not reached when the objective function does not change."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (abs(solution_norm) > 0.0_rp) then
+        if (.not. is_at_most(abs(solution_norm), 0.0_rp)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
                 "the solution not vanishing for a step that is not taken when "// &
                 "function value does not change."
@@ -8809,7 +8840,7 @@ contains
                 "precision not reached when every step is rejected."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (abs(solution_norm) > 0.0_rp) then
+        if (.not. is_at_most(abs(solution_norm), 0.0_rp)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
                 "the solution not vanishing for a step that is not taken when "// &
                 "every step is rejected."
@@ -8847,8 +8878,8 @@ contains
         end if
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
-        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, 1.0_rp, &
-                                                    metric_norm)) > tol) then
+        if (.not. is_close(metric_norm, ref_step_trust_radius( &
+            state%trust_radius, 1.0_rp, metric_norm))) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Step does "// &
                 "not lie at trust region boundary for a model without curvature."
             test_truncated_conjugate_gradient = .false.
@@ -8921,14 +8952,14 @@ contains
         ratio = ref_hartmann6d_ratio(fault_context, solution)
         metric_norm = sqrt(dot_product(solution, &
                                        solution / max(abs(h_diag), precond_floor)))
-        if (abs(solution_norm - metric_norm) > tol) then
+        if (.not. is_close(solution_norm, metric_norm)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
                 "the cut back step not returned when step inside trust region is "// &
                 "rejected."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (abs(metric_norm - ref_step_trust_radius(state%trust_radius, ratio, &
-                                                    metric_norm)) > tol) then
+        if (.not. is_close(metric_norm, ref_step_trust_radius(state%trust_radius, &
+                                                              ratio, metric_norm))) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Cut back "// &
                 "step does not lie at trust region boundary when step inside trust "// &
                 "region is rejected."
@@ -9100,7 +9131,7 @@ contains
                     "acceptance incorrect when "//trim(case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
-            if (abs(state%trust_radius - case_trust_radii(i)) > tol) then
+            if (.not. is_close(state%trust_radius, case_trust_radii(i))) then
                 write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
                     "radius not correctly updated when "//trim(case_names(i))//"."
                 test_accept_trust_region_step = .false.
@@ -9135,7 +9166,7 @@ contains
                     "accepted for "//trim(rejecting_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
-            if (abs(state%trust_radius - trust_radius_shrink_factor) > tol) then
+            if (.not. is_close(state%trust_radius, trust_radius_shrink_factor)) then
                 write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
                     "radius not reduced for "//trim(rejecting_case_names(i))//"."
                 test_accept_trust_region_step = .false.
@@ -9177,7 +9208,7 @@ contains
                     trim(precision_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
-            if (abs(state%trust_radius - 1.0_rp) > tol) then
+            if (.not. is_close(state%trust_radius, 1.0_rp)) then
                 write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
                     "radius changed at maximum precision for "// &
                     trim(precision_case_names(i))//"."
@@ -9884,15 +9915,15 @@ contains
                     trim(merge("without", "with   ", i_case == 1))//" projection."
                 test_perturb_vector = .false.
             end if
-            if (abs(norm2(perturbed_vector - vector) - noise * norm2(vector)) > tol) &
-                then
+            if (.not. is_close(norm2(perturbed_vector - vector), &
+                               noise * norm2(vector))) then
                 write(stderr, *) "test_perturb_vector failed: Perturbation does "// &
                     "not have the given relative size "// &
                     trim(merge("without", "with   ", i_case == 1))//" projection."
                 test_perturb_vector = .false.
             end if
         end do
-        if (abs(perturbed_vector(1) + perturbed_vector(2)) > tol) then
+        if (.not. is_close(perturbed_vector(1), -perturbed_vector(2))) then
             write(stderr, *) "test_perturb_vector failed: Perturbation leaves the "// &
                 "range of the projection."
             test_perturb_vector = .false.
@@ -9908,7 +9939,7 @@ contains
                 "projection removes every random vector."
             test_perturb_vector = .false.
         end if
-        if (maxval(abs(perturbed_vector - vector)) > 0.0_rp) then
+        if (.not. all(is_close(perturbed_vector, vector, 0.0_rp))) then
             write(stderr, *) "test_perturb_vector failed: Vector perturbed when "// &
                 "the projection removes every random vector."
             test_perturb_vector = .false.
@@ -9944,17 +9975,17 @@ contains
         ! gradient perturbation, which differ between the regions for the default
         ! settings, and vanishes without it
         settings%grad_noise = .true.
-        if (abs(noise_level(settings, .true.) - settings%local_red_factor) > &
-            0.0_rp .or. &
-            abs(noise_level(settings, .false.) - settings%global_red_factor) > 0.0_rp) &
-            then
+        if (.not. is_close(noise_level(settings, .true.), settings%local_red_factor, &
+                           0.0_rp) .or. &
+            .not. is_close(noise_level(settings, .false.), settings%global_red_factor, &
+                           0.0_rp)) then
             write(stderr, *) "test_noise_level failed: Perturbation not the "// &
                 "reduction factor of the region."
             test_noise_level = .false.
         end if
         settings%grad_noise = .false.
-        if (abs(noise_level(settings, .true.)) > 0.0_rp .or. &
-            abs(noise_level(settings, .false.)) > 0.0_rp) then
+        if (.not. is_at_most(abs(noise_level(settings, .true.)), 0.0_rp) .or. &
+            .not. is_at_most(abs(noise_level(settings, .false.)), 0.0_rp)) then
             write(stderr, *) "test_noise_level failed: Perturbation does not "// &
                 "vanish without gradient perturbation."
             test_noise_level = .false.
@@ -9998,9 +10029,9 @@ contains
             2.0_rp * settings%local_red_factor, 2.0_rp * settings%global_red_factor, &
             2.0_rp * settings%global_red_factor, 1.0_rp, residual_norm_floor]
         do i = 1, size(case_names)
-            if (abs(micro_conv_tol(case_level_shifts(i), case_noises(i), &
-                                   case_residual_norms(i), settings) - &
-                    ref_conv_tols(i)) > 0.0_rp) then
+            if (.not. is_close(micro_conv_tol(case_level_shifts(i), case_noises(i), &
+                                              case_residual_norms(i), settings), &
+                               ref_conv_tols(i), 0.0_rp)) then
                 write(stderr, *) "test_micro_conv_tol failed: Stopping tolerance "// &
                     "wrong for "//trim(case_names(i))//"."
                 test_micro_conv_tol = .false.

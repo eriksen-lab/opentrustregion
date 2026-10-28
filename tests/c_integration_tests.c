@@ -943,7 +943,7 @@ bool test_stability_check_c(void) {
     fprintf(stderr, "test_stability_check_c failed: State was not returned.\n");
     ok = false;
   }
-  if (state.min_eigval <= 0.0) {
+  if (!(state.min_eigval > 0.0)) {
     fprintf(stderr, "test_stability_check_c failed: State does not hold a positive "
                     "lowest eigenvalue for minimum.\n");
     ok = false;
@@ -975,7 +975,7 @@ bool test_stability_check_c(void) {
     ok = false;
   }
 
-  if (state.min_eigval >= 0.0) {
+  if (!(state.min_eigval < 0.0)) {
     fprintf(stderr, "test_stability_check_c failed: State does not hold a negative "
                     "lowest eigenvalue for saddle point.\n");
     ok = false;
@@ -988,12 +988,12 @@ bool test_stability_check_c(void) {
     for (int j = 0; j < N_PARAM; j++)
       curvature += direction[i] * ctx.hess[i][j] * direction[j];
   }
-  if (fabs(sqrt(norm_squared) - 1.0) > 1e-6) {
+  if (!(fabs(sqrt(norm_squared) - 1.0) <= 1e-6)) {
     fprintf(stderr, "test_stability_check_c failed: Stability check does not return a "
                     "normalized direction for saddle point.\n");
     ok = false;
   }
-  if (curvature >= 0.0) {
+  if (!(curvature < 0.0)) {
     fprintf(stderr, "test_stability_check_c failed: Stability check does not return a "
                     "direction of negative curvature for saddle point.\n");
     ok = false;
