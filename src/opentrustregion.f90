@@ -277,8 +277,6 @@ contains
         !
         ! this subroutine is the main solver for orbital optimization
         !
-        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
-
         procedure(update_orbs_type), intent(in), pointer :: update_orbs
         procedure(obj_func_type), intent(in), pointer :: obj_func
         integer(ip), intent(in) :: n_param
@@ -359,39 +357,12 @@ contains
 
         do imacro = 1, local_settings%n_macro
             if (.not. current_state%max_precision_reached) then
-                ! calculate cost function, gradient and Hessian diagonal, the Hessian
-                ! linear transformation is disassociated first so that an orbital
-                ! update which does not provide one is caught
-                hess_x_funptr => null()
-                call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, &
-                                 local_settings%context)
-
-                ! increment number of orbital updates
-                current_state%n_update_orbs = current_state%n_update_orbs + 1
-                call add_error_origin(error, error_update_orbs, local_settings)
+                ! calculate cost function, gradient and Hessian diagonal
+                call invoke_update_orbs(update_orbs, kappa, func, grad, h_diag, &
+                                        hess_x_funptr, local_settings, &
+                                        current_state%n_update_orbs, error)
+                call add_error_origin(error, error_solver, local_settings)
                 if (error /= 0) return
-
-                ! an orbital update which succeeds without providing a Hessian linear
-                ! transformation violates the interface, which the solver reports itself
-                if (.not. associated(hess_x_funptr)) then
-                    call local_settings%log("Orbital update did not provide a "// &
-                                            "Hessian linear transformation.", &
-                                            verbosity_error, .true.)
-                    error = error_solver + 1
-                    return
-                end if
-
-                ! an orbital update which returns an objective function, gradient or
-                ! Hessian diagonal that is not finite leaves no point to optimize from
-                if (.not. (ieee_is_finite(func) .and. all(ieee_is_finite(grad)) .and. &
-                           all(ieee_is_finite(h_diag)))) then
-                    call local_settings%log("Orbital update returned an objective "// &
-                                            "function, gradient or Hessian "// &
-                                            "diagonal that is not finite.", &
-                                            verbosity_error, .true.)
-                    error = error_solver + 1
-                    return
-                end if
 
                 ! calculate gradient norm
                 grad_norm = dnrm2(n_param, grad, 1_ip)
@@ -601,7 +572,7 @@ contains
         n_param = size(h_diag)
 
         ! perform sanity check
-        call stability_sanity_check(local_settings, n_param, error)
+        call stability_sanity_check(local_settings, n_param, error, h_diag)
         call add_error_origin(error, error_stability_check, local_settings)
         if (error /= 0) return
 
@@ -1325,9 +1296,9 @@ contains
         n_kappa = 0.0_rp
 
         ! evaluate function at upper and lower bounds
-        call evaluate(lower, f_lower)
+        f_lower = invoke_obj_func(obj_func, lower * kappa, settings, n_obj_func, error)
         if (error /= 0) return
-        call evaluate(upper, f_upper)
+        f_upper = invoke_obj_func(obj_func, upper * kappa, settings, n_obj_func, error)
         if (error /= 0) return
 
         ! ensure f_a > f_b
@@ -1345,7 +1316,7 @@ contains
 
         ! default step
         n_c = n_b + golden_ratio * (n_b - n_a)
-        call evaluate(n_c, f_c)
+        f_c = invoke_obj_func(obj_func, n_c * kappa, settings, n_obj_func, error)
         if (error /= 0) return
 
         ! continue looping until function at middle point is lower than at brackets
@@ -1364,7 +1335,8 @@ contains
             ! check if u is between n_b and n_c
             if ((n_u - n_c) * (n_b - n_u) > 0.0_rp) then
                 ! evaluate function at n_u
-                call evaluate(n_u, f_u)
+                f_u = &
+                    invoke_obj_func(obj_func, n_u * kappa, settings, n_obj_func, error)
                 if (error /= 0) return
 
                 ! check if minimum between n_b and n_c
@@ -1383,17 +1355,20 @@ contains
 
                 ! parabolic fit did not help, default step
                 n_u = n_c + golden_ratio * (n_c - n_b)
-                call evaluate(n_u, f_u)
+                f_u = &
+                    invoke_obj_func(obj_func, n_u * kappa, settings, n_obj_func, error)
                 if (error /= 0) return
             ! limit parabolic fit to its maximum allowed value
             else if ((n_u - n_u_lim) * (n_u_lim - n_c) >= 0.0_rp) then
                 n_u = n_u_lim
-                call evaluate(n_u, f_u)
+                f_u = &
+                    invoke_obj_func(obj_func, n_u * kappa, settings, n_obj_func, error)
                 if (error /= 0) return
             ! parabolic fit is between n_c and its allowed limit
             else if ((n_u - n_u_lim) * (n_c - n_u) > 0.0_rp) then
                 ! evaluate function at n_u
-                call evaluate(n_u, f_u)
+                f_u = &
+                    invoke_obj_func(obj_func, n_u * kappa, settings, n_obj_func, error)
                 if (error /= 0) return
 
                 if (f_u < f_c) then
@@ -1402,13 +1377,15 @@ contains
                     n_u = n_c + golden_ratio * (n_c - n_b)
                     f_b = f_c
                     f_c = f_u
-                    call evaluate(n_u, f_u)
+                    f_u = invoke_obj_func(obj_func, n_u * kappa, settings, n_obj_func, &
+                                          error)
                     if (error /= 0) return
                 end if
             ! reject parabolic fit and use default step
             else
                 n_u = n_c + golden_ratio * (n_c - n_b)
-                call evaluate(n_u, f_u)
+                f_u = &
+                    invoke_obj_func(obj_func, n_u * kappa, settings, n_obj_func, error)
                 if (error /= 0) return
             end if
             ! remove oldest point
@@ -1440,27 +1417,6 @@ contains
 
         ! set new multiplier
         n_kappa = n_b
-
-    contains
-
-        subroutine evaluate(n, f)
-            !
-            ! this subroutine evaluates the objective function at a multiple of the
-            ! step, where a value that is not a number counts as an infinite one, so
-            ! that the line search moves away from it as from an overflowing value
-            !
-            use, intrinsic :: ieee_arithmetic, only: ieee_is_nan, ieee_value, &
-                                                     ieee_positive_inf
-
-            real(rp), intent(in) :: n
-            real(rp), intent(out) :: f
-
-            f = obj_func(n * kappa, error, settings%context)
-            n_obj_func = n_obj_func + 1
-            call add_error_origin(error, error_obj_func, settings)
-            if (ieee_is_nan(f)) f = ieee_value(f, ieee_positive_inf)
-
-        end subroutine evaluate
 
     end function bracket
 
@@ -1854,9 +1810,8 @@ contains
             ! check if extra trial vectors are supplied
             if (associated(settings%get_extra_trial_vectors)) then
                 ! extra trial vectors supplied by the caller
-                call settings%get_extra_trial_vectors(leading_block(:, 2:), error, &
-                                                      settings%context)
-                call add_error_origin(error, error_get_extra_trial_vectors, settings)
+                call invoke_get_extra_trial_vectors(leading_block(:, 2:), settings, &
+                                                    error)
             else
                 ! unit vectors along the lowest Hessian diagonal elements
                 call lowest_h_diag_unit_vectors(h_diag, .true., leading_block(:, 2:))
@@ -1866,8 +1821,7 @@ contains
             ! project, while the gradient direction is already projected
             if (error == 0 .and. associated(settings%project)) then
                 do i = 2, size(leading_block, 2)
-                    call settings%project(leading_block(:, i), error, settings%context)
-                    call add_error_origin(error, error_project, settings)
+                    call invoke_project(leading_block(:, i), settings, error)
                     if (error /= 0) exit
                 end do
             end if
@@ -1947,9 +1901,7 @@ contains
                     red_space_basis(:, i) = 2 * red_space_basis(:, i) - 1
                 end do
                 if (associated(settings%project)) then
-                    call settings%project(red_space_basis(:, i), error, &
-                                          settings%context)
-                    call add_error_origin(error, error_project, settings)
+                    call invoke_project(red_space_basis(:, i), settings, error)
                     if (error /= 0) return
                 end if
                 call gram_schmidt(red_space_basis(:, i), red_space_basis(:, :i - 1), &
@@ -1998,10 +1950,8 @@ contains
         ! calculate linear transformations of basis vectors
         allocate(h_basis(n_param, n_trial))
         do i = 1, n_trial
-            call hess_x_funptr(red_space_basis(:, i), h_basis(:, i), error, &
-                               settings%context)
-            state%n_hess_x = state%n_hess_x + 1
-            call add_error_origin(error, error_hess_x, settings)
+            call invoke_hess_x(hess_x_funptr, red_space_basis(:, i), h_basis(:, i), &
+                               settings, state%n_hess_x, error)
             if (error /= 0) return
         end do
 
@@ -2163,9 +2113,7 @@ contains
             ! check if extra trial vectors are supplied
             if (associated(settings%get_extra_trial_vectors)) then
                 ! extra trial vectors supplied by the caller take precedence
-                call settings%get_extra_trial_vectors(leading_block, error, &
-                                                      settings%context)
-                call add_error_origin(error, error_get_extra_trial_vectors, settings)
+                call invoke_get_extra_trial_vectors(leading_block, settings, error)
                 if (error /= 0) return
             else
                 ! unit vectors along the lowest Hessian diagonal elements
@@ -2175,8 +2123,7 @@ contains
             ! project the extra trial vectors, which the caller does not have to project
             if (associated(settings%project)) then
                 do i = 1, n_extra
-                    call settings%project(leading_block(:, i), error, settings%context)
-                    call add_error_origin(error, error_project, settings)
+                    call invoke_project(leading_block(:, i), settings, error)
                     if (error /= 0) return
                 end do
             end if
@@ -2369,8 +2316,7 @@ contains
 
         ! check for user-defined preconditioner
         if (associated(settings%precond)) then
-            call settings%precond(vector, mu, precond_vector, error, settings%context)
-            call add_error_origin(error, error_precond, settings)
+            call invoke_precond(vector, mu, precond_vector, settings, error)
             if (error /= 0) return
         ! construct level-shifted preconditioner
         else
@@ -2382,8 +2328,7 @@ contains
 
             ! ensure basis vector stays in subspace
             if (associated(settings%project)) then
-                call settings%project(precond_vector, error, settings%context)
-                call add_error_origin(error, error_project, settings)
+                call invoke_project(precond_vector, settings, error)
                 if (error /= 0) return
             end if
         end if
@@ -2404,9 +2349,7 @@ contains
 
         ! check for user-defined preconditioner
         if (associated(settings%precond)) then
-            call settings%precond(vector, 0.0_rp, precond_vector, error, &
-                                  settings%context)
-            call add_error_origin(error, error_precond, settings)
+            call invoke_precond(vector, 0.0_rp, precond_vector, settings, error)
             if (error /= 0) return
         ! construct positive-definite preconditioner
         else
@@ -2415,8 +2358,7 @@ contains
 
             ! ensure basis vector stays in subspace
             if (associated(settings%project)) then
-                call settings%project(precond_vector, error, settings%context)
-                call add_error_origin(error, error_project, settings)
+                call invoke_project(precond_vector, settings, error)
                 if (error /= 0) return
             end if
         end if
@@ -2459,9 +2401,8 @@ contains
         corr_vector = orthogonal_projection(vector, solution)
 
         ! get Hessian linear transformation of projected vector
-        call hess_x_funptr(corr_vector, hess_vector, error, settings%context)
-        n_hess_x = n_hess_x + 1
-        call add_error_origin(error, error_hess_x, settings)
+        call invoke_hess_x(hess_x_funptr, corr_vector, hess_vector, settings, &
+                           n_hess_x, error)
         if (error /= 0) return
 
         ! finish construction of correction
@@ -2736,9 +2677,8 @@ contains
             if (error /= 0) return
 
             ! get linear transformation of new basis vector
-            call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
-            n_hess_x = n_hess_x + 1
-            call add_error_origin(error, error_hess_x, settings)
+            call invoke_hess_x(hess_x_funptr, basis_vec, h_basis_vec, settings, &
+                               n_hess_x, error)
             if (error /= 0) return
         else
             ! solve Jacobi-Davidson correction equations
@@ -2758,9 +2698,8 @@ contains
             if (abs(ddot(n_param, red_space_basis(:, n_trial), 1_ip, h_basis_vec, &
                          1_ip) - ddot(n_param, basis_vec, 1_ip, h_basis(:, n_trial), &
                                       1_ip)) > hess_symm_thres) then
-                call hess_x_funptr(basis_vec, h_basis_vec, error, settings%context)
-                n_hess_x = n_hess_x + 1
-                call add_error_origin(error, error_hess_x, settings)
+                call invoke_hess_x(hess_x_funptr, basis_vec, h_basis_vec, settings, &
+                                   n_hess_x, error)
                 if (error /= 0) return
             end if
         end if
@@ -2984,10 +2923,8 @@ contains
         ! calculate linear transformations of basis vectors
         allocate(h_basis(n_param, n_trial))
         do i = 1, n_trial
-            call hess_x_funptr(red_space_basis(:, i), h_basis(:, i), error, &
-                               settings%context)
-            state%n_hess_x = state%n_hess_x + 1
-            call add_error_origin(error, error_hess_x, settings)
+            call invoke_hess_x(hess_x_funptr, red_space_basis(:, i), h_basis(:, i), &
+                               settings, state%n_hess_x, error)
             if (error /= 0) return
         end do
 
@@ -3167,9 +3104,8 @@ contains
             end do
 
             ! evaluate function at predicted point
-            new_func = obj_func(solution, error, settings%context)
-            state%n_obj_func = state%n_obj_func + 1
-            call add_error_origin(error, error_obj_func, settings)
+            new_func = &
+                invoke_obj_func(obj_func, solution, settings, state%n_obj_func, error)
             if (error /= 0) return
 
             ! decide whether to accept step and modify trust radius; the Davidson
@@ -3200,8 +3136,6 @@ contains
         ! this subroutine performs truncated conjugate gradient to solve the trust
         ! region subproblem
         !
-        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
-
         real(rp), intent(in) :: func, grad(:), h_diag(:)
         integer(ip), intent(in) :: n_param
         procedure(obj_func_type), pointer, intent(in) :: obj_func
@@ -3278,20 +3212,9 @@ contains
             state%micro_iteration = state%micro_iteration + 1
 
             ! get Hessian linear transformation of direction
-            call hess_x_funptr(direction, hess_direction, error, settings%context)
-            state%n_hess_x = state%n_hess_x + 1
-            call add_error_origin(error, error_hess_x, settings)
+            call invoke_hess_x(hess_x_funptr, direction, hess_direction, settings, &
+                               state%n_hess_x, error)
             if (error /= 0) return
-
-            ! a Hessian linear transformation which returns values that are not finite
-            ! leaves no predicted function change, which cutting the step back to a
-            ! smaller trust region can not restore since it reuses the transformation
-            if (.not. all(ieee_is_finite(hess_direction))) then
-                call settings%log("Hessian linear transformation returned values "// &
-                                  "that are not finite.", verbosity_error, .true.)
-                error = 1
-                return
-            end if
 
             ! calculate curvature
             curvature = ddot(n_param, direction, 1_ip, hess_direction, 1_ip)
@@ -3390,9 +3313,8 @@ contains
                    residual_new, precond_residual_new)
 
         ! evaluate function at predicted point
-        new_func = obj_func(solution, error, settings%context)
-        state%n_obj_func = state%n_obj_func + 1
-        call add_error_origin(error, error_obj_func, settings)
+        new_func = &
+            invoke_obj_func(obj_func, solution, settings, state%n_obj_func, error)
         if (error /= 0) return
 
         ! reduce trust region until step is accepted
@@ -3455,9 +3377,8 @@ contains
                         h_solution = h_solution + step_size * hess_direction
 
                         ! evaluate function at predicted point
-                        new_func = obj_func(solution, error, settings%context)
-                        state%n_obj_func = state%n_obj_func + 1
-                        call add_error_origin(error, error_obj_func, settings)
+                        new_func = invoke_obj_func(obj_func, solution, settings, &
+                                                   state%n_obj_func, error)
                         if (error /= 0) return
 
                         ! exit to retry whether step is accepted
@@ -3505,8 +3426,8 @@ contains
         state%max_precision_reached = .false.
 
         ! a step whose norm is not finite, as from a Hessian linear transformation or a
-        ! preconditioner which returns values that are not finite, can not be cut back
-        ! to a smaller trust region
+        ! preconditioner whose finite values are large enough to overflow, can not be
+        ! cut back to a smaller trust region
         if (.not. ieee_is_finite(solution_norm)) then
             call settings%log("Trust-region step is not finite.", verbosity_error, &
                               .true.)
@@ -3719,13 +3640,16 @@ contains
 
     end subroutine solver_sanity_check
 
-    subroutine stability_sanity_check(settings, n_param, error)
+    subroutine stability_sanity_check(settings, n_param, error, h_diag)
         !
         ! this subroutine performs a sanity check for stability input parameters
         !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
         type(stability_settings_type), intent(inout) :: settings
         integer(ip), intent(in) :: n_param
         integer(ip), intent(out) :: error
+        real(rp), intent(in), optional :: h_diag(:)
         character(len=300) :: msg
 
         ! initialize error flag
@@ -3737,6 +3661,17 @@ contains
                               verbosity_error, .true.)
             error = 1
             return
+        end if
+
+        ! check that the Hessian diagonal is finite, which the orbital update already
+        ! ensures for the internal stability check of the solver
+        if (present(h_diag)) then
+            if (.not. all(ieee_is_finite(h_diag))) then
+                call settings%log("Hessian diagonal is not finite.", verbosity_error, &
+                                  .true.)
+                error = 1
+                return
+            end if
         end if
 
         ! convert strings to lowercase
@@ -3836,6 +3771,190 @@ contains
 
     end subroutine add_error_origin
 
+    subroutine invoke_update_orbs(update_orbs, kappa, func, grad, h_diag, &
+                                  hess_x_funptr, settings, n_update_orbs, error)
+        !
+        ! this subroutine calls the orbital update, counts the call and tags its error
+        ! with its origin, and returns an error of its own if the orbital update does
+        ! not provide a Hessian linear transformation or returns values that are not
+        ! finite
+        !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
+        procedure(update_orbs_type), intent(in), pointer :: update_orbs
+        real(rp), intent(in) :: kappa(:)
+        real(rp), intent(out) :: func, grad(:), h_diag(:)
+        procedure(hess_x_type), intent(out), pointer :: hess_x_funptr
+        class(settings_type), intent(in) :: settings
+        integer(ip), intent(inout), target :: n_update_orbs
+        integer(ip), intent(out) :: error
+
+        ! call the orbital update with a disassociated Hessian linear transformation,
+        ! so that an orbital update which does not provide one is caught
+        hess_x_funptr => null()
+        call update_orbs(kappa, func, grad, h_diag, hess_x_funptr, error, &
+                         settings%context)
+        n_update_orbs = n_update_orbs + 1
+        call add_error_origin(error, error_update_orbs, settings)
+        if (error /= 0) return
+
+        ! an orbital update which succeeds without providing a Hessian linear
+        ! transformation violates the interface
+        if (.not. associated(hess_x_funptr)) then
+            call settings%log("Orbital update did not provide a Hessian linear "// &
+                              "transformation.", verbosity_error, .true.)
+            error = 1
+            return
+        end if
+
+        ! an objective function, gradient or Hessian diagonal that is not finite leaves
+        ! no point to optimize from
+        if (.not. (ieee_is_finite(func) .and. all(ieee_is_finite(grad)) .and. &
+                   all(ieee_is_finite(h_diag)))) then
+            call settings%log("Orbital update returned an objective function, "// &
+                              "gradient or Hessian diagonal that is not finite.", &
+                              verbosity_error, .true.)
+            error = 1
+        end if
+
+    end subroutine invoke_update_orbs
+
+    function invoke_obj_func(obj_func, kappa, settings, n_obj_func, error) result(func)
+        !
+        ! this function calls the objective function, counts the call and tags its
+        ! error with its origin, where a value that is not a number counts as an
+        ! infinite one, so that a step to it is rejected as one to an overflowing value
+        !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_nan, ieee_value, &
+                                                 ieee_positive_inf
+
+        procedure(obj_func_type), intent(in), pointer :: obj_func
+        real(rp), intent(in) :: kappa(:)
+        class(settings_type), intent(in) :: settings
+        integer(ip), intent(inout), target :: n_obj_func
+        integer(ip), intent(out) :: error
+        real(rp) :: func
+
+        ! call the objective function
+        func = obj_func(kappa, error, settings%context)
+        n_obj_func = n_obj_func + 1
+        call add_error_origin(error, error_obj_func, settings)
+        if (error /= 0) return
+
+        ! replace a value that is not a number
+        if (ieee_is_nan(func)) func = ieee_value(func, ieee_positive_inf)
+
+    end function invoke_obj_func
+
+    subroutine invoke_hess_x(hess_x_funptr, x, hess_x, settings, n_hess_x, error)
+        !
+        ! this subroutine calls the Hessian linear transformation, counts the call and
+        ! tags its error with its origin, and returns an error of its own if the
+        ! Hessian linear transformation returns values that are not finite
+        !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
+        procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
+        real(rp), intent(in) :: x(:)
+        real(rp), intent(out) :: hess_x(:)
+        class(settings_type), intent(in) :: settings
+        integer(ip), intent(inout), target :: n_hess_x
+        integer(ip), intent(out) :: error
+
+        ! call the Hessian linear transformation
+        call hess_x_funptr(x, hess_x, error, settings%context)
+        n_hess_x = n_hess_x + 1
+        call add_error_origin(error, error_hess_x, settings)
+        if (error /= 0) return
+
+        ! check the result
+        if (.not. all(ieee_is_finite(hess_x))) then
+            call settings%log("Hessian linear transformation returned values that "// &
+                              "are not finite.", verbosity_error, .true.)
+            error = 1
+        end if
+
+    end subroutine invoke_hess_x
+
+    subroutine invoke_precond(residual, mu, precond_residual, settings, error)
+        !
+        ! this subroutine calls the preconditioner and tags its error with its origin,
+        ! and returns an error of its own if the preconditioner returns values that are
+        ! not finite
+        !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
+        real(rp), intent(in) :: residual(:), mu
+        real(rp), intent(out) :: precond_residual(:)
+        class(settings_type), intent(in) :: settings
+        integer(ip), intent(out) :: error
+
+        ! call the preconditioner
+        call settings%precond(residual, mu, precond_residual, error, settings%context)
+        call add_error_origin(error, error_precond, settings)
+        if (error /= 0) return
+
+        ! check the result
+        if (.not. all(ieee_is_finite(precond_residual))) then
+            call settings%log("Preconditioner returned values that are not finite.", &
+                              verbosity_error, .true.)
+            error = 1
+        end if
+
+    end subroutine invoke_precond
+
+    subroutine invoke_project(vector, settings, error)
+        !
+        ! this subroutine calls the projection and tags its error with its origin, and
+        ! returns an error of its own if the projection returns values that are not
+        ! finite
+        !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
+        real(rp), intent(inout) :: vector(:)
+        class(settings_type), intent(in) :: settings
+        integer(ip), intent(out) :: error
+
+        ! call the projection
+        call settings%project(vector, error, settings%context)
+        call add_error_origin(error, error_project, settings)
+        if (error /= 0) return
+
+        ! check the result
+        if (.not. all(ieee_is_finite(vector))) then
+            call settings%log("Projection returned values that are not finite.", &
+                              verbosity_error, .true.)
+            error = 1
+        end if
+
+    end subroutine invoke_project
+
+    subroutine invoke_get_extra_trial_vectors(trial_vectors, settings, error)
+        !
+        ! this subroutine calls the extra trial vector function and tags its error with
+        ! its origin, and returns an error of its own if the extra trial vector
+        ! function returns values that are not finite
+        !
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
+        real(rp), intent(out) :: trial_vectors(:, :)
+        class(settings_type), intent(in) :: settings
+        integer(ip), intent(out) :: error
+
+        ! call the extra trial vector function
+        call settings%get_extra_trial_vectors(trial_vectors, error, settings%context)
+        call add_error_origin(error, error_get_extra_trial_vectors, settings)
+        if (error /= 0) return
+
+        ! check the result
+        if (.not. all(ieee_is_finite(trial_vectors))) then
+            call settings%log("Extra trial vector function returned values that "// &
+                              "are not finite.", verbosity_error, .true.)
+            error = 1
+        end if
+
+    end subroutine invoke_get_extra_trial_vectors
+
     function string_to_lowercase(str) result(lower_str)
         !
         ! this function converts a string to lower case
@@ -3897,8 +4016,7 @@ contains
             call random_number(random_vector)
             random_vector = 2.0_rp * random_vector - 1.0_rp
             if (associated(settings%project)) then
-                call settings%project(random_vector, error, settings%context)
-                call add_error_origin(error, error_project, settings)
+                call invoke_project(random_vector, settings, error)
                 if (error /= 0) return
             end if
             if (dnrm2(n_param, random_vector, 1_ip) >= numerical_zero) then
