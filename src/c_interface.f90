@@ -341,8 +341,7 @@ contains
         type(c_ptr), intent(in), value :: state_c_ptr, kappa_c_ptr
         integer(c_ip) :: error_c
 
-        real(rp), pointer :: h_diag_ptr(:), kappa_ptr(:)
-        real(c_rp), pointer :: kappa_ptr_c(:)
+        real(rp), pointer :: kappa_ptr(:)
         logical :: stable
         integer(ip) :: error
         procedure(hess_x_f_wrapper), pointer :: hess_x
@@ -399,34 +398,16 @@ contains
         ! associate procedure pointer to wrapper function
         hess_x => hess_x_f_wrapper
 
-        ! convert C pointers
-        if (rp == c_rp) then
-            h_diag_ptr => h_diag_c(:n_param_c)
-        else
-            allocate(h_diag_ptr(n_param_c))
-            h_diag_ptr = real(h_diag_c(:n_param_c), kind=rp)
-        end if
+        ! call stability check, which returns the lowest eigenvector in the host's
+        ! array if one is given
         if (c_associated(kappa_c_ptr)) then
-            if (rp == c_rp) then
-                call c_f_pointer(cptr=kappa_c_ptr, fptr=kappa_ptr, shape=[n_param_c])
-            else
-                call c_f_pointer(cptr=kappa_c_ptr, fptr=kappa_ptr_c, shape=[n_param_c])
-                allocate(kappa_ptr(n_param_c))
-            end if
-        end if
-
-        ! call stability check
-        if (c_associated(kappa_c_ptr)) then
-            call stability_check(h_diag_ptr, hess_x, stable, error, settings, state, &
-                                 kappa=kappa_ptr)
-            if (rp /= c_rp) then
-                kappa_ptr_c = kappa_ptr
-                deallocate(kappa_ptr)
-            end if
+            call c_f_pointer(cptr=kappa_c_ptr, fptr=kappa_ptr, shape=[n_param_c])
+            call stability_check(h_diag_c(:n_param_c), hess_x, stable, error, &
+                                 settings, state, kappa=kappa_ptr)
         else
-            call stability_check(h_diag_ptr, hess_x, stable, error, settings, state)
+            call stability_check(h_diag_c(:n_param_c), hess_x, stable, error, &
+                                 settings, state)
         end if
-        if (rp /= c_rp) deallocate(h_diag_ptr)
 
         ! copy the state into the host's record once more, also after an error
         call copy_state_to_c(callbacks)
@@ -502,23 +483,9 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        real(c_rp) :: func_c
-        real(c_rp), pointer :: kappa_c(:), grad_c(:), h_diag_c(:)
         type(c_funptr) :: hess_x_c_funptr
         integer(c_ip) :: error_c
         type(c_callbacks_type), pointer :: stability_callbacks
-
-        ! convert arguments to C kind
-        if (rp == c_rp) then
-            kappa_c => kappa
-            grad_c => grad
-            h_diag_c => h_diag
-        else
-            allocate(kappa_c(size(kappa)))
-            allocate(grad_c(size(kappa)))
-            allocate(h_diag_c(size(kappa)))
-            kappa_c = real(kappa, kind=c_rp)
-        end if
 
         ! call update_orbs C function and keep the Hessian linear transformation it
         ! returns in the context, that of the internal stability check through a
@@ -528,7 +495,7 @@ contains
         select type (callbacks => context)
         type is (c_callbacks_type)
             call copy_state_to_c(callbacks)
-            error_c = callbacks%update_orbs(kappa_c, func_c, grad_c, h_diag_c, &
+            error_c = callbacks%update_orbs(kappa, func, grad, h_diag, &
                                             hess_x_c_funptr, callbacks%host_context)
             if (c_associated(hess_x_c_funptr)) then
                 call c_f_procpointer(cptr=hess_x_c_funptr, fptr=callbacks%hess_x)
@@ -541,16 +508,8 @@ contains
             error_c = 1
         end select
 
-        ! convert arguments to Fortran kind
-        func = real(func_c, kind=rp)
+        ! convert error code to Fortran kind
         error = int(error_c, kind=ip)
-        if (rp /= c_rp) then
-            grad = real(grad_c, kind=rp)
-            h_diag = real(h_diag_c, kind=rp)
-            deallocate(kappa_c)
-            deallocate(grad_c)
-            deallocate(h_diag_c)
-        end if
 
         ! associate procedure pointer to wrapper function if the C function provided a
         ! Hessian linear transformation, otherwise leave it disassociated so that the
@@ -573,35 +532,19 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        real(c_rp), pointer :: x_c(:), hess_x_c(:)
         integer(c_ip) :: error_c
-
-        ! convert arguments to C kind
-        if (rp == c_rp) then
-            x_c => x
-            hess_x_c => hess_x
-        else
-            allocate(x_c(size(x)))
-            allocate(hess_x_c(size(x)))
-            x_c = real(x, kind=c_rp)
-        end if
 
         ! call C function
         select type (callbacks => context)
         type is (c_callbacks_type)
             call copy_state_to_c(callbacks)
-            error_c = callbacks%hess_x(x_c, hess_x_c, callbacks%host_context)
+            error_c = callbacks%hess_x(x, hess_x, callbacks%host_context)
         class default
             error_c = 1
         end select
 
-        ! convert arguments to Fortran kind
+        ! convert error code to Fortran kind
         error = int(error_c, kind=ip)
-        if (rp /= c_rp) then
-            hess_x = real(hess_x_c, kind=rp)
-            deallocate(x_c)
-            deallocate(hess_x_c)
-        end if
 
     end subroutine hess_x_f_wrapper
 
@@ -614,34 +557,20 @@ contains
         class(*), intent(in), pointer :: context
         real(rp) :: obj_func
 
-        real(c_rp) :: obj_func_c
-        real(c_rp), pointer :: kappa_c(:)
         integer(c_ip) :: error_c
 
-        ! convert arguments to C kind
-        if (rp == c_rp) then
-            kappa_c => kappa
-        else
-            allocate(kappa_c(size(kappa)))
-            kappa_c = real(kappa, kind=c_rp)
-        end if
-
         ! call obj_func C function
-        obj_func_c = 0.0_c_rp
+        obj_func = 0.0_rp
         select type (callbacks => context)
         type is (c_callbacks_type)
             call copy_state_to_c(callbacks)
-            error_c = callbacks%obj_func(kappa_c, obj_func_c, callbacks%host_context)
+            error_c = callbacks%obj_func(kappa, obj_func, callbacks%host_context)
         class default
             error_c = 1
         end select
 
-        ! convert arguments to Fortran kind
-        obj_func = real(obj_func_c, kind=rp)
+        ! convert error code to Fortran kind
         error = int(error_c, kind=ip)
-        if (rp /= c_rp) then
-            deallocate(kappa_c)
-        end if
 
     end function obj_func_f_wrapper
 
@@ -655,38 +584,20 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        real(c_rp) :: mu_c
-        real(c_rp), pointer :: residual_c(:), precond_residual_c(:)
         integer(c_ip) :: error_c
-
-        ! convert arguments to C kind
-        mu_c = real(mu, kind=c_rp)
-        if (rp == c_rp) then
-            residual_c => residual
-            precond_residual_c => precond_residual
-        else
-            allocate(residual_c(size(residual)))
-            allocate(precond_residual_c(size(residual)))
-            residual_c = real(residual, kind=c_rp)
-        end if
 
         ! call precond C function
         select type (callbacks => context)
         type is (c_callbacks_type)
             call copy_state_to_c(callbacks)
-            error_c = callbacks%precond(residual_c, mu_c, precond_residual_c, &
+            error_c = callbacks%precond(residual, mu, precond_residual, &
                                         callbacks%host_context)
         class default
             error_c = 1
         end select
 
-        ! convert arguments to Fortran kind
+        ! convert error code to Fortran kind
         error = int(error_c, kind=ip)
-        if (rp /= c_rp) then
-            precond_residual = real(precond_residual_c, kind=rp)
-            deallocate(residual_c)
-            deallocate(precond_residual_c)
-        end if
 
     end subroutine precond_f_wrapper
 
@@ -698,32 +609,19 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        real(c_rp), pointer :: vector_c(:)
         integer(c_ip) :: error_c
-
-        ! convert arguments to C kind
-        if (rp == c_rp) then
-            vector_c => vector
-        else
-            allocate(vector_c(size(vector)))
-            vector_c = real(vector, kind=c_rp)
-        end if
 
         ! call project C function
         select type (callbacks => context)
         type is (c_callbacks_type)
             call copy_state_to_c(callbacks)
-            error_c = callbacks%project(vector_c, callbacks%host_context)
+            error_c = callbacks%project(vector, callbacks%host_context)
         class default
             error_c = 1
         end select
 
-        ! convert arguments to Fortran kind
+        ! convert error code to Fortran kind
         error = int(error_c, kind=ip)
-        if (rp /= c_rp) then
-            vector = real(vector_c, kind=rp)
-            deallocate(vector_c)
-        end if
 
     end subroutine project_f_wrapper
 
@@ -762,33 +660,20 @@ contains
         integer(ip), intent(out) :: error
         class(*), intent(in), pointer :: context
 
-        real(c_rp), pointer :: trial_vectors_c(:, :)
         integer(c_ip) :: error_c
-
-        ! convert arguments to C kind
-        if (rp == c_rp) then
-            trial_vectors_c => trial_vectors
-        else
-            allocate(trial_vectors_c(size(trial_vectors, 1), size(trial_vectors, 2)))
-            trial_vectors_c = real(trial_vectors, kind=c_rp)
-        end if
 
         ! call get_extra_trial_vectors C function
         select type (callbacks => context)
         type is (c_callbacks_type)
             call copy_state_to_c(callbacks)
-            error_c = callbacks%get_extra_trial_vectors(trial_vectors_c, size( &
+            error_c = callbacks%get_extra_trial_vectors(trial_vectors, size( &
                 trial_vectors, 2, kind=c_ip), callbacks%host_context)
         class default
             error_c = 1
         end select
 
-        ! convert arguments to Fortran kind
+        ! convert error code to Fortran kind
         error = int(error_c, kind=ip)
-        if (rp /= c_rp) then
-            trial_vectors = real(trial_vectors_c, kind=rp)
-            deallocate(trial_vectors_c)
-        end if
 
     end subroutine get_extra_trial_vectors_f_wrapper
 
