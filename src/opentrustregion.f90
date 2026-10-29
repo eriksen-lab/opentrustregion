@@ -694,8 +694,9 @@ contains
         ! (linearized) gradient RMS increases to one order of magnitude above its
         ! current value, or above the convergence threshold if the gradient is already
         ! converged, or, if both vanish, the step to the trust radius, halves it until
-        ! the objective function decreases and, if no step that the objective function
-        ! can resolve does, returns no step and flags maximum precision in the state
+        ! the objective function decreases and, if it has to be halved until the
+        ! objective function can no longer resolve its decrease, returns no step and
+        ! flags maximum precision in the state
         !
         use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
 
@@ -754,9 +755,9 @@ contains
         ! the direction of negative curvature once the step is short enough, as long as
         ! the objective function can resolve the predicted decrease, while a step whose
         ! predicted decrease it can not resolve from the start is taken as it is and a
-        ! step whose length is not finite, as for an eigenvalue that hardly differs
-        ! from zero, is not taken
-        escaped = ieee_is_finite(n_kappa)
+        ! step whose predicted decrease is not finite, as for an eigenvalue that hardly
+        ! differs from zero, at which the step or its square overflows, is not taken
+        escaped = ieee_is_finite(pred_func_diff)
         do while (escaped .and. abs(pred_func_diff) > func_resolution)
             new_func = invoke_obj_func(obj_func, n_kappa * kappa, settings, &
                                        state%n_obj_func, error)

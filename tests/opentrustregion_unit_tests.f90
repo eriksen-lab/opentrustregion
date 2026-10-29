@@ -3586,13 +3586,14 @@ contains
         ! the callback functions of the stability check, that its Hessian linear
         ! transformations are added to the solver's counter, that a step along the
         ! unstable mode is returned with its norm and the length the gradient and the
-        ! eigenvalue set, which the objective function, which decreases there from the
-        ! value handed on, has to accept in a single evaluation counted by the state,
-        ! and that the warning for starting at a saddle point is printed
+        ! eigenvalue set, also beyond the trust radius, which the objective function,
+        ! which decreases there from the value handed on, has to accept in a single
+        ! evaluation counted by the state, and that the warning for starting at a
+        ! saddle point is printed
         call setup_settings(settings, context)
         state%n_hess_x = 5
         state%n_obj_func = 3
-        state%trust_radius = 1.0_rp
+        state%trust_radius = 1e-5_rp
         context%vars = [0.5_rp, 0.0_rp]
         context%n_obj_func_calls = 0
         grad = [0.0_rp, 0.5_rp * settings%conv_tol * sqrt(2.0_rp)]
@@ -3922,18 +3923,19 @@ contains
             test_saddle_point_step = .false.
         end if
 
-        ! with an objective function which never decreases, the step has to be halved
-        ! until the objective function can no longer resolve the predicted decrease,
-        ! which at least halves with the step and which the resolution, measured
-        ! against at least the decrease predicted for the full step, therefore stops
-        ! within fewer halvings than the floating point precision has digits, and no
-        ! step has to be taken, maximum precision has to be reached and a warning
-        ! printed
+        ! with an objective function which keeps its current value at every step, which
+        ! is no decrease, the step has to be halved until the objective function can no
+        ! longer resolve the predicted decrease, which at least halves with the step
+        ! and which the resolution, measured against at least the decrease predicted
+        ! for the full step, therefore stops within fewer halvings than the floating
+        ! point precision has digits, and no step has to be taken, maximum precision
+        ! has to be reached and a warning printed
         kappa = unstable_dir
         state%n_obj_func = 0
         state%max_precision_reached = .false.
         context%log_message = ""
-        call saddle_point_step(0.0_rp, grad, grad_rms, obj_func_funptr, settings, &
+        obj_func_funptr => constant_obj_func
+        call saddle_point_step(1.0_rp, grad, grad_rms, obj_func_funptr, settings, &
                                state, kappa, kappa_norm, error)
         if (.not. all(is_at_most(abs(kappa), 0.0_rp)) .or. &
             .not. is_at_most(kappa_norm, 0.0_rp)) then
@@ -3957,6 +3959,7 @@ contains
                 "where the objective function never decreases."
             test_saddle_point_step = .false.
         end if
+        obj_func_funptr => step_length_obj_func
 
         ! with a current value of the objective function so large that it can not
         ! resolve the decrease predicted for the step of the last case, the step has to
@@ -3974,12 +3977,10 @@ contains
             test_saddle_point_step = .false.
         end if
 
-        ! with an eigenvalue so close to zero that the length of the step overflows, no
-        ! step has to be taken and maximum precision has to be reached without
-        ! evaluating the objective function
-        state%stability_state%min_eigval = -tiny(1.0_rp)
-        state%stability_state%min_eigval = epsilon(1.0_rp) * &
-                                           state%stability_state%min_eigval
+        ! with an eigenvalue so close to zero that the predicted decrease of the step
+        ! overflows, although its length does not, no step has to be taken and maximum
+        ! precision has to be reached without evaluating the objective function
+        state%stability_state%min_eigval = -1e-200_rp
         kappa = unstable_dir
         state%max_precision_reached = .false.
         call saddle_point_step(10.0_rp, grad, grad_rms, obj_func_funptr, settings, &
@@ -3987,7 +3988,7 @@ contains
         if (.not. all(is_at_most(abs(kappa), 0.0_rp)) .or. state%n_obj_func /= 0 .or. &
             .not. state%max_precision_reached) then
             write(stderr, *) "test_saddle_point_step failed: Step not rejected "// &
-                "without evaluation where its length overflows."
+                "without evaluation where its predicted decrease overflows."
             test_saddle_point_step = .false.
         end if
         state%stability_state%min_eigval = -0.5_rp
