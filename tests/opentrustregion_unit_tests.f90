@@ -254,6 +254,26 @@ contains
 
     end function infinite_obj_func
 
+    function step_length_obj_func(delta_vars, error, context) result(func)
+        !
+        ! this function describes an objective function evaluation that returns the
+        ! length of the displacement
+        !
+        use test_reference, only: check_host_context
+
+        real(rp), intent(in), target :: delta_vars(:)
+        integer(ip), intent(out) :: error
+        class(*), intent(in), pointer :: context
+        real(rp) :: func
+
+        ! check host context
+        call check_host_context(context)
+
+        error = 0
+        func = norm2(delta_vars)
+
+    end function step_length_obj_func
+
     subroutine mock_precond(residual, mu, precond_residual, error, context)
         !
         ! this subroutine is a test subroutine for the preconditioner subroutine
@@ -2862,6 +2882,32 @@ contains
             test_solver = .false.
         end if
 
+        ! start at the saddle point of the double well function at the origin, where
+        ! the gradient vanishes exactly and so passes the convergence check, with an
+        ! objective function which does not decrease along the unstable mode, so that
+        ! no step leaves the saddle point, and check that the solver stops there
+        ! without an error and flags that maximum precision was reached nevertheless
+        call setup_settings(settings, double_well_context)
+        double_well_context%vars = [0.0_rp, 0.0_rp]
+        update_orbs_funptr => double_well_update_orbs
+        obj_func_funptr => constant_obj_func
+        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings, state)
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error at a saddle point "// &
+                "which no step leaves."
+            test_solver = .false.
+        end if
+        if (.not. state%max_precision_reached) then
+            write(stderr, *) "test_solver failed: Maximum precision not flagged at "// &
+                "a saddle point which no step leaves."
+            test_solver = .false.
+        end if
+        if (.not. all(is_at_most(abs(double_well_context%vars), 0.0_rp))) then
+            write(stderr, *) "test_solver failed: Moved away from a saddle point "// &
+                "which no step leaves."
+            test_solver = .false.
+        end if
+
         ! inject faults by running the solver from the saddle point, where it performs
         ! the internal stability check, with a rejected first trust-region step, a
         ! stability check at convergence, a line search and every optional callback
@@ -3503,16 +3549,17 @@ contains
         ! this function tests the subroutine which performs the stability check at a
         ! stationary point and determines the step along an unstable mode
         !
-        use opentrustregion_core, only: solver_settings_type, hess_x_type, &
-                                        check_stationary_point, error_stability_check, &
-                                        started_at_saddle_point_warning_msg, &
-                                        reached_saddle_point_warning_msg, &
-                                        reached_saddle_point_no_grad_noise_warning_msg
+        use opentrustregion_core, only: &
+            solver_settings_type, obj_func_type, hess_x_type, check_stationary_point, &
+            error_stability_check, started_at_saddle_point_warning_msg, &
+            reached_saddle_point_warning_msg, &
+            reached_saddle_point_no_grad_noise_warning_msg
         use test_reference, only: arm_host_context, host_context_reached
 
         type(solver_settings_type) :: settings
         type(solver_state_type) :: state
         type(double_well_context_type), target :: context, stability_context
+        procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
         real(rp) :: kappa(2), kappa_norm, grad(2), grad_rms
         logical :: stable
@@ -3528,24 +3575,31 @@ contains
         ! assume tests pass
         test_check_stationary_point = .true.
 
-        ! set function pointer
+        ! set function pointers
+        obj_func_funptr => double_well_obj_func
         hess_x_funptr => double_well_hess_x
 
-        ! check the saddle point in the first macro iteration with a converged gradient
-        ! along the unstable mode and a context in the nested stability check settings
-        ! and check that this context reaches the callback functions of the stability
-        ! check, that its Hessian linear transformations are added to the solver's
-        ! counter, that a step along the unstable mode is returned with its norm and
-        ! the length the gradient and the eigenvalue set and that the warning for
-        ! starting at a saddle point is printed
+        ! check the saddle point in the first macro iteration, here shifted along the
+        ! stable mode, where the Hessian is unchanged and the objective function does
+        ! not vanish, with a converged gradient along the unstable mode and a context
+        ! in the nested stability check settings and check that this context reaches
+        ! the callback functions of the stability check, that its Hessian linear
+        ! transformations are added to the solver's counter, that a step along the
+        ! unstable mode is returned with its norm and the length the gradient and the
+        ! eigenvalue set, which the objective function, which decreases there from the
+        ! value handed on, has to accept in a single evaluation counted by the state,
+        ! and that the warning for starting at a saddle point is printed
         call setup_settings(settings, context)
         state%n_hess_x = 5
+        state%n_obj_func = 3
         state%trust_radius = 1.0_rp
-        context%vars = [0.0_rp, 0.0_rp]
+        context%vars = [0.5_rp, 0.0_rp]
+        context%n_obj_func_calls = 0
         grad = [0.0_rp, 0.5_rp * settings%conv_tol * sqrt(2.0_rp)]
         grad_rms = norm2(grad) / sqrt(2.0_rp)
         call arm_host_context(settings%stability_settings, context)
-        call check_stationary_point(grad, grad_rms, saddle_h_diag, hess_x_funptr, &
+        call check_stationary_point(double_well_func(context%vars), grad, grad_rms, &
+                                    saddle_h_diag, obj_func_funptr, hess_x_funptr, &
                                     1_ip, settings, state, stable, kappa, kappa_norm, &
                                     error)
         if (error /= 0) then
@@ -3586,6 +3640,12 @@ contains
                 "unstable mode does not point against the gradient."
             test_check_stationary_point = .false.
         end if
+        if (context%n_obj_func_calls /= 1 .or. state%n_obj_func /= 4) then
+            write(stderr, *) "test_check_stationary_point failed: Step along "// &
+                "unstable mode beyond the trust radius not evaluated once by the "// &
+                "objective function and counted by the state."
+            test_check_stationary_point = .false.
+        end if
         if (.not. host_context_reached("check_stationary_point", context)) &
             test_check_stationary_point = .false.
         if (state%stability_state%n_hess_x <= 0) then
@@ -3618,7 +3678,8 @@ contains
         stability_context%vars = [0.0_rp, 0.0_rp]
         stability_context%hess_x_called = .false.
         settings%stability_settings%context => stability_context
-        call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
+        call check_stationary_point(double_well_func(context%vars), stationary_grad, &
+                                    0.0_rp, saddle_h_diag, obj_func_funptr, &
                                     hess_x_funptr, 2_ip, settings, state, stable, &
                                     kappa, kappa_norm, error)
         if (error /= 0) then
@@ -3650,7 +3711,8 @@ contains
         settings%conv_tol = 0.0_rp
         settings%stability_settings%context => context
         state%trust_radius = 0.7_rp
-        call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
+        call check_stationary_point(double_well_func(context%vars), stationary_grad, &
+                                    0.0_rp, saddle_h_diag, obj_func_funptr, &
                                     hess_x_funptr, 2_ip, settings, state, stable, &
                                     kappa, kappa_norm, error)
         if (error /= 0) then
@@ -3671,11 +3733,38 @@ contains
             test_check_stationary_point = .false.
         end if
 
+        ! check the saddle point in a later macro iteration with an objective function
+        ! which does not decrease along the unstable mode, so that no step leaves it,
+        ! and check that no warning for reaching a saddle point is printed, since the
+        ! solver does not continue from it
+        call setup_settings(settings, context)
+        settings%stability_settings%context => context
+        context%vars = [0.0_rp, 0.0_rp]
+        obj_func_funptr => constant_obj_func
+        call check_stationary_point(double_well_func(context%vars), stationary_grad, &
+                                    0.0_rp, saddle_h_diag, obj_func_funptr, &
+                                    hess_x_funptr, 2_ip, settings, state, stable, &
+                                    kappa, kappa_norm, error)
+        if (error /= 0) then
+            write(stderr, *) "test_check_stationary_point failed: Produced error "// &
+                "at saddle point which no step leaves."
+            test_check_stationary_point = .false.
+        end if
+        if (index(context%log_message, " "//reached_saddle_point_warning_msg) /= &
+            0 .or. index(context%log_message, &
+                         " "//reached_saddle_point_no_grad_noise_warning_msg) /= 0) then
+            write(stderr, *) "test_check_stationary_point failed: Warning for "// &
+                "reaching saddle point printed although no step leaves it."
+            test_check_stationary_point = .false.
+        end if
+        obj_func_funptr => double_well_obj_func
+
         ! check that a minimum is found to be stable
         call setup_settings(settings, context)
         settings%stability_settings%context => context
         context%vars = [0.0_rp, 1.0_rp / sqrt(2.0_rp)]
-        call check_stationary_point(stationary_grad, 0.0_rp, minimum_h_diag, &
+        call check_stationary_point(double_well_func(context%vars), stationary_grad, &
+                                    0.0_rp, minimum_h_diag, obj_func_funptr, &
                                     hess_x_funptr, 2_ip, settings, state, stable, &
                                     kappa, kappa_norm, error)
         if (error /= 0) then
@@ -3694,7 +3783,8 @@ contains
         ! stability check
         call setup_settings(settings, context)
         settings%stability_settings%diag_solver = "unknown"
-        call check_stationary_point(stationary_grad, 0.0_rp, saddle_h_diag, &
+        call check_stationary_point(double_well_func(context%vars), stationary_grad, &
+                                    0.0_rp, saddle_h_diag, obj_func_funptr, &
                                     hess_x_funptr, 2_ip, settings, state, stable, &
                                     kappa, kappa_norm, error)
         if (error /= error_stability_check + 1) then
@@ -3710,7 +3800,9 @@ contains
         !
         ! this function tests the saddle-point step subroutine
         !
-        use opentrustregion_core, only: solver_settings_type, saddle_point_step
+        use opentrustregion_core, only: solver_settings_type, obj_func_type, &
+                                        saddle_point_step, error_obj_func, &
+                                        unconfirmed_negative_curvature_warning_msg
 
         ! cases with a gradient RMS below and well above the convergence threshold and
         ! a direction of negative curvature orthogonal to the gradient or overlapping
@@ -3720,20 +3812,28 @@ contains
             "convergence threshold", "above the convergence threshold with "// &
             "positive overlap", "above the convergence threshold with negative overlap"]
         real(rp) :: grad_dir(n_param), kappa_dir(n_param), unstable_dir(n_param), &
-                    grad(n_param), kappa(n_param), kappa_norm, min_eigval, grad_rms, &
-                    target_grad_rms, predicted_grad_rms, trust_radius
-        integer(ip) :: i
+                    grad(n_param), kappa(n_param), kappa_norm, grad_rms, &
+                    target_grad_rms, predicted_grad_rms, target_kappa(n_param)
+        integer(ip) :: i, error
         type(solver_settings_type) :: settings
+        type(solver_state_type) :: state
+        type(bracket_context_type), target :: context
+        procedure(obj_func_type), pointer :: obj_func_funptr
 
         ! assume tests pass
         test_saddle_point_step = .true.
 
-        ! generate a trust radius, which only a vanishing target uses
-        call random_number(trust_radius)
-        trust_radius = trust_radius + 0.1_rp
-
-        ! set convergence threshold
+        ! set up settings whose logging function records the warnings, a convergence
+        ! threshold, the eigenvalue of the direction of negative curvature and a trust
+        ! radius, which only a vanishing target uses, and an objective function which
+        ! returns the length of the step and so decreases from a current value above
+        ! the length of every step of the following cases
+        call setup_settings(settings, context)
         settings%conv_tol = 1e-6_rp
+        state%stability_state%min_eigval = -0.5_rp
+        call random_number(state%trust_radius)
+        state%trust_radius = state%trust_radius + 0.1_rp
+        obj_func_funptr => step_length_obj_func
 
         ! generate a random gradient direction and a random direction of negative
         ! curvature orthogonal to it, mimicking a (near-)saddle point where the
@@ -3743,14 +3843,15 @@ contains
         call random_number(kappa_dir)
         kappa_dir = kappa_dir - dot_product(kappa_dir, grad_dir) * grad_dir
         kappa_dir = kappa_dir / norm2(kappa_dir)
-        min_eigval = -0.5_rp
 
         ! test a gradient RMS below the convergence threshold, as when starting exactly
         ! at a stationary point, and well above it, as when maximum precision is
         ! reached at an unstable point before the gradient has converged, with the
         ! direction of negative curvature orthogonal to the gradient, and well above it
         ! with a direction overlapping the gradient, along which the step has to point
-        ! against the gradient
+        ! against the gradient, where the objective function decreases at the step, so
+        ! that the step has to be evaluated once and taken and maximum precision, which
+        ! starts flagged, has to be reported as not reached
         do i = 1, size(case_names)
             if (i == 1) then
                 grad = 0.1_rp * settings%conv_tol * sqrt(real(n_param, kind=rp)) * &
@@ -3769,13 +3870,26 @@ contains
             end if
 
             kappa = unstable_dir
-            call saddle_point_step(grad, grad_rms, min_eigval, trust_radius, settings, &
-                                   kappa, kappa_norm)
+            state%n_obj_func = 0
+            state%max_precision_reached = .true.
+            call saddle_point_step(10.0_rp, grad, grad_rms, obj_func_funptr, settings, &
+                                   state, kappa, kappa_norm, error)
+            if (error /= 0) then
+                write(stderr, *) "test_saddle_point_step failed: Produced error "// &
+                    trim(case_names(i))//"."
+                test_saddle_point_step = .false.
+            end if
+            if (state%n_obj_func /= 1 .or. state%max_precision_reached) then
+                write(stderr, *) "test_saddle_point_step failed: Step not "// &
+                    "evaluated once and taken where the objective function "// &
+                    "decreases "//trim(case_names(i))//"."
+                test_saddle_point_step = .false.
+            end if
 
             ! the linearized gradient after taking the step should have exactly the
             ! targeted gradient RMS
-            predicted_grad_rms = norm2(grad + min_eigval * kappa) / &
-                                 sqrt(real(n_param, kind=rp))
+            predicted_grad_rms = norm2(grad + state%stability_state%min_eigval * &
+                                       kappa) / sqrt(real(n_param, kind=rp))
             if (.not. is_close(predicted_grad_rms, target_grad_rms)) then
                 write(stderr, *) "test_saddle_point_step failed: Step does not "// &
                     "reach targeted gradient RMS "//trim(case_names(i))//"."
@@ -3792,6 +3906,106 @@ contains
                 test_saddle_point_step = .false.
             end if
         end do
+        target_kappa = kappa
+
+        ! with a current value of the objective function between its values at the
+        ! halved and at the full step of the last case, the step has to be halved once
+        kappa = unstable_dir
+        state%n_obj_func = 0
+        call saddle_point_step(0.75_rp * norm2(target_kappa), grad, grad_rms, &
+                               obj_func_funptr, settings, state, kappa, kappa_norm, &
+                               error)
+        if (.not. all(is_close(kappa, 0.5_rp * target_kappa)) .or. &
+            state%n_obj_func /= 2) then
+            write(stderr, *) "test_saddle_point_step failed: Step not halved once "// &
+                "where the objective function only decreases at half its length."
+            test_saddle_point_step = .false.
+        end if
+
+        ! with an objective function which never decreases, the step has to be halved
+        ! until the objective function can no longer resolve the predicted decrease,
+        ! which at least halves with the step and which the resolution, measured
+        ! against at least the decrease predicted for the full step, therefore stops
+        ! within fewer halvings than the floating point precision has digits, and no
+        ! step has to be taken, maximum precision has to be reached and a warning
+        ! printed
+        kappa = unstable_dir
+        state%n_obj_func = 0
+        state%max_precision_reached = .false.
+        context%log_message = ""
+        call saddle_point_step(0.0_rp, grad, grad_rms, obj_func_funptr, settings, &
+                               state, kappa, kappa_norm, error)
+        if (.not. all(is_at_most(abs(kappa), 0.0_rp)) .or. &
+            .not. is_at_most(kappa_norm, 0.0_rp)) then
+            write(stderr, *) "test_saddle_point_step failed: Step taken where the "// &
+                "objective function never decreases."
+            test_saddle_point_step = .false.
+        end if
+        if (.not. state%max_precision_reached) then
+            write(stderr, *) "test_saddle_point_step failed: Maximum precision not "// &
+                "reached where the objective function never decreases."
+            test_saddle_point_step = .false.
+        end if
+        if (state%n_obj_func > digits(1.0_rp)) then
+            write(stderr, *) "test_saddle_point_step failed: Halving not stopped "// &
+                "at the resolution where the objective function never decreases."
+            test_saddle_point_step = .false.
+        end if
+        if (index(context%log_message, &
+                  " "//unconfirmed_negative_curvature_warning_msg) == 0) then
+            write(stderr, *) "test_saddle_point_step failed: Warning not printed "// &
+                "where the objective function never decreases."
+            test_saddle_point_step = .false.
+        end if
+
+        ! with a current value of the objective function so large that it can not
+        ! resolve the decrease predicted for the step of the last case, the step has to
+        ! be taken without evaluating the objective function
+        kappa = unstable_dir
+        state%n_obj_func = 0
+        state%max_precision_reached = .true.
+        call saddle_point_step(1e20_rp, grad, grad_rms, obj_func_funptr, settings, &
+                               state, kappa, kappa_norm, error)
+        if (.not. all(is_close(kappa, target_kappa)) .or. state%n_obj_func /= 0 .or. &
+            state%max_precision_reached) then
+            write(stderr, *) "test_saddle_point_step failed: Step not taken "// &
+                "unevaluated where the objective function can not resolve its "// &
+                "predicted decrease."
+            test_saddle_point_step = .false.
+        end if
+
+        ! with an eigenvalue so close to zero that the length of the step overflows, no
+        ! step has to be taken and maximum precision has to be reached without
+        ! evaluating the objective function
+        state%stability_state%min_eigval = -tiny(1.0_rp)
+        state%stability_state%min_eigval = epsilon(1.0_rp) * &
+                                           state%stability_state%min_eigval
+        kappa = unstable_dir
+        state%max_precision_reached = .false.
+        call saddle_point_step(10.0_rp, grad, grad_rms, obj_func_funptr, settings, &
+                               state, kappa, kappa_norm, error)
+        if (.not. all(is_at_most(abs(kappa), 0.0_rp)) .or. state%n_obj_func /= 0 .or. &
+            .not. state%max_precision_reached) then
+            write(stderr, *) "test_saddle_point_step failed: Step not rejected "// &
+                "without evaluation where its length overflows."
+            test_saddle_point_step = .false.
+        end if
+        state%stability_state%min_eigval = -0.5_rp
+
+        ! let the objective function fail with a value which does not decrease, so
+        ! that the failure has to stop the halving, and check that its error is
+        ! reported with its origin
+        context%n_calls = 0
+        context%fail_call = 1
+        obj_func_funptr => bracket_obj_func
+        kappa = unstable_dir
+        call saddle_point_step(0.0_rp, grad, grad_rms, obj_func_funptr, settings, &
+                               state, kappa, kappa_norm, error)
+        if (error /= error_obj_func + 1) then
+            write(stderr, *) "test_saddle_point_step failed: Did not report the "// &
+                "error of the objective function with its origin."
+            test_saddle_point_step = .false.
+        end if
 
         ! with a vanishing gradient and convergence threshold no gradient RMS can be
         ! targeted, and the step along the direction of negative curvature has to reach
@@ -3799,35 +4013,13 @@ contains
         settings%conv_tol = 0.0_rp
         grad = 0.0_rp
         kappa = kappa_dir
-        call saddle_point_step(grad, 0.0_rp, min_eigval, trust_radius, settings, &
-                               kappa, kappa_norm)
-        if (.not. is_at_most(norm2(kappa - trust_radius * kappa_dir), tol) .or. &
-            .not. is_close(kappa_norm, trust_radius)) then
+        obj_func_funptr => step_length_obj_func
+        call saddle_point_step(10.0_rp, grad, 0.0_rp, obj_func_funptr, settings, &
+                               state, kappa, kappa_norm, error)
+        if (.not. is_at_most(norm2(kappa - state%trust_radius * kappa_dir), tol) .or. &
+            .not. is_close(kappa_norm, state%trust_radius)) then
             write(stderr, *) "test_saddle_point_step failed: Step does not reach "// &
                 "trust radius at vanishing gradient and convergence threshold."
-            test_saddle_point_step = .false.
-        end if
-
-        ! with a trust radius below the length of the step that reaches the targeted
-        ! gradient RMS, the step, which is taken without evaluating the objective
-        ! function, is limited to the trust radius and still points against the
-        ! gradient
-        settings%conv_tol = 1e-6_rp
-        grad = 50.0_rp * settings%conv_tol * sqrt(real(n_param, kind=rp)) * grad_dir
-        grad_rms = norm2(grad) / sqrt(real(n_param, kind=rp))
-        unstable_dir = kappa_dir + 0.5_rp * grad_dir
-        kappa = unstable_dir / norm2(unstable_dir)
-        trust_radius = 1e-5_rp
-        call saddle_point_step(grad, grad_rms, min_eigval, trust_radius, settings, &
-                               kappa, kappa_norm)
-        if (.not. is_close(norm2(kappa), trust_radius)) then
-            write(stderr, *) "test_saddle_point_step failed: Step not limited to "// &
-                "the trust radius."
-            test_saddle_point_step = .false.
-        end if
-        if (.not. is_below(dot_product(grad, kappa), 0.0_rp)) then
-            write(stderr, *) "test_saddle_point_step failed: Step limited to the "// &
-                "trust radius does not point against the gradient."
             test_saddle_point_step = .false.
         end if
 
@@ -8112,8 +8304,7 @@ contains
         ! which the stagnation switches to, decreases the residual by less than a fifth
         ! in its first micro iteration and needs several to solve the subproblem, and
         ! check that it gets them and solves the subproblem in the first step instead
-        ! of stopping right after the switch, the gradient is small enough for the
-        ! step to rotate no parameter by more than pi / 4, which would reject it
+        ! of stopping right after the switch
         call setup_settings(settings, quadratic_context)
         settings%grad_noise = .false.
         settings%n_random_trial_vectors = 0
@@ -9018,33 +9209,27 @@ contains
         use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_negative_inf, &
                                                  ieee_positive_inf, ieee_quiet_nan
 
-        ! cases with the reason for accepting or rejecting the step, the size of the
-        ! first rotation, the norm of the step, the ratio of actual to predicted
-        ! function change, whether the micro iterations converged, and the expected
-        ! acceptance and trust radius, for a starting trust radius of one
-        character(len=*), parameter :: case_names(7) = &
+        ! cases with the reason for accepting or rejecting the step, the norm of the
+        ! step, the ratio of actual to predicted function change, whether the micro
+        ! iterations converged, and the expected acceptance and trust radius, for a
+        ! starting trust radius of one
+        character(len=*), parameter :: case_names(6) = &
             [character(len=47) :: "micro iterations have not converged", &
-             "function value increases", "individual rotations are too large", &
-             "ratio is too small", "ratio is acceptable", "ratio is too large at "// &
-             "the trust region boundary", "ratio is too large within the trust region"]
+             "function value increases", "ratio is too small", "ratio is acceptable", &
+             "ratio is too large at the trust region boundary", &
+             "ratio is too large within the trust region"]
         real(rp), parameter :: &
-            case_rotations(7) = &
-                [0.3_rp, 0.3_rp, 1.0_rp, 0.3_rp, 0.3_rp, 0.3_rp, 0.3_rp], &
-            case_step_norms(7) = &
-                [0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 1.0_rp, 0.5_rp], &
-            case_ratios(7) = [ &
-                1.0_rp, -1.0_rp, 1.0_rp, 0.9_rp * trust_radius_shrink_ratio, 0.5_rp * &
+            case_step_norms(6) = [0.5_rp, 0.5_rp, 0.5_rp, 0.5_rp, 1.0_rp, 0.5_rp], &
+            case_ratios(6) = [ &
+                1.0_rp, -1.0_rp, 0.9_rp * trust_radius_shrink_ratio, 0.5_rp * &
                 (trust_radius_shrink_ratio + trust_radius_expand_ratio), 1.1_rp * &
                 trust_radius_expand_ratio, 1.1_rp * trust_radius_expand_ratio], &
-            case_trust_radii(7) = [ &
+            case_trust_radii(6) = [ &
                 trust_radius_shrink_factor, trust_radius_shrink_factor, &
-                trust_radius_shrink_factor, trust_radius_shrink_factor, 1.0_rp, &
-                trust_radius_expand_factor, 1.0_rp]
+                trust_radius_shrink_factor, 1.0_rp, trust_radius_expand_factor, 1.0_rp]
         logical, parameter :: &
-            case_converged(7) = &
-                [.false., .true., .true., .true., .true., .true., .true.], &
-            case_accepted(7) = &
-                [.false., .false., .false., .true., .true., .true., .true.]
+            case_converged(6) = [.false., .true., .true., .true., .true., .true.], &
+            case_accepted(6) = [.false., .false., .true., .true., .true., .true.]
 
         ! cases with the objective function value, the actual and the predicted
         ! function change, whether the micro iterations converged and whether maximum
@@ -9097,7 +9282,6 @@ contains
         real(rp) :: error_step_norms(3), error_actual(3), error_predicted(3)
 
         logical :: accept_step
-        real(rp) :: solution(3)
         type(solver_state_type) :: state
         type(solver_settings_type) :: settings
         type(test_context_type), target :: context
@@ -9109,17 +9293,14 @@ contains
         ! setup settings object
         call setup_settings(settings, context)
 
-        solution = [0.3_rp, 0.3_rp, 0.3_rp]
-
         ! check for every case whether the step is accepted and the trust radius is
         ! reduced, kept or expanded, without maximum precision being reported as
         ! reached, the flag starts set so that a flag which is not cleared is detected
         do i = 1, size(case_names)
             state%trust_radius = 1.0_rp
             state%max_precision_reached = .true.
-            solution(1) = case_rotations(i)
             accept_step = accept_trust_region_step( &
-                solution, case_step_norms(i), -1.0_rp, -case_ratios(i), -1.0_rp, &
+                case_step_norms(i), -1.0_rp, -case_ratios(i), -1.0_rp, &
                 case_converged(i), settings, state, error)
             if (error /= 0) then
                 write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
@@ -9154,8 +9335,8 @@ contains
         do i = 1, size(rejecting_case_names)
             state%trust_radius = 1.0_rp
             accept_step = accept_trust_region_step( &
-                solution, 0.5_rp, -1.0_rp, rejecting_actual(i), &
-                rejecting_predicted(i), .true., settings, state, error)
+                0.5_rp, -1.0_rp, rejecting_actual(i), rejecting_predicted(i), .true., &
+                settings, state, error)
             if (error /= 0) then
                 write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
                     "error for "//trim(rejecting_case_names(i))//"."
@@ -9182,12 +9363,11 @@ contains
         ! check for every case whether maximum precision is reported as reached and,
         ! if so, whether the step is rejected with the trust radius left unchanged and
         ! a warning printed
-        solution(1) = 0.3_rp
         do i = 1, size(precision_case_names)
             state%trust_radius = 1.0_rp
             context%log_message = ""
             accept_step = accept_trust_region_step( &
-                solution, 0.5_rp, precision_case_funcs(i), precision_case_actual(i), &
+                0.5_rp, precision_case_funcs(i), precision_case_actual(i), &
                 precision_case_predicted(i), precision_case_converged(i), settings, &
                 state, error)
             if (error /= 0) then
@@ -9234,8 +9414,8 @@ contains
         do i = 1, size(error_case_names)
             context%log_message = ""
             accept_step = accept_trust_region_step( &
-                solution, error_step_norms(i), -1.0_rp, error_actual(i), &
-                error_predicted(i), .true., settings, state, error)
+                error_step_norms(i), -1.0_rp, error_actual(i), error_predicted(i), &
+                .true., settings, state, error)
             if (error /= 1) then
                 write(stderr, *) "test_accept_trust_region_step failed: Did not "// &
                     "report an error for "//trim(error_case_names(i))//"."
@@ -9608,19 +9788,19 @@ contains
         ! rejects
         character(len=*), parameter :: mixed_case_diag_solvers(2) = &
             [character(len=15) :: "Davidson", "Jacobi-Davidson"]
-        character(len=*), parameter :: error_case_names(11) = &
-            [character(len=55) :: "vanishing number of parameters", &
-             "extra trial vector function without extra trial vectors", &
-             "vanishing number of trial vectors", &
-             "no random and a negative number of extra trial vectors", "no extra "// &
-             "and no random trial vectors that fit", "unknown diagonalization solver", &
-             "non-symmetric Hessian with Jacobi-Davidson solver", "stopping at an "// &
-             "instability with non-symmetric Hessian", "positive stability threshold", &
-             "Hessian diagonal which is not a number", "infinite Hessian diagonal"]
+        character(len=*), parameter :: error_case_names(11) = [ &
+            character(len=55) :: "vanishing number of parameters", &
+            "extra trial vector function without extra trial vectors", &
+            "vanishing number of trial vectors", "no random and a negative number "// &
+            "of extra trial vectors", "no extra and no random trial vectors that fit", &
+            "unknown diagonalization solver", &
+            "non-symmetric Hessian with Jacobi-Davidson solver", "stopping at an "// &
+            "instability with non-symmetric Hessian", "vanishing stability threshold", &
+            "Hessian diagonal which is not a number", "infinite Hessian diagonal"]
         character(len=*), parameter :: accepted_case_names(4) = &
             [character(len=49) :: "non-symmetric Hessian with Davidson solver", &
-             "stopping at an instability with symmetric Hessian", &
-             "no random but extra trial vectors", "vanishing stability threshold"]
+             "stopping at an instability with symmetric Hessian", "no random but "// &
+             "extra trial vectors", "slightly negative stability threshold"]
         type(stability_settings_type) :: settings
         integer(ip) :: error, i_solver, i_case, n_param
         real(rp) :: h_diag(4)
@@ -9720,7 +9900,7 @@ contains
                 settings%hess_symm = .false.
                 settings%stop_on_instability = .true.
             case (9)
-                settings%stability_thresh = 1e-3_rp
+                settings%stability_thresh = 0.0_rp
             case (10)
                 h_diag(2) = ieee_value(1.0_rp, ieee_quiet_nan)
             case (11)
@@ -9752,7 +9932,7 @@ contains
             case (3)
                 settings%n_random_trial_vectors = 0
             case (4)
-                settings%stability_thresh = 0.0_rp
+                settings%stability_thresh = -epsilon(1.0_rp)
             end select
             call stability_sanity_check(settings, 4_ip, error, h_diag)
             if (error /= 0) then

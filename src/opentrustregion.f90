@@ -19,9 +19,6 @@ module opentrustregion_core
 #endif
     integer, parameter :: kw_len = 64
 
-    ! mathematical constants
-    real(rp), parameter :: pi = 4.0_rp * atan(1.0_rp)
-
     ! define trust region parameters
     real(rp), parameter :: &
         trust_radius_shrink_ratio = 0.25_rp, trust_radius_expand_ratio = 0.75_rp, &
@@ -41,7 +38,8 @@ module opentrustregion_core
     real(rp), parameter :: numerical_zero = 1e-14_rp, precond_floor = 1e-10_rp, &
                            hess_symm_thres = 1e-12_rp, residual_norm_floor = 1e-12_rp, &
                            level_shift_local_thres = 1e-12_rp, &
-                           newton_eigval_thresh = -1e-5_rp
+                           newton_eigval_thresh = -1e-5_rp, &
+                           func_resolution_safety_factor = 10.0_rp
 
     ! define verbosity levels
     integer(ip), parameter :: verbosity_silent = 0, verbosity_error = 1, &
@@ -75,6 +73,11 @@ module opentrustregion_core
             "avoided by enabling the gradient perturbation grad_noise. The "// &
             "algorithm will continue by moving along eigenvector direction "// &
             "corresponding to negative eigenvalue.", &
+        unconfirmed_negative_curvature_warning_msg = &
+            "Cost function does not decrease along eigenvector direction "// &
+            "corresponding to negative eigenvalue up to floating point precision, "// &
+            "so the Hessian and the cost function disagree. Calculation stops at "// &
+            "maximum precision.", &
         unstable_warning_msg = "Solution not stable. Lowest eigenvalue: ", &
         bisection_imaginary_eigval_warning_msg = &
             "Bisection cannot reach trust region due to imaginary part of lowest "// &
@@ -424,22 +427,24 @@ contains
                 ! the stationary point is unstable
                 if (local_settings%stability .or. imacro == 1 .or. &
                     grad_norm <= 0.0_rp) then
-                    call check_stationary_point(grad, grad_rms, h_diag, hess_x_funptr, &
-                                                imacro, local_settings, current_state, &
-                                                stable, kappa, kappa_norm, error)
+                    call check_stationary_point( &
+                        func, grad, grad_rms, h_diag, obj_func, hess_x_funptr, imacro, &
+                        local_settings, current_state, stable, kappa, kappa_norm, error)
                     if (error /= 0) return
-                    if (.not. stable) then
+                    if (.not. stable .and. .not. current_state%max_precision_reached) &
+                        then
                         current_state%micro_iteration = 0
                         current_state%jacobi_davidson_iteration = 0
                         current_state%relative_residual = 0.0_rp
                         current_state%level_shift = 0.0_rp
                         current_state%step_size = kappa_norm
-                        current_state%max_precision_reached = .false.
                         cycle
                     end if
                 end if
-                ! convergence takes precedence over maximum precision
-                if (conv_check_passed) current_state%max_precision_reached = .false.
+                ! convergence takes precedence over maximum precision, except at an
+                ! unstable point which no step along its unstable mode could leave
+                if (conv_check_passed .and. stable) &
+                    current_state%max_precision_reached = .false.
                 macro_converged = .true.
                 exit
             end if
@@ -627,14 +632,16 @@ contains
 
     end subroutine stability_check
 
-    subroutine check_stationary_point(grad, grad_rms, h_diag, hess_x_funptr, imacro, &
-                                      settings, state, stable, kappa, kappa_norm, error)
+    subroutine check_stationary_point(func, grad, grad_rms, h_diag, obj_func, &
+                                      hess_x_funptr, imacro, settings, state, stable, &
+                                      kappa, kappa_norm, error)
         !
         ! this subroutine performs the stability check at a stationary point with the
         ! nested stability check settings and, if the stationary point is unstable,
         ! returns the step along the unstable mode
         !
-        real(rp), intent(in) :: grad(:), grad_rms, h_diag(:)
+        real(rp), intent(in) :: func, grad(:), grad_rms, h_diag(:)
+        procedure(obj_func_type), intent(in), pointer :: obj_func
         procedure(hess_x_type), intent(in), pointer :: hess_x_funptr
         integer(ip), intent(in) :: imacro
         type(solver_settings_type), intent(in) :: settings
@@ -657,9 +664,14 @@ contains
 
         ! move far enough along the unstable mode, whose eigenvalue the state of the
         ! stability check holds, so that gradient is increased by one order of
-        ! magnitude
-        call saddle_point_step(grad, grad_rms, state%stability_state%min_eigval, &
-                               state%trust_radius, settings, kappa, kappa_norm)
+        ! magnitude, as far as the objective function decreases
+        call saddle_point_step(func, grad, grad_rms, obj_func, settings, state, kappa, &
+                               kappa_norm, error)
+        if (error /= 0) return
+
+        ! a point which no step along its unstable mode can leave is not a saddle point
+        ! the solver continues from
+        if (state%max_precision_reached) return
 
         ! warn of the saddle point, advising to perturb the gradient where it is not
         ! perturbed
@@ -674,26 +686,41 @@ contains
 
     end subroutine check_stationary_point
 
-    subroutine saddle_point_step(grad, grad_rms, min_eigval, trust_radius, settings, &
-                                 kappa, kappa_norm)
+    subroutine saddle_point_step(func, grad, grad_rms, obj_func, settings, state, &
+                                 kappa, kappa_norm, error)
         !
         ! this subroutine determines the step along the direction of negative curvature
-        ! such that the (linearized) gradient RMS increases to one order of magnitude
-        ! above its current value, or above the convergence threshold if the gradient
-        ! is already converged, or, if both vanish, the step to the trust radius, and
-        ! limits it to the trust radius
+        ! of the eigenvalue the state of the stability check holds such that the
+        ! (linearized) gradient RMS increases to one order of magnitude above its
+        ! current value, or above the convergence threshold if the gradient is already
+        ! converged, or, if both vanish, the step to the trust radius, halves it until
+        ! the objective function decreases and, if no step that the objective function
+        ! can resolve does, returns no step and flags maximum precision in the state
         !
-        real(rp), intent(in) :: grad(:), grad_rms, min_eigval, trust_radius
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+
+        real(rp), intent(in) :: func, grad(:), grad_rms
+        procedure(obj_func_type), intent(in), pointer :: obj_func
         type(solver_settings_type), intent(in) :: settings
+        type(solver_state_type), intent(inout), target :: state
         real(rp), intent(inout) :: kappa(:)
         real(rp), intent(out) :: kappa_norm
+        integer(ip), intent(out) :: error
 
         integer(ip) :: n_param
-        real(rp) :: grad_kappa, n_kappa, target_grad_rms
+        real(rp) :: min_eigval, grad_kappa, n_kappa, target_grad_rms, pred_func_diff, &
+                    func_resolution, new_func
+        logical :: escaped
         real(rp), external :: ddot, dnrm2
+
+        ! initialize error flag
+        error = 0
 
         ! number of parameters
         n_param = size(grad)
+
+        ! eigenvalue of the direction of negative curvature
+        min_eigval = state%stability_state%min_eigval
 
         ! project gradient onto direction of negative curvature
         grad_kappa = ddot(n_param, kappa, 1_ip, grad, 1_ip)
@@ -713,12 +740,42 @@ contains
             ! an exactly vanishing gradient with a vanishing convergence threshold
             ! leaves no target, so the step reaches the trust radius instead, as a
             ! trust region step along the direction of negative curvature would
-            n_kappa = trust_radius
+            n_kappa = state%trust_radius
         end if
 
-        ! the step is taken without evaluating the objective function, so it is
-        ! limited to the trust radius
-        n_kappa = sign(min(abs(n_kappa), trust_radius), n_kappa)
+        ! decrease of the quadratic model for the step and resolution of changes of the
+        ! objective function, measured against the larger of its value and this
+        ! decrease, so that the halving below ends also at a vanishing value
+        pred_func_diff = n_kappa * grad_kappa + 0.5_rp * min_eigval * n_kappa**2
+        func_resolution = func_resolution_safety_factor * epsilon(1.0_rp) * &
+                          max(abs(func), abs(pred_func_diff))
+
+        ! halve the step until the objective function decreases, which it does along
+        ! the direction of negative curvature once the step is short enough, as long as
+        ! the objective function can resolve the predicted decrease, while a step whose
+        ! predicted decrease it can not resolve from the start is taken as it is and a
+        ! step whose length is not finite, as for an eigenvalue that hardly differs
+        ! from zero, is not taken
+        escaped = ieee_is_finite(n_kappa)
+        do while (escaped .and. abs(pred_func_diff) > func_resolution)
+            new_func = invoke_obj_func(obj_func, n_kappa * kappa, settings, &
+                                       state%n_obj_func, error)
+            if (error /= 0) return
+            if (new_func < func) exit
+            n_kappa = 0.5_rp * n_kappa
+            pred_func_diff = n_kappa * grad_kappa + 0.5_rp * min_eigval * n_kappa**2
+            escaped = abs(pred_func_diff) > func_resolution
+        end do
+
+        ! without a step which decreases the objective function, the objective function
+        ! and the Hessian disagree along the direction of negative curvature by more
+        ! than the resolution, so no step is taken and maximum precision is reached
+        state%max_precision_reached = .not. escaped
+        if (.not. escaped) then
+            call settings%log(unconfirmed_negative_curvature_warning_msg, &
+                              verbosity_warning)
+            n_kappa = 0.0_rp
+        end if
 
         ! scale step
         kappa = n_kappa * kappa
@@ -3113,7 +3170,7 @@ contains
             ! explicitly rather than reused from solution_norm, which is only set
             ! once after this loop exits
             accept_step = accept_trust_region_step( &
-                solution, dnrm2(n_param, solution, 1_ip), func, new_func - func, &
+                dnrm2(n_param, solution, 1_ip), func, new_func - func, &
                 ddot(n_param, solution, 1_ip, perturbed_grad + 0.5_rp * h_solution, &
                      1_ip), micro_converged, settings, state, error)
             if (error /= 0) return
@@ -3327,7 +3384,7 @@ contains
 
             ! decide whether to accept step and modify trust radius
             accept_step = accept_trust_region_step( &
-                solution, solution_norm, func, new_func - func, &
+                solution_norm, func, new_func - func, &
                 ddot(n_param, solution, 1_ip, grad + 0.5_rp * h_solution, 1_ip), &
                 micro_converged, settings, state, error)
             if (error /= 0) return
@@ -3398,9 +3455,9 @@ contains
 
     end subroutine truncated_conjugate_gradient
 
-    logical function accept_trust_region_step(solution, solution_norm, func, &
-                                              actual_func_diff, pred_func_diff, &
-                                              micro_converged, settings, state, error)
+    logical function accept_trust_region_step(solution_norm, func, actual_func_diff, &
+                                              pred_func_diff, micro_converged, &
+                                              settings, state, error)
         !
         ! this function checks whether the trust region step is accepted and modifies
         ! the trust radius in the state accordingly, where it also flags whether the
@@ -3408,14 +3465,12 @@ contains
         !
         use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
 
-        real(rp), intent(in) :: solution(:), solution_norm, func, actual_func_diff, &
-                                pred_func_diff
+        real(rp), intent(in) :: solution_norm, func, actual_func_diff, pred_func_diff
         logical, intent(in) :: micro_converged
         type(solver_settings_type), intent(in) :: settings
         type(solver_state_type), intent(inout), target :: state
         integer(ip), intent(out) :: error
 
-        real(rp), parameter :: func_resolution_safety_factor = 10.0_rp
         real(rp) :: ratio, func_resolution
         logical :: finite_changes
 
@@ -3452,14 +3507,13 @@ contains
 
         ! decrease trust radius if micro iterations are unable to converge, if the step
         ! is not predicted to decrease the function value (e. g. Newton step along a
-        ! slightly negative curvature), if function value has not decreased, if the
+        ! slightly negative curvature), if function value has not decreased or if the
         ! function changes are not finite, as for an objective function which
-        ! overflows at the step, or if individual orbitals change too much
+        ! overflows at the step or rejects it by an infinite value
         finite_changes = ieee_is_finite(actual_func_diff) .and. &
                          ieee_is_finite(pred_func_diff)
         if (.not. micro_converged .or. pred_func_diff >= 0.0_rp .or. &
-            actual_func_diff >= 0.0_rp .or. .not. finite_changes .or. &
-            any(abs(solution) > pi / 4)) then
+            actual_func_diff >= 0.0_rp .or. .not. finite_changes) then
             ! a rejected step whose predicted function change can not be resolved can
             ! not be improved by a smaller trust radius, as when the objective function
             ! and the orbital update disagree by more than the resolution, so the step
@@ -3738,9 +3792,10 @@ contains
             return
         end if
 
-        ! check that the stability threshold does not count a minimum as unstable
-        if (settings%stability_thresh > 0.0_rp) then
-            call settings%log("Stability threshold should not be positive.", &
+        ! check that the stability threshold counts neither a minimum nor a point
+        ! without negative curvature, which offers no direction to leave it, as unstable
+        if (settings%stability_thresh >= 0.0_rp) then
+            call settings%log("Stability threshold should be negative.", &
                               verbosity_error, .true.)
             error = 1
             return
