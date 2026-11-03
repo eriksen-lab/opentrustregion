@@ -54,10 +54,8 @@ lib_candidates = [
     f"libopentrustregion.{ext}",
     f"libopentrustregion_32.{ext}",
     f"libopentrustregion_64.{ext}",
+    f"libotrtestsuite.{ext}",
 ]
-if sys.platform != "win32":
-    # libopentrustregion symbols not exported through libotrtestsuite on windows
-    lib_candidates.append(f"libotrtestsuite.{ext}")
 conda_prefix = Path("/opt/anaconda1anaconda2anaconda3")
 
 

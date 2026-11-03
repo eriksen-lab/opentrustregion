@@ -69,6 +69,19 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
 
+          # test for cmake installation and find_package consumption under windows with
+          # llvm flang and the microsoft c compiler
+          - os: windows
+            arch: x86_64
+            compiler: flang
+            compiler-version: "23.1.4"
+            blas: openblas
+            runs-on: windows-latest
+            build-type: install
+            scenario: dev-build
+            python-version: "3.10"
+            integer-size: "32"
+
           # testsuite on arm processors under linux
           - os: linux
             arch: arm64
@@ -161,6 +174,27 @@ jobs:
             python-version: "3.10"
             integer-size: "32"
 
+          # testsuite with the gnu compilers of msys2 under windows
+          - os: windows
+            arch: x86_64
+            compiler: gnu
+            blas: openblas
+            runs-on: windows-latest
+            build-type: test
+            python-version: "3.10"
+            integer-size: "32"
+
+          # testsuite with llvm flang and the microsoft c compiler under windows
+          - os: windows
+            arch: x86_64
+            compiler: flang
+            compiler-version: "23.1.4"
+            blas: openblas
+            runs-on: windows-latest
+            build-type: test
+            python-version: "3.10"
+            integer-size: "32"
+
           # test coverage, which also runs the testsuite with gnu compilers under linux on
           # x86 processors and with the newest python, while every other job runs the
           # oldest python that pyproject.toml supports
@@ -187,6 +221,43 @@ jobs:
       uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
+
+    # the GNU compilers of a fresh MSYS2 installation, which the action updates as a
+    # whole before installing them, since MSYS2 does not support updating only some of
+    # its packages
+    - name: Install GNU compilers on Windows
+      if: ${{ matrix.os == 'windows' && matrix.compiler == 'gnu' }}
+      id: msys2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        update: true
+        install: mingw-w64-ucrt-x86_64-gcc-fortran
+
+    - name: Select GNU compilers on Windows
+      if: ${{ matrix.os == 'windows' && matrix.compiler == 'gnu' }}
+      shell: pwsh
+      run: |
+        "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin" >> $env:GITHUB_PATH
+        "CC=gcc" >> $env:GITHUB_ENV
+        "FC=gfortran" >> $env:GITHUB_ENV
+
+    - name: Install Microsoft C Compiler on Windows
+      if: ${{ matrix.os == 'windows' && matrix.compiler == 'flang' }}
+      uses: ilammy/msvc-dev-cmd@v1
+
+    # LLVM's windows installer contains Flang
+    - name: Install LLVM Flang on Windows
+      if: ${{ matrix.os == 'windows' && matrix.compiler == 'flang' }}
+      shell: pwsh
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        curl.exe -sSfL -o "$env:RUNNER_TEMP\llvm.msi" "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ matrix.compiler-version }}/LLVM-${{ matrix.compiler-version }}-win64.msi"
+        $msiexec = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$env:RUNNER_TEMP\llvm.msi`" /qn TARGETDIR=`"$env:RUNNER_TEMP\llvm`""
+        if ($msiexec.ExitCode -ne 0) { exit $msiexec.ExitCode }
+        "$env:RUNNER_TEMP\llvm\LLVM\bin" >> $env:GITHUB_PATH
+        "CC=cl" >> $env:GITHUB_ENV
+        "FC=flang" >> $env:GITHUB_ENV
 
     - name: Install GNU compilers on MacOS
       if: ${{ matrix.os == 'macos' && matrix.compiler == 'gnu' }}
@@ -250,36 +321,54 @@ jobs:
       run: |
         sudo apt install -y libopenblas${{ matrix.integer-size == '64' && '64' || '' }}-dev
 
+    # OpenBLAS's windows release contains LAPACK and import libraries for the GNU and
+    # the Microsoft linker, and its DLL needs no Fortran runtime, so it serves both
+    # windows toolchains
+    - name: Install OpenBLAS on Windows
+      if: ${{ matrix.os == 'windows' && matrix.blas == 'openblas' }}
+      shell: pwsh
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        curl.exe -sSfL -o "$env:RUNNER_TEMP\openblas.zip" "https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.34/OpenBLAS-0.3.34-x64.zip"
+        Expand-Archive "$env:RUNNER_TEMP\openblas.zip" "$env:RUNNER_TEMP\openblas"
+        "$env:RUNNER_TEMP\openblas\bin" >> $env:GITHUB_PATH
+        "CMAKE_PREFIX_PATH=$env:RUNNER_TEMP\openblas" >> $env:GITHUB_ENV
+
     - name: Install reference BLAS and LAPACK on Linux
       if: ${{ matrix.os == 'linux' && matrix.blas == 'netlib' }}
       run: |
         sudo apt install -y libblas${{ matrix.integer-size == '64' && '64' || '' }}-dev liblapack${{ matrix.integer-size == '64' && '64' || '' }}-dev
 
+    # under windows a virtual environment keeps its scripts in Scripts, not in bin
     - name: Create and Activate Python Virtual Environment
+      if: ${{ matrix.os != 'windows' }}
       run: |
         python -m venv venv
         source venv/bin/activate
         python -m pip install --upgrade pip
 
     # the reference BLAS and Accelerate are selected explicitly, OpenBLAS and MKL are
-    # the libraries the autodetection finds
+    # the libraries the autodetection finds; the checkout is named through the shell,
+    # since bash would read the backslashes of the windows path as escapes
     - name: Build & Install OpenTrustRegion
       if: ${{ matrix.build-type == 'test' }}
-      run: pip install -C cmake.define.INTEGER_SIZE=${{ matrix.integer-size == '64' && '8' || '4' }} ${{ matrix.blas == 'netlib' && '-C cmake.define.BLA_VENDOR=Generic' || matrix.blas == 'accelerate' && '-C cmake.define.BLA_VENDOR=Apple' || '' }} ${{github.workspace}}
+      run: pip install -C cmake.define.INTEGER_SIZE=${{ matrix.integer-size == '64' && '8' || '4' }} ${{ matrix.blas == 'netlib' && '-C cmake.define.BLA_VENDOR=Generic' || matrix.blas == 'accelerate' && '-C cmake.define.BLA_VENDOR=Apple' || '' }} "$GITHUB_WORKSPACE"
 
     - name: Build & Install OpenTrustRegion (editable)
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'editable' }}
       run: pip install -e ${{github.workspace}}
 
+    # under windows the library is shared, so that the programs of the find_package
+    # consumption below link its import library, and CMake is called with Ninja
     - name: Build & Install OpenTrustRegion (cmake)
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: |
         set -e
-        sudo apt install -y cmake
+        ${{ matrix.os == 'linux' && 'sudo apt install -y cmake' || '' }}
         pip install numpy
         mkdir build
         cd build
-        cmake -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install ..
+        cmake -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install ${{ matrix.os == 'windows' && '-G Ninja -DBUILD_SHARED_LIBS=ON' || '' }} ..
         cmake --build .
         cmake --install .
         cd $GITHUB_WORKSPACE
@@ -291,9 +380,11 @@ jobs:
       working-directory: ${{ runner.temp }}
       run: python -m pyopentrustregion.testsuite
 
-    # the testsuite of the source tree runs against the CMake build in build/
+    # the testsuite of the source tree runs against the CMake build in build/, except
+    # under windows, where Python finds the DLLs the build links only once a pip
+    # installation puts them next to the library
     - name: Testing dev installation
-      if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
+      if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' && matrix.os != 'windows' }}
       run: python pyopentrustregion/testsuite.py
 
     - name: Testing OpenTrustRegion
@@ -302,15 +393,21 @@ jobs:
       run: python -m pyopentrustregion.testsuite
 
     # a C and a Fortran program are built against the installed package and run, so
-    # that the header, the Fortran modules and the libraries it links reach them
+    # that the header, the Fortran modules and the libraries it links reach them; the
+    # package is searched for under the installation prefix, since windows installs its
+    # configuration into another directory, windows builds them with Ninja and windows
+    # programs find DLLs on the PATH
     - name: Testing find_package Consumption
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: |
         set -e
-        cmake --log-level=VERBOSE -S .github/consumer -B consume_build \
-              -DOpenTrustRegion_DIR=$GITHUB_WORKSPACE/install/lib/cmake/OpenTrustRegion \
+        cmake --log-level=VERBOSE -S .github/consumer -B consume_build ${{ matrix.os == 'windows' && '-G Ninja' || '' }} \
+              -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/install \
               -DINTEGER_BITS=${{ matrix.integer-size }}
         cmake --build consume_build
+        if [ "$RUNNER_OS" = Windows ]; then
+          export PATH="$(cygpath "$GITHUB_WORKSPACE/install/bin"):$PATH"
+        fi
         ./consume_build/consume_c
         ./consume_build/consume_fortran
 

@@ -191,6 +191,7 @@ The check prints every BLAS/LAPACK symbol referenced without the `_64` suffix. O
   ln -sfn <repo>/build_manual build
   python3 -m pyopentrustregion.testsuite
   ```
+- **Windows has no run path.** Python resolves the DLLs a library links only next to it and in the system directories, not on the `PATH`, so the `SKBUILD` block installs the Fortran runtime and BLAS/LAPACK DLLs into the package (`RUNTIME_DEPENDENCY_SET`), searched for next to the Fortran compiler and the linked libraries and on the `PATH`, and the testsuite of a CMake build cannot run from the source tree there. Microsoft-compatible toolchains also name a library without the prefix `lib` and export nothing from a DLL whose sources mark no exports, which the properties `PREFIX`, `IMPORT_PREFIX` and `WINDOWS_EXPORT_ALL_SYMBOLS` of both targets undo, and CMake's default generator there, Visual Studio, builds Fortran with Intel's compilers only, so `pyproject.toml` selects Ninja.
 
 ## Core library
 

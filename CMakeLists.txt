@@ -219,6 +219,8 @@ set_target_properties(
     opentrustregion PROPERTIES
     # output name
     OUTPUT_NAME "opentrustregion_${LIB_SUFFIX}"
+    PREFIX "lib"
+    IMPORT_PREFIX "lib"
     EXPORT_NAME "opentrustregion${LIB_SUFFIX}"
     # library version
     VERSION ${PROJECT_VERSION}
@@ -229,6 +231,9 @@ set_target_properties(
     # position-independent code - not automatically enabled for static libraries, but
     # required when linking a static library into a shared library
     POSITION_INDEPENDENT_CODE ON
+    # every symbol exported also by Microsoft-compatible toolchains, which export only
+    # the symbols the sources mark for export, which these sources do not
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 
 # allow undefined symbols at link time on macOS only when the host program supplies
@@ -292,6 +297,18 @@ if (${otr}_BUILD_TESTING AND NOT ${otr}_HOST_PROVIDES_BLAS)
     # link against BLAS and LAPACK and against OpenTrustRegion
     target_link_libraries(otrtestsuite
                           PRIVATE ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} opentrustregion
+    )
+
+    # the C integration tests use static assertions, which the Microsoft C compiler
+    # accepts from C11 on
+    target_compile_features(otrtestsuite PRIVATE c_std_11)
+
+    # name and export the testsuite library as the library itself
+    set_target_properties(
+        otrtestsuite PROPERTIES
+        PREFIX "lib"
+        IMPORT_PREFIX "lib"
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
     )
 
     # install testsuite
@@ -381,8 +398,14 @@ if(SKBUILD)
     # link system libraries only, which CMake leaves out
     set_property(TARGET opentrustregion PROPERTY INSTALL_RPATH_USE_LINK_PATH TRUE)
 
+    # Windows has no run path, so the DLLs the libraries link are collected to be
+    # installed next to them
+    if(WIN32)
+        set(dependency_set RUNTIME_DEPENDENCY_SET python_dlls)
+    endif()
+
     # install the solver library
-    install(TARGETS opentrustregion
+    install(TARGETS opentrustregion ${dependency_set}
             RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # Windows (.dll)
             LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # shared libraries (.so, .dylib)
     )
@@ -392,9 +415,30 @@ if(SKBUILD)
     # wheels switch the testsuite off instead of excluding it here
     if(${otr}_BUILD_TESTING AND NOT ${otr}_HOST_PROVIDES_BLAS)
         set_property(TARGET otrtestsuite PROPERTY INSTALL_RPATH_USE_LINK_PATH TRUE)
-        install(TARGETS otrtestsuite
+        install(TARGETS otrtestsuite ${dependency_set}
                 RUNTIME DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # Windows (.dll)
                 LIBRARY DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion COMPONENT ${python_component} # shared libraries (.so, .dylib)
+        )
+    endif()
+
+    # install the non-system DLLs the libraries link, such as the Fortran runtime and
+    # BLAS/LAPACK, next to them; CMake looks for them only in the directories given,
+    # in order: the compiler's, those of the linked libraries and their bin, and PATH
+    if(WIN32)
+        get_filename_component(dll_dirs "${CMAKE_Fortran_COMPILER}" DIRECTORY)
+        foreach(library IN LISTS BLAS_LIBRARIES LAPACK_LIBRARIES)
+            if(IS_ABSOLUTE "${library}")
+                get_filename_component(library_dir "${library}" DIRECTORY)
+                list(APPEND dll_dirs "${library_dir}" "${library_dir}/../bin")
+            endif()
+        endforeach()
+        file(TO_CMAKE_PATH "$ENV{PATH}" path_dirs)
+        install(RUNTIME_DEPENDENCY_SET python_dlls
+                PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-"
+                POST_EXCLUDE_REGEXES "[Ss]ystem32/"
+                DIRECTORIES ${dll_dirs} ${path_dirs}
+                DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion
+                COMPONENT ${python_component}
         )
     endif()
 endif()

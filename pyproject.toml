@@ -22,6 +22,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Fortran",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Chemistry",
@@ -72,6 +73,14 @@ if.platform-system = "darwin"
 inherit.cmake.define = "append"
 cmake.define.BLA_VENDOR = "Apple"
 cmake.define.CMAKE_Fortran_FLAGS = "-static-libgfortran -static-libgcc -static-libquadmath"
+
+# CMake's default generator under Windows, Visual Studio, builds Fortran with Intel's
+# compilers only, so Windows builds use Ninja, which scikit-build-core downloads if it
+# is missing; the generator is a single argument, since scikit-build-core before 1.0
+# reads none from "-G" followed by its name
+[[tool.scikit-build.overrides]]
+if.platform-system = "win32"
+cmake.args = ["-GNinja"]
 
 # conda-build sets CONDA_BUILD=1 automatically; the conda-forge recipe builds the
 # Fortran library as its own "opentrustregion" package and expects "pyopentrustregion"
