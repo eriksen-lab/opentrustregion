@@ -96,13 +96,17 @@ module opentrustregion_unit_tests
 
     ! define type for the host context of the Hartmann 6D function which additionally
     ! records whether the objective function was evaluated without displacement,
-    ! whether the Hessian was applied to the normalized gradient and the last
-    ! displacement passed to the orbital update, and which names the output of the
+    ! whether the Hessian was applied to the normalized gradient, the last
+    ! displacement passed to the orbital update and, once the record is allocated, the
+    ! norms of the gradients the orbital update returns, which names the output of the
     ! orbital update which a mock returns as not finite, with the value it returns
-    ! there
+    ! there, and which shifts the function by a constant, which coarsens the
+    ! resolution of its changes while leaving the gradient exact
     type, extends(hartmann6d_context_type) :: hartmann6d_recording_context_type
         logical :: obj_func_zero_step = .false., hess_x_normalized_grad = .false.
-        real(rp) :: last_delta_vars(n_param) = 0.0_rp, non_finite_value = 0.0_rp
+        real(rp) :: last_delta_vars(n_param) = 0.0_rp, non_finite_value = 0.0_rp, &
+                    func_shift = 0.0_rp
+        real(rp), allocatable :: grad_norms(:)
         character(len=18) :: non_finite_output = ""
     end type
 
@@ -146,9 +150,12 @@ module opentrustregion_unit_tests
     ! double well function x^2 - y^2 + y^4, which has a saddle point at the origin and
     ! minima at y = +-1/sqrt(2), and holds its current variables, records whether the
     ! Hessian linear transformation received it, counts the objective function
-    ! evaluations and keeps the objective function at the previous convergence check
+    ! evaluations, keeps the objective function at the previous convergence check and
+    ! shifts the function by a constant, which coarsens the resolution of its changes
+    ! while leaving the gradient exact
     type, extends(test_context_type) :: double_well_context_type
-        real(rp) :: vars(2) = 0.0_rp, last_conv_check_func = huge(1.0_rp)
+        real(rp) :: vars(2) = 0.0_rp, last_conv_check_func = huge(1.0_rp), &
+                    func_shift = 0.0_rp
         logical :: hess_x_called = .false.
         integer(ip) :: n_obj_func_calls = 0
     end type
@@ -818,6 +825,14 @@ contains
         h_diag = [(state%hess(i, i), i=1, size(h_diag))]
         hess_x_funptr => hess_x_fun
 
+        ! shift function value and record gradient norm
+        select type (state)
+        class is (hartmann6d_recording_context_type)
+            func = func + state%func_shift
+            if (allocated(state%grad_norms)) &
+                state%grad_norms = [state%grad_norms, norm2(grad)]
+        end select
+
     end subroutine update_orbs
 
     subroutine update_orbs_hess_x_once(delta_vars, func, grad, h_diag, hess_x_funptr, &
@@ -915,13 +930,15 @@ contains
         ! count call
         state%n_obj_func_calls = state%n_obj_func_calls + 1
 
-        ! record whether function is evaluated without displacement
+        func = hartmann6d_func(state%vars + delta_vars)
+
+        ! record whether function is evaluated without displacement and shift function
+        ! value
         select type (state)
         class is (hartmann6d_recording_context_type)
             if (maxval(abs(delta_vars)) <= 0.0_rp) state%obj_func_zero_step = .true.
+            func = func + state%func_shift
         end select
-
-        func = hartmann6d_func(state%vars + delta_vars)
 
     end function obj_func
 
@@ -1473,7 +1490,7 @@ contains
 
         ! evaluate function, calculate gradient and Hessian diagonal and define Hessian
         ! linear transformation
-        func = double_well_func(state%vars)
+        func = double_well_func(state%vars) + state%func_shift
         grad = [2.0_rp * state%vars(1), &
                 -2.0_rp * state%vars(2) + 4.0_rp * state%vars(2)**3]
         h_diag = [2.0_rp, -2.0_rp + 12.0_rp * state%vars(2)**2]
@@ -1506,7 +1523,7 @@ contains
         if (error /= 0) return
 
         state%n_obj_func_calls = state%n_obj_func_calls + 1
-        func = double_well_func(state%vars + delta_vars)
+        func = double_well_func(state%vars + delta_vars) + state%func_shift
 
     end function double_well_obj_func
 
@@ -2199,7 +2216,8 @@ contains
             default_settings => default_solver_settings, error_solver_max_iter, &
             error_update_orbs, error_conv_check, error_obj_func, error_hess_x, &
             error_solver, error_precond, error_project, error_get_extra_trial_vectors, &
-            subsystem_solver_options, error_stability_check
+            subsystem_solver_options, error_stability_check, &
+            function_unchanged_warning_msg
 
         real(rp), parameter :: var_thres = 1e-4_rp
         integer(ip) :: error, i_solver, i_case, callback, i_call, &
@@ -2358,29 +2376,35 @@ contains
             test_solver = .false.
         end if
 
-        ! force the maximum precision heuristic to trigger by requesting a convergence
-        ! tolerance that floating-point noise in the gradient can never satisfy, with
-        ! the line search, which has to be skipped for the step that is not taken once
-        ! maximum precision is reached, starting at the minimum, where the change the
-        ! step of the first subproblem predicts already lies below the resolution of
-        ! the objective function, so that no line search precedes maximum precision
+        ! force maximum precision by requesting a convergence tolerance that
+        ! floating-point noise in the gradient can never satisfy, with the line search,
+        ! starting at the minimum with the function shifted by a constant, so that the
+        ! actual and the predicted change of every step, including the rounding errors
+        ! of the function, lie far below the resolution of the objective function and
+        ! the solver takes these steps without the line search, which the function
+        ! values along them can not guide, as long as the gradient norm decreases
+        ! along them
         context%vars = minimum1
-        settings = solver_settings_type()
-        settings%context => context
+        context%func_shift = 1e3_rp
+        call setup_settings(settings, context)
         settings%conv_tol = 0.0_rp
         settings%line_search = .true.
 
         ! run solver, check that it still returns without error while flagging this in
-        ! the state, that the line search, which first evaluates the objective function
-        ! without a step, is not performed, that the step that is not taken has no size
-        ! and that the reported number of orbital updates agrees with the calls
+        ! the state with a warning, that it took a step, that the gradient norm
+        ! decreased along every step but the last, along which it did not, that the
+        ! line search, which first evaluates the objective function without a step, is
+        ! not performed and that the reported number of orbital updates agrees with
+        ! the calls
         context%n_update_orbs_calls = 0
         context%obj_func_zero_step = .false.
+        context%grad_norms = [real(rp) :: ]
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
                     state)
+        context%func_shift = 0.0_rp
         if (error /= 0) then
             write(stderr, *) "test_solver failed: Produced error when forcing "// &
-                "maximum precision heuristic."
+                "maximum precision."
             test_solver = .false.
         end if
         if (.not. state%max_precision_reached) then
@@ -2388,14 +2412,35 @@ contains
                 "precision was reached when convergence tolerance could not be met."
             test_solver = .false.
         end if
-        if (context%obj_func_zero_step) then
-            write(stderr, *) "test_solver failed: Line search performed for the "// &
-                "step not taken once maximum precision is reached."
+        if (index(context%log_message, " "//function_unchanged_warning_msg) == 0) then
+            write(stderr, *) "test_solver failed: No warning printed when maximum "// &
+                "precision was reached."
             test_solver = .false.
         end if
-        if (.not. is_at_most(abs(state%step_size), 0.0_rp)) then
-            write(stderr, *) "test_solver failed: Step not taken once maximum "// &
-                "precision is reached has a size."
+        n_updates = size(context%grad_norms)
+        if (n_updates < 2) then
+            write(stderr, *) "test_solver failed: No step taken whose function "// &
+                "change can not be resolved."
+            test_solver = .false.
+        else
+            if (.not. all(is_below(context%grad_norms(2:n_updates - 1), &
+                                   context%grad_norms(1:n_updates - 2)))) then
+                write(stderr, *) "test_solver failed: Continued after a step whose "// &
+                    "function change can not be resolved did not decrease the "// &
+                    "gradient norm."
+                test_solver = .false.
+            end if
+            if (.not. is_at_least(context%grad_norms(n_updates), &
+                                  context%grad_norms(n_updates - 1))) then
+                write(stderr, *) "test_solver failed: Maximum precision reached "// &
+                    "although the last step decreased the gradient norm."
+                test_solver = .false.
+            end if
+        end if
+        deallocate(context%grad_norms)
+        if (context%obj_func_zero_step) then
+            write(stderr, *) "test_solver failed: Line search performed along a "// &
+                "step whose function change can not be resolved."
             test_solver = .false.
         end if
         if (.not. check_call_counts( &
@@ -2434,16 +2479,55 @@ contains
             test_solver = .false.
         end if
 
-        ! force the maximum precision heuristic to trigger again but let the
-        ! convergence check pass in that same macro iteration, convergence then takes
-        ! precedence and maximum precision is not flagged
+        ! start near the minimum with the function shifted by a constant so large that
+        ! the function changes of the steps can not be resolved long before the
+        ! gradient, which stays exact, converges to a tight tolerance, and check that
+        ! the solver keeps taking these steps while they decrease the gradient norm
+        ! until it converges, without flagging maximum precision
+        context%vars = near_minimum
+        context%func_shift = 1e6_rp
+        settings = solver_settings_type()
+        settings%context => context
+        settings%conv_tol = 1e-10_rp
+        call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
+                    state)
+        context%func_shift = 0.0_rp
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error when the function "// &
+                "changes can not be resolved."
+            test_solver = .false.
+        end if
+        call hartmann6d_gradient(context%vars, final_grad)
+        if (.not. is_below(norm2(final_grad) / sqrt(real(n_param, kind=rp)), &
+                           settings%conv_tol)) then
+            write(stderr, *) "test_solver failed: Did not converge along steps "// &
+                "whose function change can not be resolved."
+            test_solver = .false.
+        end if
+        if (state%max_precision_reached) then
+            write(stderr, *) "test_solver failed: Flagged that maximum precision "// &
+                "was reached while steps whose function change can not be resolved "// &
+                "decreased the gradient norm."
+            test_solver = .false.
+        end if
+
+        ! force maximum precision again with an objective function which exceeds the
+        ! current one at every step, as when the objective function and the orbital
+        ! update disagree, so that every step is rejected until its predicted change
+        ! can not be resolved, with the line search, which has to be skipped for the
+        ! step that is not taken, but let the convergence check pass in the next macro
+        ! iteration, which has no orbital update, so that convergence takes precedence
+        ! and maximum precision is not flagged, and check that the step that is not
+        ! taken has no size, although (Jacobi-)Davidson returns its norm
         context%vars = near_minimum
         settings = solver_settings_type()
         settings%context => context
-        settings%subsystem_solver = "tcg"
+        settings%line_search = .true.
         settings%conv_check => mock_conv_check_without_update
+        obj_func_funptr => constant_obj_func
         call solver(update_orbs_funptr, obj_func_funptr, n_param, error, settings, &
                     state)
+        obj_func_funptr => obj_func
         if (error /= 0) then
             write(stderr, *) "test_solver failed: Produced error when convergence "// &
                 "check passes once maximum precision is reached."
@@ -2451,7 +2535,12 @@ contains
         end if
         if (state%max_precision_reached) then
             write(stderr, *) "test_solver failed: Flagged that maximum precision "// &
-                "was reached when convergence check passed in the same iteration."
+                "was reached when convergence check passed in the next iteration."
+            test_solver = .false.
+        end if
+        if (.not. is_at_most(abs(state%step_size), 0.0_rp)) then
+            write(stderr, *) "test_solver failed: Step not taken once maximum "// &
+                "precision is reached has a size."
             test_solver = .false.
         end if
 
@@ -2858,6 +2947,35 @@ contains
                 test_solver = .false.
             end if
         end do
+
+        ! minimize the double well function from (1e-5, 0) as above with the gradient
+        ! criterion, but with the function shifted by a constant so large that the
+        ! change of the step to the saddle point can not be resolved, while that of
+        ! the step along the unstable mode can, and check that the solver continues
+        ! from the point this step reaches, whose gradient exceeds that of the starting
+        ! point, to a minimum, since only a step whose function change can not be
+        ! resolved is judged by the gradient before it
+        settings = solver_settings_type()
+        settings%grad_noise = .false.
+        settings%n_random_trial_vectors = 0
+        settings%n_extra_trial_vectors = 0
+        settings%context => double_well_context
+        double_well_context%vars = [1e-5_rp, 0.0_rp]
+        double_well_context%func_shift = 1e10_rp
+        call solver(update_orbs_funptr, obj_func_funptr, 2_ip, error, settings, state)
+        double_well_context%func_shift = 0.0_rp
+        if (error /= 0) then
+            write(stderr, *) "test_solver failed: Produced error when the step to "// &
+                "the saddle point can not be resolved."
+            test_solver = .false.
+        end if
+        if (.not. is_close(abs(double_well_context%vars(2)), 1.0_rp / sqrt(2.0_rp), &
+                           var_thres) .or. state%max_precision_reached) then
+            write(stderr, *) "test_solver failed: Did not continue from the saddle "// &
+                "point of the double well function to a minimum when the step to "// &
+                "the saddle point can not be resolved."
+            test_solver = .false.
+        end if
 
         ! start at the minimum of the quadratic model 1/2 |x|^2 at the origin, where
         ! the gradient vanishes exactly, with a vanishing convergence threshold, which
@@ -7977,7 +8095,7 @@ contains
         integer(ip) :: i, i_solver, i_case, n_micro_ref, error
         procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
-        logical :: local_region
+        logical :: local_region, unresolved_step
         type(hartmann6d_context_type), target :: context
         type(hartmann6d_fault_context_type), target :: fault_context
         type(quadratic_context_type), target :: quadratic_context
@@ -8007,7 +8125,8 @@ contains
         state%trust_radius = 1e-3_rp
         call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, .false., &
-                                    state, solution, solution_norm, mu, error)
+                                    state, solution, solution_norm, mu, &
+                                    unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "near minimum with trust radius shorter than Newton step."
@@ -8051,7 +8170,8 @@ contains
         context%n_hess_x_calls = 0
         call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, .false., &
-                                    state, solution, solution_norm, mu, error)
+                                    state, solution, solution_norm, mu, &
+                                    unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "with asymmetric Hessian linear transformation."
@@ -8093,7 +8213,8 @@ contains
         state%trust_radius = 0.5_rp
         call level_shifted_davidson(0.0_rp, grad, norm2(grad), h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, .false., &
-                                    state, solution, solution_norm, mu, error)
+                                    state, solution, solution_norm, mu, &
+                                    unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "for non-symmetric Hessian."
@@ -8135,7 +8256,7 @@ contains
             call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                         obj_func_funptr, hess_x_funptr, settings, &
                                         .false., state, solution, solution_norm, mu, &
-                                        error)
+                                        unresolved_step, error)
             if (error /= merge(error_hess_x, error_obj_func, i_case == 1) + 1) then
                 write(stderr, *) "test_level_shifted_davidson failed: Error of "// &
                     "failing "// &
@@ -8147,8 +8268,9 @@ contains
 
         ! run level-shifted Davidson on a quadratic model with a gradient too small for
         ! its step to change the objective function, which does not change at all, so
-        ! that the first step reaches maximum precision, and check that the subproblem
-        ! stops without error and reports this
+        ! that the function changes of the first step can not be resolved, and check
+        ! that the subproblem returns this step, the Newton step of the model, without
+        ! error and flags it as unresolved instead of reaching maximum precision
         call setup_settings(settings, quadratic_context)
         settings%grad_noise = .false.
         quadratic_context%hess = identity_matrix(n_param)
@@ -8158,18 +8280,30 @@ contains
         hess_x_funptr => quadratic_hess_x
         state%trust_radius = 0.4_rp
         state%max_precision_reached = .false.
-        call level_shifted_davidson(1.0_rp, quadratic_context%grad, &
-                                    norm2(quadratic_context%grad), h_diag, n_param, &
-                                    obj_func_funptr, hess_x_funptr, settings, .false., &
-                                    state, solution, solution_norm, mu, error)
+        unresolved_step = .false.
+        call level_shifted_davidson( &
+            1.0_rp, quadratic_context%grad, norm2(quadratic_context%grad), h_diag, &
+            n_param, obj_func_funptr, hess_x_funptr, settings, .false., state, &
+            solution, solution_norm, mu, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "when the objective function does not change."
             test_level_shifted_davidson = .false.
         end if
-        if (.not. state%max_precision_reached) then
+        if (state%max_precision_reached) then
             write(stderr, *) "test_level_shifted_davidson failed: Maximum "// &
-                "precision not reached when the objective function does not change."
+                "precision reached when the objective function does not change."
+            test_level_shifted_davidson = .false.
+        end if
+        if (.not. unresolved_step) then
+            write(stderr, *) "test_level_shifted_davidson failed: Step not flagged "// &
+                "as unresolved when the objective function does not change."
+            test_level_shifted_davidson = .false.
+        end if
+        if (.not. all(is_close(solution, -quadratic_context%grad, &
+                               1e-6_rp * norm2(quadratic_context%grad)))) then
+            write(stderr, *) "test_level_shifted_davidson failed: Newton step not "// &
+                "returned when the objective function does not change."
             test_level_shifted_davidson = .false.
         end if
 
@@ -8188,9 +8322,11 @@ contains
         state%trust_radius = 0.4_rp
         state%max_precision_reached = .false.
         state%n_obj_func = 0
+        unresolved_step = .true.
         call level_shifted_davidson(0.5_rp, grad, norm2(grad), h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, .false., &
-                                    state, solution, solution_norm, mu, error)
+                                    state, solution, solution_norm, mu, &
+                                    unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "when every step is rejected."
@@ -8199,6 +8335,11 @@ contains
         if (.not. state%max_precision_reached) then
             write(stderr, *) "test_level_shifted_davidson failed: Maximum "// &
                 "precision not reached when every step is rejected."
+            test_level_shifted_davidson = .false.
+        end if
+        if (unresolved_step) then
+            write(stderr, *) "test_level_shifted_davidson failed: Step flagged as "// &
+                "unresolved when every step is rejected."
             test_level_shifted_davidson = .false.
         end if
         if (state%micro_iteration < state%n_obj_func) then
@@ -8215,7 +8356,8 @@ contains
         state%trust_radius = 0.4_rp
         call level_shifted_davidson(0.5_rp, grad, norm2(grad), h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, .false., &
-                                    state, solution, solution_norm, mu, error)
+                                    state, solution, solution_norm, mu, &
+                                    unresolved_step, error)
         if (error /= 1) then
             write(stderr, *) "test_level_shifted_davidson failed: Did not report "// &
                 "an objective function which is infinite at every step."
@@ -8236,7 +8378,8 @@ contains
         state%n_obj_func = 0
         call level_shifted_davidson(func, grad, norm2(grad), h_diag, n_param, &
                                     obj_func_funptr, hess_x_funptr, settings, .false., &
-                                    state, solution, solution_norm, mu, error)
+                                    state, solution, solution_norm, mu, &
+                                    unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "with a single micro iteration."
@@ -8276,7 +8419,7 @@ contains
             call level_shifted_davidson( &
                 0.0_rp, quadratic_context%grad, 1.0_rp, h_diag_stagnation, &
                 n_stagnation, obj_func_funptr, hess_x_funptr, settings, .false., &
-                state, solution_stagnation, solution_norm, mu, error)
+                state, solution_stagnation, solution_norm, mu, unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_level_shifted_davidson failed: Produced "// &
                     "error when residual stagnates with "// &
@@ -8323,10 +8466,11 @@ contains
         hess_x_funptr => quadratic_hess_x
         state%trust_radius = 10.0_rp
         state%n_obj_func = 0
-        call level_shifted_davidson( &
-            0.0_rp, quadratic_context%grad, norm2(quadratic_context%grad), &
-            h_diag_stagnation, n_stagnation, obj_func_funptr, hess_x_funptr, settings, &
-            .false., state, solution_stagnation, solution_norm, mu, error)
+        call level_shifted_davidson(0.0_rp, quadratic_context%grad, &
+                                    norm2(quadratic_context%grad), h_diag_stagnation, &
+                                    n_stagnation, obj_func_funptr, hess_x_funptr, &
+                                    settings, .false., state, solution_stagnation, &
+                                    solution_norm, mu, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "when Jacobi-Davidson needs several micro iterations after stagnation."
@@ -8377,7 +8521,7 @@ contains
             call level_shifted_davidson( &
                 0.0_rp, quadratic_context%grad, norm2(quadratic_context%grad), h_diag, &
                 n_param, obj_func_funptr, hess_x_funptr, settings, .false., state, &
-                solution, solution_norm, mu, error)
+                solution, solution_norm, mu, unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_level_shifted_davidson failed: Produced "// &
                     "error when reduced space stops growing for the "// &
@@ -8442,7 +8586,7 @@ contains
             call level_shifted_davidson(0.0_rp, grad, grad_norm, h_diag, n_param, &
                                         obj_func_funptr, hess_x_funptr, settings, &
                                         local_region, state, solution, solution_norm, &
-                                        mu, error)
+                                        mu, unresolved_step, error)
             n_micro_ref = state%micro_iteration
             settings%grad_noise = .true.
             noise = merge(settings%local_red_factor, settings%global_red_factor, &
@@ -8451,7 +8595,7 @@ contains
             call level_shifted_davidson(0.0_rp, grad, grad_norm, h_diag, n_param, &
                                         obj_func_funptr, hess_x_funptr, settings, &
                                         local_region, state, solution, solution_norm, &
-                                        mu, error)
+                                        mu, unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_level_shifted_davidson failed: Produced "// &
                     "error for perturbed gradient in "// &
@@ -8513,7 +8657,8 @@ contains
             call level_shifted_davidson( &
                 0.0_rp, quadratic_context%grad, norm2(quadratic_context%grad), &
                 h_diag_stagnation, n_stagnation, obj_func_funptr, hess_x_funptr, &
-                settings, .false., state, solution_stagnation, solution_norm, mu, error)
+                settings, .false., state, solution_stagnation, solution_norm, mu, &
+                unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_level_shifted_davidson failed: Produced "// &
                     "error for "// &
@@ -8540,10 +8685,10 @@ contains
                                              double_well_grad, double_well_h_diag)
         obj_func_funptr => double_well_obj_func
         hess_x_funptr => state_reading_hess_x
-        call level_shifted_davidson(func, double_well_grad, norm2(double_well_grad), &
-                                    double_well_h_diag, 2_ip, obj_func_funptr, &
-                                    hess_x_funptr, settings, .false., state, &
-                                    double_well_solution, solution_norm, mu, error)
+        call level_shifted_davidson( &
+            func, double_well_grad, norm2(double_well_grad), double_well_h_diag, 2_ip, &
+            obj_func_funptr, hess_x_funptr, settings, .false., state, &
+            double_well_solution, solution_norm, mu, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_level_shifted_davidson failed: Produced error "// &
                 "with a state of an earlier subproblem."
@@ -8593,7 +8738,7 @@ contains
             call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                         obj_func_funptr, hess_x_funptr, settings, &
                                         .false., state, solution, solution_norm, mu, &
-                                        error)
+                                        unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_level_shifted_davidson failed: Produced "// &
                     "error "//trim(case_name)//"."
@@ -8680,13 +8825,14 @@ contains
         !
         use opentrustregion_core, only: &
             obj_func_type, hess_x_type, solver_settings_type, &
-            truncated_conjugate_gradient, error_hess_x, error_obj_func, &
-            function_unchanged_warning_msg, precond_floor, default_solver_settings
+            truncated_conjugate_gradient, error_hess_x, error_obj_func, precond_floor, &
+            default_solver_settings
 
         real(rp) :: func, ratio, solution_norm, metric_norm, double_well_grad(2), &
                     double_well_h_diag(2), double_well_solution(2)
         real(rp), dimension(n_param) :: grad, h_diag, solution
         integer(ip) :: i, i_case, error
+        logical :: unresolved_step
         procedure(obj_func_type), pointer :: obj_func_funptr
         procedure(hess_x_type), pointer :: hess_x_funptr
         type(solver_settings_type) :: settings
@@ -8724,9 +8870,9 @@ contains
         state%n_obj_func = 0
         context%n_hess_x_calls = 0
         context%n_obj_func_calls = 0
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            state, solution, solution_norm, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error near minimum."
@@ -8772,9 +8918,9 @@ contains
         ! the solution is measured with it
         settings%precond => identity_precond
         state%trust_radius = 0.4_rp
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            state, solution, solution_norm, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error near minimum with preconditioner."
@@ -8793,9 +8939,9 @@ contains
         settings%n_micro = 1
         state%trust_radius = 0.4_rp
         context%n_hess_x_calls = 0
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            state, solution, solution_norm, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error with a single micro iteration."
@@ -8820,9 +8966,9 @@ contains
         ! that the trust radius is not expanded for this step although the quadratic
         ! model is accurate
         state%trust_radius = 2.0_rp * metric_norm
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            state, solution, solution_norm, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error for a step inside the trust region."
@@ -8839,9 +8985,9 @@ contains
         ! the curvature is positive, and check whether the solution lies at the trust
         ! region boundary and reduces the function value
         state%trust_radius = 0.5_rp * metric_norm
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            state, solution, solution_norm, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error near minimum with trust radius shorter than step."
@@ -8870,9 +9016,9 @@ contains
 
         ! run truncated conjugate gradient, check whether the solution lies at the
         ! trust region boundary and reduces the function value
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            state, solution, solution_norm, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error near saddle point."
@@ -8909,7 +9055,7 @@ contains
             state%trust_radius = 0.4_rp
             call truncated_conjugate_gradient( &
                 func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
-                state, solution, solution_norm, error)
+                state, solution, solution_norm, unresolved_step, error)
             if (error /= merge(error_hess_x, error_obj_func, i_case == 1) + 1) then
                 write(stderr, *) "test_truncated_conjugate_gradient failed: Error "// &
                     "of failing "// &
@@ -8940,9 +9086,10 @@ contains
         do i_case = 1, 2
             settings%grad_noise = i_case == 2
             state%trust_radius = 10.0_rp
-            call truncated_conjugate_gradient( &
-                0.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
-                hess_x_funptr, settings, state, solution, solution_norm, error)
+            call truncated_conjugate_gradient(0.0_rp, quadratic_context%grad, h_diag, &
+                                              n_param, obj_func_funptr, hess_x_funptr, &
+                                              settings, state, solution, &
+                                              solution_norm, unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_truncated_conjugate_gradient failed: "// &
                     "Produced error "// &
@@ -8981,9 +9128,10 @@ contains
         settings%local_red_factor = 0.1_rp
         quadratic_context%grad = 1.0_rp
         state%trust_radius = 10.0_rp
-        call truncated_conjugate_gradient( &
-            0.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
-            hess_x_funptr, settings, state, solution, solution_norm, error)
+        call truncated_conjugate_gradient(0.0_rp, quadratic_context%grad, h_diag, &
+                                          n_param, obj_func_funptr, hess_x_funptr, &
+                                          settings, state, solution, solution_norm, &
+                                          unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error with a large gradient perturbation."
@@ -9004,9 +9152,9 @@ contains
 
         ! run truncated conjugate gradient on a quadratic model with a gradient too
         ! small for its step to change the objective function, which does not change
-        ! at all, so that the first step reaches maximum precision, and check that the
-        ! subproblem stops without error, reports this with a warning and returns no
-        ! norm for the step that is not taken
+        ! at all, so that the function changes of the first step can not be resolved,
+        ! and check that the subproblem returns this step with its norm without error
+        ! and flags it as unresolved instead of reaching maximum precision
         call setup_settings(settings, quadratic_context)
         quadratic_context%hess = identity_matrix(n_param)
         quadratic_context%grad = spread(1e-9_rp, 1, n_param)
@@ -9014,29 +9162,30 @@ contains
         obj_func_funptr => constant_obj_func
         hess_x_funptr => quadratic_hess_x
         state%trust_radius = 0.4_rp
-        call truncated_conjugate_gradient( &
-            1.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
-            hess_x_funptr, settings, state, solution, solution_norm, error)
+        unresolved_step = .false.
+        call truncated_conjugate_gradient(1.0_rp, quadratic_context%grad, h_diag, &
+                                          n_param, obj_func_funptr, hess_x_funptr, &
+                                          settings, state, solution, solution_norm, &
+                                          unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error when the objective function does not change."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (.not. state%max_precision_reached) then
+        if (state%max_precision_reached) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Maximum "// &
-                "precision not reached when the objective function does not change."
+                "precision reached when the objective function does not change."
             test_truncated_conjugate_gradient = .false.
         end if
-        if (.not. is_at_most(abs(solution_norm), 0.0_rp)) then
+        if (.not. unresolved_step) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Step not "// &
+                "flagged as unresolved when the objective function does not change."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (.not. is_above(solution_norm, 0.0_rp)) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Norm of "// &
-                "the solution not vanishing for a step that is not taken when "// &
-                "function value does not change."
-            test_truncated_conjugate_gradient = .false.
-        end if
-        if (index(quadratic_context%log_message, &
-                  " "//function_unchanged_warning_msg) == 0) then
-            write(stderr, *) "test_truncated_conjugate_gradient failed: Warning "// &
-                "not printed when function value does not change."
+                "the solution vanishing for the step that is taken when the "// &
+                "objective function does not change."
             test_truncated_conjugate_gradient = .false.
         end if
 
@@ -9048,9 +9197,11 @@ contains
         ! norm for the step that is not taken
         quadratic_context%grad = spread(0.1_rp, 1, n_param)
         state%trust_radius = 0.4_rp
-        call truncated_conjugate_gradient( &
-            0.5_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
-            hess_x_funptr, settings, state, solution, solution_norm, error)
+        unresolved_step = .true.
+        call truncated_conjugate_gradient(0.5_rp, quadratic_context%grad, h_diag, &
+                                          n_param, obj_func_funptr, hess_x_funptr, &
+                                          settings, state, solution, solution_norm, &
+                                          unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error when every step is rejected."
@@ -9059,6 +9210,11 @@ contains
         if (.not. state%max_precision_reached) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Maximum "// &
                 "precision not reached when every step is rejected."
+            test_truncated_conjugate_gradient = .false.
+        end if
+        if (unresolved_step) then
+            write(stderr, *) "test_truncated_conjugate_gradient failed: Step "// &
+                "flagged as unresolved when every step is rejected."
             test_truncated_conjugate_gradient = .false.
         end if
         if (.not. is_at_most(abs(solution_norm), 0.0_rp)) then
@@ -9074,9 +9230,10 @@ contains
         ! stops with an error rather than at maximum precision
         obj_func_funptr => infinite_obj_func
         state%trust_radius = 0.4_rp
-        call truncated_conjugate_gradient( &
-            0.5_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
-            hess_x_funptr, settings, state, solution, solution_norm, error)
+        call truncated_conjugate_gradient(0.5_rp, quadratic_context%grad, h_diag, &
+                                          n_param, obj_func_funptr, hess_x_funptr, &
+                                          settings, state, solution, solution_norm, &
+                                          unresolved_step, error)
         if (error /= 1) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Did not "// &
                 "report an objective function which is infinite at every step."
@@ -9089,9 +9246,10 @@ contains
         quadratic_context%hess = 0.0_rp
         obj_func_funptr => quadratic_obj_func
         state%trust_radius = 0.4_rp
-        call truncated_conjugate_gradient( &
-            0.0_rp, quadratic_context%grad, h_diag, n_param, obj_func_funptr, &
-            hess_x_funptr, settings, state, solution, solution_norm, error)
+        call truncated_conjugate_gradient(0.0_rp, quadratic_context%grad, h_diag, &
+                                          n_param, obj_func_funptr, hess_x_funptr, &
+                                          settings, state, solution, solution_norm, &
+                                          unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error for a model without curvature."
@@ -9121,9 +9279,9 @@ contains
         state%trust_radius = 10.0_rp
         state%n_obj_func = 0
         fault_context%n_callback_calls = 0
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            state, solution, solution_norm, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error when step inside trust region is rejected."
@@ -9164,9 +9322,9 @@ contains
         fault_context%fault_call = 2
         fault_context%n_callback_calls = 0
         state%trust_radius = 10.0_rp
-        call truncated_conjugate_gradient(func, grad, h_diag, n_param, &
-                                          obj_func_funptr, hess_x_funptr, settings, &
-                                          state, solution, solution_norm, error)
+        call truncated_conjugate_gradient( &
+            func, grad, h_diag, n_param, obj_func_funptr, hess_x_funptr, settings, &
+            state, solution, solution_norm, unresolved_step, error)
         if (error /= error_obj_func + 1) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Did not "// &
                 "report the error of the objective function failing for the cut "// &
@@ -9184,9 +9342,10 @@ contains
                                              double_well_grad, double_well_h_diag)
         obj_func_funptr => double_well_obj_func
         hess_x_funptr => state_reading_hess_x
-        call truncated_conjugate_gradient( &
-            func, double_well_grad, double_well_h_diag, 2_ip, obj_func_funptr, &
-            hess_x_funptr, settings, state, double_well_solution, solution_norm, error)
+        call truncated_conjugate_gradient(func, double_well_grad, double_well_h_diag, &
+                                          2_ip, obj_func_funptr, hess_x_funptr, &
+                                          settings, state, double_well_solution, &
+                                          solution_norm, unresolved_step, error)
         if (error /= 0) then
             write(stderr, *) "test_truncated_conjugate_gradient failed: Produced "// &
                 "error with a state of an earlier subproblem."
@@ -9233,10 +9392,11 @@ contains
             case_accepted(6) = [.false., .false., .true., .true., .true., .true.]
 
         ! cases with the objective function value, the actual and the predicted
-        ! function change, whether the micro iterations converged and whether maximum
-        ! precision is reached, which requires that the predicted change can not be
-        ! resolved relative to the objective function value and that the actual change
-        ! can not be resolved either or the step is rejected
+        ! function change, whether the micro iterations converged, whether the step is
+        ! unresolved, which requires that neither change can be resolved relative to
+        ! the objective function value, and whether maximum precision is reached, which
+        ! requires that only the predicted change can not be resolved and that the step
+        ! is rejected
         character(len=*), parameter :: precision_case_names(9) = &
             [character(len=68) :: "vanishing function changes", &
              "changes below the resolution of a large function value", &
@@ -9257,7 +9417,9 @@ contains
         logical, parameter :: &
             precision_case_converged(9) = [.true., .true., .true., .true., .true., &
                                            .true., .false., .true., .true.], &
-            precision_case_reached(9) = [.true., .true., .false., .true., .false., &
+            precision_case_unresolved(9) = [.true., .true., .false., .true., .false., &
+                                            .false., .false., .false., .false.], &
+            precision_case_reached(9) = [.false., .false., .false., .false., .false., &
                                          .true., .true., .false., .false.]
 
         ! cases of function changes which reject the step whatever their ratio, a
@@ -9282,7 +9444,7 @@ contains
              "overflowing function at an unresolvable prediction"]
         real(rp) :: error_step_norms(3), error_actual(3), error_predicted(3)
 
-        logical :: accept_step
+        logical :: accept_step, unresolved_step
         type(solver_state_type) :: state
         type(solver_settings_type) :: settings
         type(test_context_type), target :: context
@@ -9295,14 +9457,16 @@ contains
         call setup_settings(settings, context)
 
         ! check for every case whether the step is accepted and the trust radius is
-        ! reduced, kept or expanded, without maximum precision being reported as
-        ! reached, the flag starts set so that a flag which is not cleared is detected
+        ! reduced, kept or expanded, without the step being flagged as unresolved or
+        ! maximum precision being reported as reached, both flags start set so that a
+        ! flag which is not cleared is detected
         do i = 1, size(case_names)
             state%trust_radius = 1.0_rp
             state%max_precision_reached = .true.
+            unresolved_step = .true.
             accept_step = accept_trust_region_step( &
                 case_step_norms(i), -1.0_rp, -case_ratios(i), -1.0_rp, &
-                case_converged(i), settings, state, error)
+                case_converged(i), settings, state, unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
                     "error when "//trim(case_names(i))//"."
@@ -9323,6 +9487,11 @@ contains
                     "precision reported as reached when "//trim(case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
+            if (unresolved_step) then
+                write(stderr, *) "test_accept_trust_region_step failed: Step "// &
+                    "flagged as unresolved when "//trim(case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
         end do
 
         ! check for every case of function changes which reject the step, where the
@@ -9337,7 +9506,7 @@ contains
             state%trust_radius = 1.0_rp
             accept_step = accept_trust_region_step( &
                 0.5_rp, -1.0_rp, rejecting_actual(i), rejecting_predicted(i), .true., &
-                settings, state, error)
+                settings, state, unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
                     "error for "//trim(rejecting_case_names(i))//"."
@@ -9361,19 +9530,25 @@ contains
             end if
         end do
 
-        ! check for every case whether maximum precision is reported as reached and,
-        ! if so, whether the step is rejected with the trust radius left unchanged and
-        ! a warning printed
+        ! check for every case whether the step is flagged as unresolved and whether
+        ! maximum precision is reported as reached, where an unresolved step is
+        ! accepted without a warning and a step at maximum precision is rejected with a
+        ! warning, both with the trust radius left unchanged
         do i = 1, size(precision_case_names)
             state%trust_radius = 1.0_rp
             context%log_message = ""
             accept_step = accept_trust_region_step( &
                 0.5_rp, precision_case_funcs(i), precision_case_actual(i), &
                 precision_case_predicted(i), precision_case_converged(i), settings, &
-                state, error)
+                state, unresolved_step, error)
             if (error /= 0) then
                 write(stderr, *) "test_accept_trust_region_step failed: Produced "// &
                     "error for "//trim(precision_case_names(i))//"."
+                test_accept_trust_region_step = .false.
+            end if
+            if (unresolved_step .neqv. precision_case_unresolved(i)) then
+                write(stderr, *) "test_accept_trust_region_step failed: Unresolved "// &
+                    "step detected incorrectly for "//trim(precision_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
             if (state%max_precision_reached .neqv. precision_case_reached(i)) then
@@ -9382,24 +9557,22 @@ contains
                     trim(precision_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
-            if (.not. precision_case_reached(i)) cycle
-            if (accept_step) then
+            if (.not. (precision_case_unresolved(i) .or. precision_case_reached(i))) &
+                cycle
+            if (accept_step .neqv. precision_case_unresolved(i)) then
                 write(stderr, *) "test_accept_trust_region_step failed: Step "// &
-                    "accepted at maximum precision for "// &
-                    trim(precision_case_names(i))//"."
+                    "acceptance incorrect for "//trim(precision_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
             if (.not. is_close(state%trust_radius, 1.0_rp)) then
                 write(stderr, *) "test_accept_trust_region_step failed: Trust "// &
-                    "radius changed at maximum precision for "// &
-                    trim(precision_case_names(i))//"."
+                    "radius changed for "//trim(precision_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
-            if (index(context%log_message, " "//function_unchanged_warning_msg) == 0) &
-                then
-                write(stderr, *) "test_accept_trust_region_step failed: No warning "// &
-                    "printed at maximum precision for "// &
-                    trim(precision_case_names(i))//"."
+            if ((index(context%log_message, " "//function_unchanged_warning_msg) > &
+                 0) .neqv. precision_case_reached(i)) then
+                write(stderr, *) "test_accept_trust_region_step failed: Warning "// &
+                    "printed incorrectly for "//trim(precision_case_names(i))//"."
                 test_accept_trust_region_step = .false.
             end if
         end do
@@ -9416,7 +9589,7 @@ contains
             context%log_message = ""
             accept_step = accept_trust_region_step( &
                 error_step_norms(i), -1.0_rp, error_actual(i), error_predicted(i), &
-                .true., settings, state, error)
+                .true., settings, state, unresolved_step, error)
             if (error /= 1) then
                 write(stderr, *) "test_accept_trust_region_step failed: Did not "// &
                     "report an error for "//trim(error_case_names(i))//"."
