@@ -20,7 +20,7 @@ The library needs a Fortran 2018 compiler, a C compiler, CMake 3.24 or newer and
 
 On Linux and macOS, it is tested with gfortran 10 and newer, Intel ifx and LLVM Flang 21 and newer, and against OpenBLAS, the reference BLAS and LAPACK, Intel MKL and Apple Accelerate.
 
-On Windows, it is tested with gfortran from MSYS2 and with LLVM Flang 23 and the Microsoft C compiler, each against OpenBLAS. CMake has to be called with the Ninja generator there (`cmake -G Ninja ..`), and the testsuite runs only from a pip installation, which places the DLLs the library links next to it.
+On Windows, it is tested with gfortran from MSYS2 and with LLVM Flang 23 and the Microsoft C compiler, each against OpenBLAS. CMake's default generator there, Visual Studio, builds Fortran only with Intel's compilers, so CMake has to be called with another one, such as Ninja (`cmake -G Ninja ..`), and the testsuite runs only from a pip installation, which places the DLLs the library links next to it.
 
 ### Fortran or C Usage
 To build the library for Fortran or C:

@@ -222,19 +222,25 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    # the GNU compilers of the runner's MSYS2 installation; CMake's default generator
-    # under windows, Visual Studio, builds Fortran with Intel's compilers only, so both
-    # windows toolchains select Ninja
+    # the GNU compilers of a fresh MSYS2 installation, which the action updates as a
+    # whole before installing them, since MSYS2 does not support updating only some of
+    # its packages
     - name: Install GNU compilers on Windows
+      if: ${{ matrix.os == 'windows' && matrix.compiler == 'gnu' }}
+      id: msys2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        update: true
+        install: mingw-w64-ucrt-x86_64-gcc-fortran
+
+    - name: Select GNU compilers on Windows
       if: ${{ matrix.os == 'windows' && matrix.compiler == 'gnu' }}
       shell: pwsh
       run: |
-        $PSNativeCommandUseErrorActionPreference = $true
-        C:\msys64\usr\bin\bash.exe -lc "pacman -Sy --noconfirm --needed mingw-w64-ucrt-x86_64-gcc-fortran"
-        "C:\msys64\ucrt64\bin" >> $env:GITHUB_PATH
+        "${{ steps.msys2.outputs.msys2-location }}\ucrt64\bin" >> $env:GITHUB_PATH
         "CC=gcc" >> $env:GITHUB_ENV
         "FC=gfortran" >> $env:GITHUB_ENV
-        "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
 
     - name: Install Microsoft C Compiler on Windows
       if: ${{ matrix.os == 'windows' && matrix.compiler == 'flang' }}
@@ -252,7 +258,6 @@ jobs:
         "$env:RUNNER_TEMP\llvm\LLVM\bin" >> $env:GITHUB_PATH
         "CC=cl" >> $env:GITHUB_ENV
         "FC=flang" >> $env:GITHUB_ENV
-        "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
 
     - name: Install GNU compilers on MacOS
       if: ${{ matrix.os == 'macos' && matrix.compiler == 'gnu' }}
@@ -354,7 +359,7 @@ jobs:
       run: pip install -e ${{github.workspace}}
 
     # under windows the library is shared, so that the programs of the find_package
-    # consumption below link its import library
+    # consumption below link its import library, and CMake is called with Ninja
     - name: Build & Install OpenTrustRegion (cmake)
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: |
@@ -363,7 +368,7 @@ jobs:
         pip install numpy
         mkdir build
         cd build
-        cmake -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install ${{ matrix.os == 'windows' && '-DBUILD_SHARED_LIBS=ON' || '' }} ..
+        cmake -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/install ${{ matrix.os == 'windows' && '-G Ninja -DBUILD_SHARED_LIBS=ON' || '' }} ..
         cmake --build .
         cmake --install .
         cd $GITHUB_WORKSPACE
@@ -390,12 +395,13 @@ jobs:
     # a C and a Fortran program are built against the installed package and run, so
     # that the header, the Fortran modules and the libraries it links reach them; the
     # package is searched for under the installation prefix, since windows installs its
-    # configuration into another directory, and windows programs find DLLs on the PATH
+    # configuration into another directory, windows builds them with Ninja and windows
+    # programs find DLLs on the PATH
     - name: Testing find_package Consumption
       if: ${{ matrix.build-type == 'install' && matrix.scenario == 'dev-build' }}
       run: |
         set -e
-        cmake --log-level=VERBOSE -S .github/consumer -B consume_build \
+        cmake --log-level=VERBOSE -S .github/consumer -B consume_build ${{ matrix.os == 'windows' && '-G Ninja' || '' }} \
               -DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/install \
               -DINTEGER_BITS=${{ matrix.integer-size }}
         cmake --build consume_build
