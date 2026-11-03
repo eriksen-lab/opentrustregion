@@ -16,8 +16,20 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+/* the descriptor functions the capture of the standard error uses, which the Microsoft
+ * C runtime provides under other names */
+#include <io.h>
+#define dup(fd) _dup(fd)
+#define dup2(fd1, fd2) _dup2(fd1, fd2)
+#define close(fd) _close(fd)
+#define fileno(stream) _fileno(stream)
+#define STDERR_FILENO 2
+#else
 #include <unistd.h>
+#endif
 
 #include "opentrustregion.h"
 
@@ -427,10 +439,24 @@ static bool hartmann_dimensions_match(const char *test_name) {
 static FILE *stderr_capture;
 static int saved_stderr;
 
+/* open a temporary file for the capture, which is removed when it is closed, under
+ * Windows in the temporary directory, since tmpfile creates it in the root directory
+ * of the drive, which users may not write to */
+static FILE *open_capture_file(void) {
+#ifdef _WIN32
+  char *name = _tempnam(NULL, "otr");
+  FILE *file = name ? fopen(name, "w+bD") : NULL;
+  free(name);
+  return file;
+#else
+  return tmpfile();
+#endif
+}
+
 void start_stderr_capture(void) {
   fflush(stderr);
   flush_fortran_stderr();
-  stderr_capture = tmpfile();
+  stderr_capture = open_capture_file();
   saved_stderr = dup(STDERR_FILENO);
   dup2(fileno(stderr_capture), STDERR_FILENO);
 }

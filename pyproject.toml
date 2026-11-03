@@ -73,6 +73,13 @@ inherit.cmake.define = "append"
 cmake.define.BLA_VENDOR = "Apple"
 cmake.define.CMAKE_Fortran_FLAGS = "-static-libgfortran -static-libgcc -static-libquadmath"
 
+# CMake's default generator under Windows, Visual Studio, builds Fortran with Intel's
+# compilers only, so Windows builds use Ninja, which scikit-build-core downloads if it
+# is missing
+[[tool.scikit-build.overrides]]
+if.platform-system = "win32"
+cmake.args = ["-G", "Ninja"]
+
 # conda-build sets CONDA_BUILD=1 automatically; the conda-forge recipe builds the
 # Fortran library as its own "opentrustregion" package and expects "pyopentrustregion"
 # to contain Python files only, so skip CMake entirely and emit a pure-Python wheel
