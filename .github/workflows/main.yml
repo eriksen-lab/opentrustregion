@@ -240,16 +240,16 @@ jobs:
       if: ${{ matrix.os == 'windows' && matrix.compiler == 'flang' }}
       uses: ilammy/msvc-dev-cmd@v1
 
-    # LLVM's windows releases contain Flang from LLVM 22 on
+    # LLVM's windows installer contains Flang
     - name: Install LLVM Flang on Windows
       if: ${{ matrix.os == 'windows' && matrix.compiler == 'flang' }}
       shell: pwsh
       run: |
         $PSNativeCommandUseErrorActionPreference = $true
-        $llvm = "clang+llvm-${{ matrix.compiler-version }}-x86_64-pc-windows-msvc"
-        curl.exe -sSfL -o "$env:RUNNER_TEMP\llvm.tar.xz" "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ matrix.compiler-version }}/$llvm.tar.xz"
-        & "$env:SystemRoot\System32\tar.exe" -xf "$env:RUNNER_TEMP\llvm.tar.xz" -C "$env:RUNNER_TEMP"
-        "$env:RUNNER_TEMP\$llvm\bin" >> $env:GITHUB_PATH
+        curl.exe -sSfL -o "$env:RUNNER_TEMP\llvm.msi" "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ matrix.compiler-version }}/LLVM-${{ matrix.compiler-version }}-win64.msi"
+        $msiexec = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$env:RUNNER_TEMP\llvm.msi`" /qn TARGETDIR=`"$env:RUNNER_TEMP\llvm`""
+        if ($msiexec.ExitCode -ne 0) { exit $msiexec.ExitCode }
+        "$env:RUNNER_TEMP\llvm\LLVM\bin" >> $env:GITHUB_PATH
         "CC=cl" >> $env:GITHUB_ENV
         "FC=flang" >> $env:GITHUB_ENV
         "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
