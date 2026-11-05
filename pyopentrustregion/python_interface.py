@@ -21,7 +21,6 @@ from ctypes import (
     POINTER,
     byref,
     string_at,
-    cast,
     addressof,
     memmove,
     c_double,
@@ -640,8 +639,14 @@ class Settings:
             else None
         )
 
-        # create c_void_p pointer, points to NULL if func_interface is None
-        setattr(settings_c, attr_name, cast(interface, c_void_p))
+        # write the address of the interface, NULL without one; ctypes.cast would put
+        # the interface in a reference cycle, which keeps it and the function it wraps
+        # alive after the call until the next garbage collection
+        setattr(
+            settings_c,
+            attr_name,
+            c_void_p.from_buffer(interface).value if interface is not None else None,
+        )
 
         # keep interface alive until the call returns
         interfaces.append(interface)
