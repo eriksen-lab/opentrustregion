@@ -42,10 +42,33 @@ jobs:
           - os: macos-x86_64
             runs-on: macos-15-intel
             macos-target: "15.0"
+          - os: windows-x86_64
+            runs-on: windows-latest
+            flang-version: "23.1.4"
 
     steps:
     - name: Checkout OpenTrustRegion
       uses: actions/checkout@v7
+
+    - name: Install Microsoft C compiler on Windows
+      if: ${{ runner.os == 'Windows' }}
+      uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Install LLVM Flang and OpenBLAS on Windows
+      if: ${{ runner.os == 'Windows' }}
+      shell: pwsh
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        curl.exe -sSfL -o "$env:RUNNER_TEMP\llvm.msi" "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ matrix.flang-version }}/LLVM-${{ matrix.flang-version }}-win64.msi"
+        $msiexec = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$env:RUNNER_TEMP\llvm.msi`" /qn TARGETDIR=`"$env:RUNNER_TEMP\llvm`""
+        if ($msiexec.ExitCode -ne 0) { exit $msiexec.ExitCode }
+        "$env:RUNNER_TEMP\llvm\LLVM\bin" >> $env:GITHUB_PATH
+        "CC=cl" >> $env:GITHUB_ENV
+        "FC=flang" >> $env:GITHUB_ENV
+        curl.exe -sSfL -o "$env:RUNNER_TEMP\openblas.zip" "https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.34/OpenBLAS-0.3.34-x64.zip"
+        Expand-Archive "$env:RUNNER_TEMP\openblas.zip" "$env:RUNNER_TEMP\openblas"
+        "$env:RUNNER_TEMP\openblas\bin" >> $env:GITHUB_PATH
+        "CMAKE_PREFIX_PATH=$env:RUNNER_TEMP\openblas" >> $env:GITHUB_ENV
 
     - name: Build wheel
       uses: pypa/cibuildwheel@v4.3
@@ -68,9 +91,64 @@ jobs:
         CIBW_BEFORE_ALL_MACOS: "brew install gcc"
         CIBW_ENVIRONMENT_MACOS: "OTR_RELEASE_WHEEL=1 MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos-target }}"
 
+        # Windows builds for 64-bit only, which the toolchain and OpenBLAS above target;
+        # the build installs the DLLs the library links next to it
+        CIBW_ARCHS_WINDOWS: "AMD64"
+
         # the full testsuite cannot run against a published wheel, so drive the
         # public API instead and check that the numbers come out right
         CIBW_TEST_COMMAND: "python -m pyopentrustregion.verify_install"
+
+    # the windows runners have the Microsoft C++ runtime, which the build does not
+    # bundle and a PC may lack, so the test above cannot tell whether the wheel needs
+    # it; every DLL in the wheel may only link DLLs that the wheel carries, that
+    # Windows provides or that Python installs, its C runtime
+    - name: Check the DLLs the Windows wheel links
+      if: ${{ runner.os == 'Windows' }}
+      shell: python
+      run: |
+        import glob, os, re, subprocess, sys, tempfile, zipfile
+
+        python_dlls = {"vcruntime140.dll", "vcruntime140_1.dll"}
+        # the C++ runtime, OpenMP and the debug runtimes of the Microsoft compilers
+        redistributable = re.compile(
+            r"(msvcp140|vcomp140|concrt140|vccorlib140|ucrtbased|vcruntime140d)"
+        )
+        system32 = os.path.join(os.environ["SystemRoot"], "System32")
+        wheels = glob.glob("wheelhouse/*.whl")
+        if not wheels:
+            print("wheelhouse contains no wheel")
+        failed = not wheels
+        for wheel in wheels:
+            with tempfile.TemporaryDirectory() as directory:
+                zipfile.ZipFile(wheel).extractall(directory)
+                dlls = glob.glob(os.path.join(directory, "**", "*.dll"), recursive=True)
+                bundled = {os.path.basename(dll).lower() for dll in dlls}
+                if not any("opentrustregion" in name for name in bundled):
+                    print(f"{os.path.basename(wheel)} contains no OpenTrustRegion DLL")
+                    failed = True
+                for dll in dlls:
+                    headers = subprocess.run(
+                        ["llvm-objdump", "-p", dll],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    ).stdout
+                    for name in re.findall(r"DLL Name: (\S+)", headers):
+                        lower = name.lower()
+                        allowed = (
+                            lower in bundled
+                            or lower in python_dlls
+                            or lower.startswith(("api-ms-win-", "ext-ms-win-"))
+                            or (
+                                not redistributable.match(lower)
+                                and os.path.exists(os.path.join(system32, name))
+                            )
+                        )
+                        verdict = "ok" if allowed else "missing on a PC without it"
+                        print(f"{os.path.basename(dll)} -> {name}: {verdict}")
+                        failed |= not allowed
+        sys.exit(failed)
 
     - name: Upload wheel
       uses: actions/upload-artifact@v7
