@@ -257,17 +257,18 @@ class CallbackInterface:
         return self.library_call.n_param
 
     def __call__(self, *args):
-        # report an interruption that arrived while the library ran without calling the
-        # callback function, the call raises it once the library has returned
-        if self.library_call.interruption is not None:
-            return self.fail(self.library_call.interruption)
-
         # catch every exception, since ctypes drops one that leaves this function and
         # hands the library an undefined return value instead, and mark the callback
         # function as innermost while it runs, so that SIGINT raises right away
         outer = running_call.get()
         try:
             running_call.set(None)
+
+            # report an interruption that arrived while the library ran without calling
+            # the callback function, the call raises it once the library has returned
+            if self.library_call.interruption is not None:
+                raise self.library_call.interruption
+
             result = self.call(*args[:-1])
         except BaseException as e:
             # unmark the callback function before calling fail, so that an interruption
