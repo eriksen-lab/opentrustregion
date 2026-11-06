@@ -1,7 +1,7 @@
 ----
 
 Name: libquadmath
-Files: pyopentrustregion.libs/libquadmath*.so on Linux; linked statically into
+Files: pyopentrustregion.libs/libquadmath*.so* on Linux; linked statically into
   pyopentrustregion.libs/libopenblas*.dll on Windows and into
   pyopentrustregion/libopentrustregion_32.dylib on macOS
 Description: part of the GNU Fortran runtime

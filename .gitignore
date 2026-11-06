@@ -22,6 +22,7 @@ build/
 dist/
 wheelhouse/
 *.egg-info/
+LICENSES_bundled.txt
 
 # Environment files
 .python-version

@@ -22,4 +22,5 @@ runs:
       if ((Get-FileHash -Algorithm SHA256 $zip).Hash -ne $env:OPENBLAS_SHA256) { throw "OpenBLAS $env:OPENBLAS_VERSION archive does not have the expected SHA-256" }
       Expand-Archive $zip "$env:RUNNER_TEMP\openblas"
       "$env:RUNNER_TEMP\openblas\bin" >> $env:GITHUB_PATH
+      "OPENBLAS_BIN=$env:RUNNER_TEMP\openblas\bin" >> $env:GITHUB_ENV
       "CMAKE_PREFIX_PATH=$env:RUNNER_TEMP\openblas" >> $env:GITHUB_ENV
