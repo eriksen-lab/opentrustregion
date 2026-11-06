@@ -1,0 +1,26 @@
+name: Install OpenBLAS on Windows
+description: >-
+  Installs OpenBLAS's Windows release, which contains LAPACK and import libraries for
+  the GNU and the Microsoft linker, and whose DLL needs no Fortran runtime, so that it
+  serves both Windows toolchains; the CI and the wheels install it through this action,
+  so that the wheels carry the OpenBLAS the CI tests
+
+runs:
+  using: composite
+  steps:
+  # the archive is checked against the SHA-256 GitHub reports for the release asset,
+  # since its DLL is shipped in the wheels
+  - name: Install OpenBLAS
+    shell: pwsh
+    env:
+      OPENBLAS_VERSION: "0.3.34"
+      OPENBLAS_SHA256: "e9cb6134541f36c27346d5fc5995652f060fba227cebbbabcbda5a5a44d7c76b"
+    run: |
+      $PSNativeCommandUseErrorActionPreference = $true
+      $zip = "$env:RUNNER_TEMP\openblas.zip"
+      curl.exe -sSfL -o $zip "https://github.com/OpenMathLib/OpenBLAS/releases/download/v$env:OPENBLAS_VERSION/OpenBLAS-$env:OPENBLAS_VERSION-x64.zip"
+      if ((Get-FileHash -Algorithm SHA256 $zip).Hash -ne $env:OPENBLAS_SHA256) { throw "OpenBLAS $env:OPENBLAS_VERSION archive does not have the expected SHA-256" }
+      Expand-Archive $zip "$env:RUNNER_TEMP\openblas"
+      "$env:RUNNER_TEMP\openblas\bin" >> $env:GITHUB_PATH
+      "OPENBLAS_BIN=$env:RUNNER_TEMP\openblas\bin" >> $env:GITHUB_ENV
+      "CMAKE_PREFIX_PATH=$env:RUNNER_TEMP\openblas" >> $env:GITHUB_ENV
