@@ -30,20 +30,30 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # licenses names the libraries whose licenses in .github/wheels the wheel
+      # carries: OpenBLAS, with the LAPACK it contains, which the Linux and Windows
+      # wheels bundle, and libquadmath of the GNU Fortran runtime, which auditwheel
+      # bundles on x86_64 Linux and which OpenBLAS's Windows DLL and the macOS library
+      # link statically
       matrix:
         include:
           - os: linux-x86_64
             runs-on: ubuntu-latest
+            licenses: openblas libquadmath
           - os: linux-aarch64
             runs-on: ubuntu-24.04-arm
+            licenses: openblas
           - os: macos-arm64
             runs-on: macos-15
             macos-target: "15.0"
+            licenses: libquadmath
           - os: macos-x86_64
             runs-on: macos-15-intel
             macos-target: "15.0"
+            licenses: libquadmath
           - os: windows-x86_64
             runs-on: windows-latest
+            licenses: openblas libquadmath
 
     steps:
     - name: Checkout OpenTrustRegion
@@ -57,6 +67,16 @@ jobs:
     - name: Install OpenBLAS on Windows
       if: ${{ runner.os == 'Windows' }}
       uses: ./.github/actions/install-windows-openblas
+
+    # the licenses of the libraries the wheel bundles, which pyproject.toml picks up
+    # next to LICENSE
+    - name: Add the licenses of the bundled libraries
+      shell: bash
+      run: |
+        for library in ${{ matrix.licenses }}; do
+          cat .github/wheels/LICENSE_$library.txt
+          echo
+        done > LICENSES_bundled.txt
 
     - name: Build wheel
       uses: pypa/cibuildwheel@v4.3
@@ -79,64 +99,20 @@ jobs:
         CIBW_BEFORE_ALL_MACOS: "brew install gcc"
         CIBW_ENVIRONMENT_MACOS: "OTR_RELEASE_WHEEL=1 MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos-target }}"
 
-        # Windows builds for 64-bit only, which the toolchain and OpenBLAS above target;
-        # the build installs the DLLs the library links next to it
+        # Windows builds for 64-bit only, which the toolchain and OpenBLAS above target
         CIBW_ARCHS_WINDOWS: "AMD64"
+
+        # on Windows delvewheel vendors OpenBLAS into the wheel under a name of its
+        # own, since Windows reuses a loaded DLL of the same name, such as another
+        # package's OpenBLAS, and leaves out the C runtime that Python installs; it
+        # analyzes the library, which ctypes loads rather than Python as an extension
+        # module, only with --analyze-existing
+        CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel==1.13.2"
+        CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: "delvewheel repair --analyze-existing --exclude vcruntime140.dll --exclude vcruntime140_1.dll -w {dest_dir} {wheel}"
 
         # the full testsuite cannot run against a published wheel, so drive the
         # public API instead and check that the numbers come out right
         CIBW_TEST_COMMAND: "python -m pyopentrustregion.verify_install"
-
-    # the windows runners have the Microsoft C++ runtime, which the build does not
-    # bundle and a PC may lack, so the test above cannot tell whether the wheel needs
-    # it; every DLL in the wheel may only link DLLs that the wheel carries, that
-    # Windows provides or that Python installs, its C runtime
-    - name: Check the DLLs the Windows wheel links
-      if: ${{ runner.os == 'Windows' }}
-      shell: python
-      run: |
-        import glob, os, re, subprocess, sys, tempfile, zipfile
-
-        python_dlls = {"vcruntime140.dll", "vcruntime140_1.dll"}
-        # the Visual C++ runtimes of every version, with OpenMP and debug variants
-        redistributable = re.compile(
-            r"(msvc[pr]\d|vcruntime|vcomp|concrt|vccorlib|vcamp|mfc|ucrtbased)"
-        )
-        system32 = os.path.join(os.environ["SystemRoot"], "System32")
-        wheels = glob.glob("wheelhouse/*.whl")
-        if not wheels:
-            print("wheelhouse contains no wheel")
-        failed = not wheels
-        for wheel in wheels:
-            with tempfile.TemporaryDirectory() as directory:
-                zipfile.ZipFile(wheel).extractall(directory)
-                dlls = glob.glob(os.path.join(directory, "**", "*.dll"), recursive=True)
-                bundled = {os.path.basename(dll).lower() for dll in dlls}
-                if not any("opentrustregion" in name for name in bundled):
-                    print(f"{os.path.basename(wheel)} contains no OpenTrustRegion DLL")
-                    failed = True
-                for dll in dlls:
-                    headers = subprocess.run(
-                        ["llvm-objdump", "-p", dll],
-                        capture_output=True,
-                        text=True,
-                        check=True,
-                    ).stdout
-                    for name in re.findall(r"DLL Name: (\S+)", headers):
-                        lower = name.lower()
-                        allowed = (
-                            lower in bundled
-                            or lower in python_dlls
-                            or lower.startswith(("api-ms-win-", "ext-ms-win-"))
-                            or (
-                                not redistributable.match(lower)
-                                and os.path.exists(os.path.join(system32, name))
-                            )
-                        )
-                        verdict = "ok" if allowed else "missing on a PC without it"
-                        print(f"{os.path.basename(dll)} -> {name}: {verdict}")
-                        failed |= not allowed
-        sys.exit(failed)
 
     - name: Upload wheel
       uses: actions/upload-artifact@v7

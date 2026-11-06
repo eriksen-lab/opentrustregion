@@ -9,7 +9,9 @@ description = "Python interface to OpenTrustRegion, a Reusable Library for Secon
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MPL-2.0"
-license-files = ["LICENSE"]
+# also the licenses of the libraries the published wheels bundle, which their workflow
+# places next to LICENSE
+license-files = ["LICENSE*"]
 authors = [{ name = "Jonas Greiner", email = "jongr@kemi.dtu.dk" }]
 keywords = [
     "optimization",
@@ -43,8 +45,9 @@ cmake.version = ">=3.24"
 # wheel per platform serves every supported Python version
 wheel.py-api = "py3"
 wheel.packages = ["pyopentrustregion"]
-# only the "python" component is installed into the wheel
-install.components = ["python"]
+# the wheel holds the "python" component and, on Windows, the DLLs the library links
+# ("python_dlls"), but none of the other components
+install.components = ["python", "python_dlls"]
 
 # pip caches the wheels it builds and may install them on another machine, so they are
 # not optimized for the instruction set of the building machine
@@ -73,6 +76,13 @@ if.platform-system = "darwin"
 inherit.cmake.define = "append"
 cmake.define.BLA_VENDOR = "Apple"
 cmake.define.CMAKE_Fortran_FLAGS = "-static-libgfortran -static-libgcc -static-libquadmath"
+
+# Windows release wheels leave the DLLs the library links to delvewheel, which copies
+# them into the wheel under names of their own
+[[tool.scikit-build.overrides]]
+if.env.OTR_RELEASE_WHEEL = true
+if.platform-system = "win32"
+install.components = ["python"]
 
 # CMake's default generator under Windows, Visual Studio, builds Fortran with Intel's
 # compilers only, so Windows builds use Ninja, which scikit-build-core downloads if it
