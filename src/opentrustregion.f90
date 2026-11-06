@@ -137,10 +137,10 @@ module opentrustregion_core
         ! number of orbital updates, objective function evaluations and Hessian linear
         ! transformations, the latter including those of the internal stability checks
         integer(ip) :: n_update_orbs = 0, n_obj_func = 0, n_hess_x = 0
-        ! whether the predicted function change of the last trust-region step could
-        ! not be resolved while its actual change could not be resolved either or the
-        ! step was rejected, or the gradient vanishes exactly, unless the convergence
-        ! check passes
+        ! whether a trust-region step whose function changes could not be resolved
+        ! did not lower the gradient norm, the predicted function change of a rejected
+        ! trust-region step could not be resolved or the gradient vanishes exactly,
+        ! unless the convergence check passes
         logical :: max_precision_reached = .false.
         ! state of the most recent internal stability check
         type(stability_state_type) :: stability_state = stability_state_type()
@@ -287,9 +287,10 @@ contains
         type(solver_settings_type), intent(in), optional :: settings
         type(solver_state_type), intent(out), target, optional :: state
 
-        real(rp) :: func, grad_norm, grad_rms, mu, n_kappa, kappa_norm
+        real(rp) :: func, grad_norm, grad_rms, mu, n_kappa, kappa_norm, last_grad_norm
         real(rp), allocatable :: kappa(:), grad(:), h_diag(:)
-        logical :: macro_converged, stable, conv_check_passed, local_region
+        logical :: macro_converged, stable, conv_check_passed, local_region, &
+                   unresolved_step
         integer(ip) :: imacro
         character(len=300) :: msg
         procedure(hess_x_type), pointer :: hess_x_funptr
@@ -327,6 +328,9 @@ contains
 
         ! initialize stability boolean
         stable = .true.
+
+        ! no step whose function change can not be resolved has been taken yet
+        unresolved_step = .false.
 
         ! initialize random number generator
         call init_rng(local_settings%seed)
@@ -377,6 +381,16 @@ contains
                 ! leaves the subsystem solvers no subproblem they can solve, so the
                 ! point is taken as one at maximum precision
                 if (grad_norm <= 0.0_rp) current_state%max_precision_reached = .true.
+
+                ! a step whose function change can not be resolved is judged by the
+                ! gradient instead, so that no further progress can be resolved once
+                ! the gradient norm does not decrease along such a step
+                if (unresolved_step .and. grad_norm >= last_grad_norm) then
+                    call local_settings%log(function_unchanged_warning_msg, &
+                                            verbosity_warning)
+                    current_state%max_precision_reached = .true.
+                end if
+                unresolved_step = .false.
 
                 ! update the state with the current point, whose row is printed below
                 current_state%macro_iteration = imacro - 1
@@ -453,12 +467,16 @@ contains
             ! iteration since its step would never be evaluated
             if (imacro == local_settings%n_macro) exit
 
+            ! remember the gradient norm of the point the step leaves, which judges a
+            ! step whose function change can not be resolved
+            last_grad_norm = grad_norm
+
             if (string_in("davidson", local_settings%subsystem_solver)) then
                 ! solve trust region subproblem with (Jacobi-)Davidson
                 call level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
                                             obj_func, hess_x_funptr, local_settings, &
                                             local_region, current_state, kappa, &
-                                            kappa_norm, mu, error)
+                                            kappa_norm, mu, unresolved_step, error)
                 call add_error_origin(error, error_solver, local_settings)
                 if (error /= 0) return
 
@@ -471,15 +489,17 @@ contains
                 ! solve trust region subproblem with truncated conjugate gradient
                 call truncated_conjugate_gradient( &
                     func, grad, h_diag, n_param, obj_func, hess_x_funptr, &
-                    local_settings, current_state, kappa, kappa_norm, error)
+                    local_settings, current_state, kappa, kappa_norm, unresolved_step, &
+                    error)
                 call add_error_origin(error, error_solver, local_settings)
                 if (error /= 0) return
             end if
 
-            ! perform line search
+            ! perform line search, except along a step whose function change can not
+            ! be resolved
             if (current_state%max_precision_reached) then
                 n_kappa = 0.0_rp
-            else if (local_settings%line_search) then
+            else if (local_settings%line_search .and. .not. unresolved_step) then
                 n_kappa = bracket(obj_func, kappa, 0.0_rp, 1.0_rp, local_settings, &
                                   current_state%n_obj_func, error)
                 call add_error_origin(error, error_solver, local_settings)
@@ -2916,9 +2936,9 @@ contains
 
     end subroutine split_string_by_space
 
-    subroutine level_shifted_davidson(func, grad, grad_norm, h_diag, n_param, &
-                                      obj_func, hess_x_funptr, settings, local_region, &
-                                      state, solution, solution_norm, mu, error)
+    subroutine level_shifted_davidson( &
+        func, grad, grad_norm, h_diag, n_param, obj_func, hess_x_funptr, settings, &
+        local_region, state, solution, solution_norm, mu, unresolved_step, error)
         !
         ! this subroutine performs level-shifted (Jacobi-)Davidson to solve the trust
         ! region subproblem
@@ -2931,6 +2951,7 @@ contains
         logical, intent(in) :: local_region
         type(solver_state_type), intent(inout), target :: state
         real(rp), intent(out) :: solution(:), solution_norm, mu
+        logical, intent(out) :: unresolved_step
         integer(ip), intent(out) :: error
 
         real(rp), allocatable :: &
@@ -3173,7 +3194,7 @@ contains
             accept_step = accept_trust_region_step( &
                 dnrm2(n_param, solution, 1_ip), func, new_func - func, &
                 ddot(n_param, solution, 1_ip, perturbed_grad + 0.5_rp * h_solution, &
-                     1_ip), micro_converged, settings, state, error)
+                     1_ip), micro_converged, settings, state, unresolved_step, error)
             if (error /= 0) return
             if (state%max_precision_reached) exit
         end do
@@ -3189,7 +3210,7 @@ contains
 
     subroutine truncated_conjugate_gradient(func, grad, h_diag, n_param, obj_func, &
                                             hess_x_funptr, settings, state, solution, &
-                                            solution_norm, error)
+                                            solution_norm, unresolved_step, error)
         !
         ! this subroutine performs truncated conjugate gradient to solve the trust
         ! region subproblem
@@ -3201,6 +3222,7 @@ contains
         type(solver_settings_type), intent(in) :: settings
         type(solver_state_type), intent(inout), target :: state
         real(rp), intent(out) :: solution(:), solution_norm
+        logical, intent(out) :: unresolved_step
         integer(ip), intent(out) :: error
 
         logical :: accept_step, micro_converged
@@ -3387,7 +3409,7 @@ contains
             accept_step = accept_trust_region_step( &
                 solution_norm, func, new_func - func, &
                 ddot(n_param, solution, 1_ip, grad + 0.5_rp * h_solution, 1_ip), &
-                micro_converged, settings, state, error)
+                micro_converged, settings, state, unresolved_step, error)
             if (error /= 0) return
             if (accept_step .or. state%max_precision_reached) exit
 
@@ -3458,11 +3480,11 @@ contains
 
     logical function accept_trust_region_step(solution_norm, func, actual_func_diff, &
                                               pred_func_diff, micro_converged, &
-                                              settings, state, error)
+                                              settings, state, unresolved_step, error)
         !
         ! this function checks whether the trust region step is accepted and modifies
-        ! the trust radius in the state accordingly, where it also flags whether the
-        ! function changes could not be resolved anymore
+        ! the trust radius in the state accordingly, where it also flags a step whose
+        ! function changes can not be resolved
         !
         use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
 
@@ -3470,6 +3492,7 @@ contains
         logical, intent(in) :: micro_converged
         type(solver_settings_type), intent(in) :: settings
         type(solver_state_type), intent(inout), target :: state
+        logical, intent(out) :: unresolved_step
         integer(ip), intent(out) :: error
 
         real(rp) :: ratio, func_resolution
@@ -3478,7 +3501,8 @@ contains
         ! initialize error flag
         error = 0
 
-        ! default to maximum precision not yet reached
+        ! default to a resolved step and maximum precision not yet reached
+        unresolved_step = .false.
         state%max_precision_reached = .false.
 
         ! a step whose norm is not finite, as from a Hessian linear transformation or a
@@ -3492,14 +3516,15 @@ contains
             return
         end if
 
-        ! check if function value has not decreased up to floating point precision, in
-        ! which case the step is not taken
+        ! a step whose actual and predicted function changes can both not be resolved
+        ! relative to the function value is taken with the trust radius unchanged,
+        ! since the ratio of the two is only rounding noise, and judged by the gradient
+        ! at the new point instead
         func_resolution = func_resolution_safety_factor * abs(func) * epsilon(1.0_rp)
         if (abs(actual_func_diff) <= func_resolution .and. &
             abs(pred_func_diff) <= func_resolution) then
-            call settings%log(function_unchanged_warning_msg, verbosity_warning)
-            state%max_precision_reached = .true.
-            accept_trust_region_step = .false.
+            unresolved_step = .true.
+            accept_trust_region_step = .true.
             return
         end if
 
