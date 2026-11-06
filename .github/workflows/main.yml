@@ -74,7 +74,6 @@ jobs:
           - os: windows
             arch: x86_64
             compiler: flang
-            compiler-version: "23.1.4"
             blas: openblas
             runs-on: windows-latest
             build-type: install
@@ -188,7 +187,6 @@ jobs:
           - os: windows
             arch: x86_64
             compiler: flang
-            compiler-version: "23.1.4"
             blas: openblas
             runs-on: windows-latest
             build-type: test
@@ -242,22 +240,10 @@ jobs:
         "CC=gcc" >> $env:GITHUB_ENV
         "FC=gfortran" >> $env:GITHUB_ENV
 
-    - name: Install Microsoft C Compiler on Windows
+    # the toolchain the Windows wheels are built with
+    - name: Install LLVM Flang and the Microsoft C compiler on Windows
       if: ${{ matrix.os == 'windows' && matrix.compiler == 'flang' }}
-      uses: ilammy/msvc-dev-cmd@v1
-
-    # LLVM's windows installer contains Flang
-    - name: Install LLVM Flang on Windows
-      if: ${{ matrix.os == 'windows' && matrix.compiler == 'flang' }}
-      shell: pwsh
-      run: |
-        $PSNativeCommandUseErrorActionPreference = $true
-        curl.exe -sSfL -o "$env:RUNNER_TEMP\llvm.msi" "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ matrix.compiler-version }}/LLVM-${{ matrix.compiler-version }}-win64.msi"
-        $msiexec = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$env:RUNNER_TEMP\llvm.msi`" /qn TARGETDIR=`"$env:RUNNER_TEMP\llvm`""
-        if ($msiexec.ExitCode -ne 0) { exit $msiexec.ExitCode }
-        "$env:RUNNER_TEMP\llvm\LLVM\bin" >> $env:GITHUB_PATH
-        "CC=cl" >> $env:GITHUB_ENV
-        "FC=flang" >> $env:GITHUB_ENV
+      uses: ./.github/actions/install-windows-flang
 
     - name: Install GNU compilers on MacOS
       if: ${{ matrix.os == 'macos' && matrix.compiler == 'gnu' }}
@@ -321,18 +307,10 @@ jobs:
       run: |
         sudo apt install -y libopenblas${{ matrix.integer-size == '64' && '64' || '' }}-dev
 
-    # OpenBLAS's windows release contains LAPACK and import libraries for the GNU and
-    # the Microsoft linker, and its DLL needs no Fortran runtime, so it serves both
-    # windows toolchains
+    # the OpenBLAS the Windows wheels carry, which serves both windows toolchains
     - name: Install OpenBLAS on Windows
       if: ${{ matrix.os == 'windows' && matrix.blas == 'openblas' }}
-      shell: pwsh
-      run: |
-        $PSNativeCommandUseErrorActionPreference = $true
-        curl.exe -sSfL -o "$env:RUNNER_TEMP\openblas.zip" "https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.34/OpenBLAS-0.3.34-x64.zip"
-        Expand-Archive "$env:RUNNER_TEMP\openblas.zip" "$env:RUNNER_TEMP\openblas"
-        "$env:RUNNER_TEMP\openblas\bin" >> $env:GITHUB_PATH
-        "CMAKE_PREFIX_PATH=$env:RUNNER_TEMP\openblas" >> $env:GITHUB_ENV
+      uses: ./.github/actions/install-windows-openblas
 
     - name: Install reference BLAS and LAPACK on Linux
       if: ${{ matrix.os == 'linux' && matrix.blas == 'netlib' }}

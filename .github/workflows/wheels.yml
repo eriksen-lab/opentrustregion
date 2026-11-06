@@ -30,22 +30,53 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # licenses names the libraries whose licenses in .github/wheels the wheel
+      # carries: OpenBLAS, with the LAPACK it contains, which the Linux and Windows
+      # wheels bundle, and libquadmath of the GNU Fortran runtime, which auditwheel
+      # bundles on x86_64 Linux and which OpenBLAS's Windows DLL and the macOS library
+      # link statically
       matrix:
         include:
           - os: linux-x86_64
             runs-on: ubuntu-latest
+            licenses: openblas libquadmath
           - os: linux-aarch64
             runs-on: ubuntu-24.04-arm
+            licenses: openblas
           - os: macos-arm64
-            runs-on: macos-14
-            macos-target: "14.0"
+            runs-on: macos-15
+            macos-target: "15.0"
+            licenses: libquadmath
           - os: macos-x86_64
             runs-on: macos-15-intel
             macos-target: "15.0"
+            licenses: libquadmath
+          - os: windows-x86_64
+            runs-on: windows-latest
+            licenses: openblas libquadmath
 
     steps:
     - name: Checkout OpenTrustRegion
       uses: actions/checkout@v7
+
+    # the same toolchain and OpenBLAS as the CI's Windows job with LLVM Flang
+    - name: Install LLVM Flang and the Microsoft C compiler on Windows
+      if: ${{ runner.os == 'Windows' }}
+      uses: ./.github/actions/install-windows-flang
+
+    - name: Install OpenBLAS on Windows
+      if: ${{ runner.os == 'Windows' }}
+      uses: ./.github/actions/install-windows-openblas
+
+    # the licenses of the libraries the wheel bundles, which pyproject.toml picks up
+    # next to LICENSE
+    - name: Add the licenses of the bundled libraries
+      shell: bash
+      run: |
+        for library in ${{ matrix.licenses }}; do
+          cat .github/wheels/LICENSE_$library.txt
+          echo
+        done > LICENSES_bundled.txt
 
     - name: Build wheel
       uses: pypa/cibuildwheel@v4.3
@@ -67,6 +98,18 @@ jobs:
         # macOS links Apple's Accelerate and a static Fortran runtime
         CIBW_BEFORE_ALL_MACOS: "brew install gcc"
         CIBW_ENVIRONMENT_MACOS: "OTR_RELEASE_WHEEL=1 MACOSX_DEPLOYMENT_TARGET=${{ matrix.macos-target }}"
+
+        # Windows builds for 64-bit only, which the toolchain and OpenBLAS above target
+        CIBW_ARCHS_WINDOWS: "AMD64"
+
+        # on Windows delvewheel vendors OpenBLAS into the wheel under a name of its
+        # own, since Windows reuses a loaded DLL of the same name, such as another
+        # package's OpenBLAS, and leaves out the C runtime that Python installs; it
+        # analyzes the library, which ctypes loads rather than Python as an extension
+        # module, only with --analyze-existing, and --add-path makes it take the
+        # OpenBLAS installed above rather than the first DLL of its name on the PATH
+        CIBW_BEFORE_BUILD_WINDOWS: "pip install delvewheel==1.13.2"
+        CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: 'delvewheel repair --analyze-existing --add-path "${{ env.OPENBLAS_BIN }}" --exclude vcruntime140.dll --exclude vcruntime140_1.dll -w {dest_dir} {wheel}'
 
         # the full testsuite cannot run against a published wheel, so drive the
         # public API instead and check that the numbers come out right

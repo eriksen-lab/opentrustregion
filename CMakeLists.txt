@@ -13,6 +13,7 @@ set(otr OpenTrustRegion)
 set(runtime_component runtime)
 set(test_component testsuite)
 set(python_component python)
+set(python_dlls_component python_dlls)
 
 # ====  Options  ================================================================
 
@@ -423,7 +424,10 @@ if(SKBUILD)
 
     # install the non-system DLLs the libraries link, such as the Fortran runtime and
     # BLAS/LAPACK, next to them; CMake looks for them only in the directories given,
-    # in order: the compiler's, those of the linked libraries and their bin, and PATH
+    # in order: the compiler's, those of the linked libraries and their bin, and PATH;
+    # they form a component of their own, which the release wheels leave out, since
+    # delvewheel copies the DLLs into them under names of their own, so that they
+    # cannot clash with DLLs of the same name that other packages load
     if(WIN32)
         get_filename_component(dll_dirs "${CMAKE_Fortran_COMPILER}" DIRECTORY)
         foreach(library IN LISTS BLAS_LIBRARIES LAPACK_LIBRARIES)
@@ -438,7 +442,7 @@ if(SKBUILD)
                 POST_EXCLUDE_REGEXES "[Ss]ystem32/"
                 DIRECTORIES ${dll_dirs} ${path_dirs}
                 DESTINATION ${SKBUILD_PLATLIB_DIR}/pyopentrustregion
-                COMPONENT ${python_component}
+                COMPONENT ${python_dlls_component}
         )
     endif()
 endif()
