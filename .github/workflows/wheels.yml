@@ -44,31 +44,19 @@ jobs:
             macos-target: "15.0"
           - os: windows-x86_64
             runs-on: windows-latest
-            flang-version: "23.1.4"
 
     steps:
     - name: Checkout OpenTrustRegion
       uses: actions/checkout@v7
 
-    - name: Install Microsoft C compiler on Windows
+    # the same toolchain and OpenBLAS as the CI's Windows job with LLVM Flang
+    - name: Install LLVM Flang and the Microsoft C compiler on Windows
       if: ${{ runner.os == 'Windows' }}
-      uses: ilammy/msvc-dev-cmd@v1
+      uses: ./.github/actions/install-windows-flang
 
-    - name: Install LLVM Flang and OpenBLAS on Windows
+    - name: Install OpenBLAS on Windows
       if: ${{ runner.os == 'Windows' }}
-      shell: pwsh
-      run: |
-        $PSNativeCommandUseErrorActionPreference = $true
-        curl.exe -sSfL -o "$env:RUNNER_TEMP\llvm.msi" "https://github.com/llvm/llvm-project/releases/download/llvmorg-${{ matrix.flang-version }}/LLVM-${{ matrix.flang-version }}-win64.msi"
-        $msiexec = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$env:RUNNER_TEMP\llvm.msi`" /qn TARGETDIR=`"$env:RUNNER_TEMP\llvm`""
-        if ($msiexec.ExitCode -ne 0) { exit $msiexec.ExitCode }
-        "$env:RUNNER_TEMP\llvm\LLVM\bin" >> $env:GITHUB_PATH
-        "CC=cl" >> $env:GITHUB_ENV
-        "FC=flang" >> $env:GITHUB_ENV
-        curl.exe -sSfL -o "$env:RUNNER_TEMP\openblas.zip" "https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.34/OpenBLAS-0.3.34-x64.zip"
-        Expand-Archive "$env:RUNNER_TEMP\openblas.zip" "$env:RUNNER_TEMP\openblas"
-        "$env:RUNNER_TEMP\openblas\bin" >> $env:GITHUB_PATH
-        "CMAKE_PREFIX_PATH=$env:RUNNER_TEMP\openblas" >> $env:GITHUB_ENV
+      uses: ./.github/actions/install-windows-openblas
 
     - name: Build wheel
       uses: pypa/cibuildwheel@v4.3
@@ -110,9 +98,9 @@ jobs:
         import glob, os, re, subprocess, sys, tempfile, zipfile
 
         python_dlls = {"vcruntime140.dll", "vcruntime140_1.dll"}
-        # the C++ runtime, OpenMP and the debug runtimes of the Microsoft compilers
+        # the Visual C++ runtimes of every version, with OpenMP and debug variants
         redistributable = re.compile(
-            r"(msvcp140|vcomp140|concrt140|vccorlib140|ucrtbased|vcruntime140d)"
+            r"(msvc[pr]\d|vcruntime|vcomp|concrt|vccorlib|vcamp|mfc|ucrtbased)"
         )
         system32 = os.path.join(os.environ["SystemRoot"], "System32")
         wheels = glob.glob("wheelhouse/*.whl")

@@ -1,0 +1,31 @@
+name: Install LLVM Flang and the Microsoft C compiler on Windows
+description: >-
+  Sets up the Microsoft C compiler and installs the LLVM release, whose Windows
+  installer contains Flang, and selects them as CC and FC; the CI and the wheels
+  install the Windows toolchain through this action, so that the wheels are built with
+  the compilers the CI tests
+
+runs:
+  using: composite
+  steps:
+  # pinned to the commit of the release, since a tag can be moved
+  - name: Install Microsoft C compiler
+    uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+
+  # the installer is checked against the SHA-256 GitHub reports for the release asset,
+  # so a changed download fails instead of reaching the wheels
+  - name: Install LLVM Flang
+    shell: pwsh
+    env:
+      LLVM_VERSION: "23.1.4"
+      LLVM_SHA256: "15e49aca3540991a6f28a0e57babab67da82155c4f73f79dd5e8666a851f9127"
+    run: |
+      $PSNativeCommandUseErrorActionPreference = $true
+      $msi = "$env:RUNNER_TEMP\llvm.msi"
+      curl.exe -sSfL -o $msi "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.msi"
+      if ((Get-FileHash -Algorithm SHA256 $msi).Hash -ne $env:LLVM_SHA256) { throw "LLVM $env:LLVM_VERSION installer does not have the expected SHA-256" }
+      $msiexec = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/a `"$msi`" /qn TARGETDIR=`"$env:RUNNER_TEMP\llvm`""
+      if ($msiexec.ExitCode -ne 0) { exit $msiexec.ExitCode }
+      "$env:RUNNER_TEMP\llvm\LLVM\bin" >> $env:GITHUB_PATH
+      "CC=cl" >> $env:GITHUB_ENV
+      "FC=flang" >> $env:GITHUB_ENV
