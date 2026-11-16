@@ -11,9 +11,10 @@ module test_reference
         solver_state_type, stability_state_type, settings_uninitialized_warning_msg, &
         stability_settings_uninitialized_warning_msg
     use c_interface, only: c_rp, c_ip, solver_state_type_c
-    use, intrinsic :: iso_c_binding, only: &
-        c_bool, c_char, c_null_char, c_funptr, c_null_funptr, c_f_procpointer, &
-        c_associated, c_ptr, c_null_ptr, c_loc, c_f_pointer, c_intptr_t
+    use, intrinsic :: iso_c_binding, only: c_bool, c_char, c_null_char, c_funptr, &
+                                           c_null_funptr, c_f_procpointer, &
+                                           c_associated, c_ptr, c_null_ptr, c_loc, &
+                                           c_f_pointer, c_intptr_t, c_int8_t, c_sizeof
 
     implicit none
 
@@ -442,7 +443,7 @@ contains
         !
         use c_interface, only: solver_settings_type_c
 
-        type(solver_settings_type_c), intent(out) :: values_out
+        type(solver_settings_type_c), intent(inout) :: values_out
         character(kind=c_char), intent(in), optional :: true_logical(*)
 
         character(len=:), allocatable :: name
@@ -513,7 +514,7 @@ contains
         !
         use c_interface, only: stability_settings_type_c
 
-        type(stability_settings_type_c), intent(out) :: values_out
+        type(stability_settings_type_c), intent(inout) :: values_out
 
         ! set callback function pointers and host context to distinct addresses
         values_out%precond = transfer(7_c_intptr_t, c_null_funptr)
@@ -547,7 +548,7 @@ contains
         ! this subroutine exports the reference solver state as a C state whose fields
         ! are set one by one without the conversion routines under test
         !
-        type(solver_state_type_c), intent(out) :: values_out
+        type(solver_state_type_c), intent(inout) :: values_out
 
         ! set logical
         values_out%max_precision_reached = ref_solver_state%max_precision_reached
@@ -581,7 +582,7 @@ contains
         !
         use c_interface, only: stability_state_type_c
 
-        type(stability_state_type_c), intent(out) :: values_out
+        type(stability_state_type_c), intent(inout) :: values_out
 
         ! set reals
         values_out%min_eigval = ref_stability_state%min_eigval
@@ -624,9 +625,12 @@ contains
         type(solver_settings_type_c) :: values
         character(len=:), allocatable :: name
 
-        ! export reference values and select field by name
+        ! export reference values into settings filled with bytes that differ from
+        ! both fills of the layout tests, so that a field the export does not set
+        ! differs from what they read in both, and select field by name
         field_value = 0.0_c_rp
         keyword_c = c_null_char
+        values = transfer(spread(2_c_int8_t, 1, c_sizeof(values)), values)
         call get_reference_solver_values(values)
         name = ref_character_from_c(name_c)
         select case (name)
@@ -749,8 +753,11 @@ contains
         type(solver_state_type_c) :: values
         character(len=:), allocatable :: name
 
-        ! export reference values and select field by name
+        ! export reference values into a state filled with bytes that differ from both
+        ! fills of the layout tests, so that a field the export does not set differs
+        ! from what they read in both, and select field by name
         reference_state_field = 0.0_c_rp
+        values = transfer(spread(2_c_int8_t, 1, c_sizeof(values)), values)
         call get_reference_solver_state_values(values)
         name = ref_character_from_c(name_c)
         select case (name)
