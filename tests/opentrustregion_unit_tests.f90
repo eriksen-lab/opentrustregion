@@ -6801,18 +6801,18 @@ contains
         space_small = identity_matrix(2_ip)
 
         ! perform Gram-Schmidt orthogonalization and determine if function correctly
-        ! returns an error and prints an error message
+        ! returns the linear dependence on a space spanning the whole vector space
+        ! without printing an error message
         call setup_error_logging(settings, context)
         call gram_schmidt(vector_small, space_small, settings, error)
-        if (error /= 1) then
-            write(stderr, *) "test_gram_schmidt failed: No error returned during "// &
-                "orthogonalization when number of vectors is larger than dimension "// &
-                "of vector space."
+        if (error /= error_gram_schmidt_lin_dep) then
+            write(stderr, *) "test_gram_schmidt failed: Linear dependence not "// &
+                "returned for a space spanning the whole vector space."
             test_gram_schmidt = .false.
         end if
-        if (len_trim(context%log_message) == 0) then
-            write(stderr, *) "test_gram_schmidt failed: No error message printed "// &
-                "when number of vectors is larger than dimension of vector space."
+        if (len_trim(context%log_message) /= 0) then
+            write(stderr, *) "test_gram_schmidt failed: Error message printed for "// &
+                "a space spanning the whole vector space."
             test_gram_schmidt = .false.
         end if
 
