@@ -561,7 +561,7 @@ contains
                 test_context => context
                 if (.not. allocated(test_context%log_message)) &
                     test_context%log_message = ""
-                test_context%log_message = test_context%log_message//trim(message)
+                test_context%log_message = test_context%log_message//message
             end select
         end if
 
@@ -7874,8 +7874,9 @@ contains
         end if
 
         ! check that a message longer than a line is split into several lines which
-        ! together reproduce the message, each line is logged with a leading space,
-        ! the logging function counts its calls in the host context
+        ! together reproduce the message, each line is logged with a leading space and
+        ! without trailing blanks, the logging function counts its calls in the host
+        ! context
         context%log_message = ""
         context%n_calls = 0
         call print_message(settings, repeat("This is a long test message. ", 8), &
