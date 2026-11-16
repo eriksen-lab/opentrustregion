@@ -1884,7 +1884,8 @@ class PyIntegrationTests(unittest.TestCase):
         """
         this function checks that every field of the Python settings structures,
         including the nested stability settings, is read back under its own name from
-        settings whose fields Fortran sets one by one to the reference values
+        settings whose fields Fortran sets one by one to the reference values, filled
+        with zero and then with one bytes before
         """
         test_passed = True
 
@@ -1914,27 +1915,31 @@ class PyIntegrationTests(unittest.TestCase):
                     print(f" test_settings_layout failed: Field {name} misplaced.")
                     test_passed = False
 
-        # check that every other field is read back under its own name
-        settings_c = SolverSettings.c_struct()
-        lib.get_reference_solver_values(byref(settings_c), None)
-        for struct, prefix in [
-            (settings_c, ""),
-            (settings_c.stability_settings, "stability_settings."),
-        ]:
-            for name, field_type in struct._fields_:
-                if field_type == c_bool or field_type == StabilitySettings.c_struct:
-                    continue
-                value = getattr(struct, name)
-                if field_type == c_void_p:
-                    value = value or 0
-                elif issubclass(field_type, Array):
-                    value = value.decode()
-                if value != reference(prefix + name, field_type):
-                    print(
-                        f" test_settings_layout failed: Field {prefix + name} "
-                        "misplaced."
-                    )
-                    test_passed = False
+        # check that every other field is read back under its own name, from settings
+        # filled with zero and then with one bytes before, so that no reference value
+        # can match bytes Fortran did not write
+        for fill in (0, 1):
+            settings_c = SolverSettings.c_struct()
+            memset(addressof(settings_c), fill, sizeof(settings_c))
+            lib.get_reference_solver_values(byref(settings_c), None)
+            for struct, prefix in [
+                (settings_c, ""),
+                (settings_c.stability_settings, "stability_settings."),
+            ]:
+                for name, field_type in struct._fields_:
+                    if field_type == c_bool or field_type == StabilitySettings.c_struct:
+                        continue
+                    value = getattr(struct, name)
+                    if field_type == c_void_p:
+                        value = value or 0
+                    elif issubclass(field_type, Array):
+                        value = value.decode()
+                    if value != reference(prefix + name, field_type):
+                        print(
+                            f" test_settings_layout failed: Field {prefix + name} "
+                            "misplaced."
+                        )
+                        test_passed = False
         self.assertTrue(test_passed, "test_settings_layout failed")
         print(" test_settings_layout PASSED")
 
@@ -1942,25 +1947,32 @@ class PyIntegrationTests(unittest.TestCase):
         """
         this function checks that every field of the Python state structures,
         including the nested stability check state, is read back under its own name
-        from a state whose fields Fortran sets one by one to the reference values
+        from a state whose fields Fortran sets one by one to the reference values,
+        filled with zero and then with one bytes before
         """
         test_passed = True
 
-        # check that every field is read back under its own name
-        state_c = SolverState.c_struct()
-        lib.get_reference_solver_state_values(byref(state_c))
-        for struct, prefix in [
-            (state_c, ""),
-            (state_c.stability_state, "stability_state."),
-        ]:
-            for name, field_type in struct._fields_:
-                if field_type == StabilityState.c_struct:
-                    continue
-                if getattr(struct, name) != reference_state(prefix + name, field_type):
-                    print(
-                        f" test_state_layout failed: Field {prefix + name} misplaced."
-                    )
-                    test_passed = False
+        # check that every field is read back under its own name, from a state filled
+        # with zero and then with one bytes before, so that no reference value can
+        # match bytes Fortran did not write
+        for fill in (0, 1):
+            state_c = SolverState.c_struct()
+            memset(addressof(state_c), fill, sizeof(state_c))
+            lib.get_reference_solver_state_values(byref(state_c))
+            for struct, prefix in [
+                (state_c, ""),
+                (state_c.stability_state, "stability_state."),
+            ]:
+                for name, field_type in struct._fields_:
+                    if field_type == StabilityState.c_struct:
+                        continue
+                    value = getattr(struct, name)
+                    if value != reference_state(prefix + name, field_type):
+                        print(
+                            f" test_state_layout failed: Field {prefix + name} "
+                            "misplaced."
+                        )
+                        test_passed = False
         self.assertTrue(test_passed, "test_state_layout failed")
         print(" test_state_layout PASSED")
 

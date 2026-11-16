@@ -575,50 +575,55 @@ bool test_settings_layout(void) {
     }
   }
 
-  /* check that every other field is read back under its own name */
-  solver_settings_type s = {0};
-  get_reference_solver_values(&s, NULL);
-  ok &= check_field((uintptr_t)s.precond, "precond");
-  ok &= check_field((uintptr_t)s.project, "project");
-  ok &= check_field((uintptr_t)s.get_extra_trial_vectors, "get_extra_trial_vectors");
-  ok &= check_field((uintptr_t)s.conv_check, "conv_check");
-  ok &= check_field((uintptr_t)s.logger, "logger");
-  ok &= check_field((uintptr_t)s.context, "context");
-  ok &= check_field(s.conv_tol, "conv_tol");
-  ok &= check_field(s.start_trust_radius, "start_trust_radius");
-  ok &= check_field(s.global_red_factor, "global_red_factor");
-  ok &= check_field(s.local_red_factor, "local_red_factor");
-  ok &= check_field(s.n_random_trial_vectors, "n_random_trial_vectors");
-  ok &= check_field(s.n_extra_trial_vectors, "n_extra_trial_vectors");
-  ok &= check_field(s.n_macro, "n_macro");
-  ok &= check_field(s.n_micro, "n_micro");
-  ok &= check_field(s.jacobi_davidson_start, "jacobi_davidson_start");
-  ok &= check_field(s.seed, "seed");
-  ok &= check_field(s.verbose, "verbose");
-  ok &= check_keyword(s.subsystem_solver, "subsystem_solver");
+  /* check that every other field is read back under its own name, from settings
+   * filled with zero and then with one bytes before, so that no reference value can
+   * match bytes the library did not write */
+  for (int fill = 0; fill < 2; fill++) {
+    solver_settings_type s;
+    memset(&s, fill, sizeof(s));
+    get_reference_solver_values(&s, NULL);
+    ok &= check_field((uintptr_t)s.precond, "precond");
+    ok &= check_field((uintptr_t)s.project, "project");
+    ok &= check_field((uintptr_t)s.get_extra_trial_vectors, "get_extra_trial_vectors");
+    ok &= check_field((uintptr_t)s.conv_check, "conv_check");
+    ok &= check_field((uintptr_t)s.logger, "logger");
+    ok &= check_field((uintptr_t)s.context, "context");
+    ok &= check_field(s.conv_tol, "conv_tol");
+    ok &= check_field(s.start_trust_radius, "start_trust_radius");
+    ok &= check_field(s.global_red_factor, "global_red_factor");
+    ok &= check_field(s.local_red_factor, "local_red_factor");
+    ok &= check_field(s.n_random_trial_vectors, "n_random_trial_vectors");
+    ok &= check_field(s.n_extra_trial_vectors, "n_extra_trial_vectors");
+    ok &= check_field(s.n_macro, "n_macro");
+    ok &= check_field(s.n_micro, "n_micro");
+    ok &= check_field(s.jacobi_davidson_start, "jacobi_davidson_start");
+    ok &= check_field(s.seed, "seed");
+    ok &= check_field(s.verbose, "verbose");
+    ok &= check_keyword(s.subsystem_solver, "subsystem_solver");
 
-  /* check the nested stability settings, which share their type with the settings
-   * of a standalone stability check */
-  stability_settings_type ss = s.stability_settings;
-  ok &= check_field((uintptr_t)ss.precond, "stability_settings.precond");
-  ok &= check_field((uintptr_t)ss.project, "stability_settings.project");
-  ok &= check_field((uintptr_t)ss.get_extra_trial_vectors,
-                    "stability_settings.get_extra_trial_vectors");
-  ok &= check_field((uintptr_t)ss.conv_check, "stability_settings.conv_check");
-  ok &= check_field((uintptr_t)ss.logger, "stability_settings.logger");
-  ok &= check_field((uintptr_t)ss.context, "stability_settings.context");
-  ok &= check_field(ss.conv_tol, "stability_settings.conv_tol");
-  ok &= check_field(ss.stability_thresh, "stability_settings.stability_thresh");
-  ok &= check_field(ss.n_random_trial_vectors,
-                    "stability_settings.n_random_trial_vectors");
-  ok &=
-      check_field(ss.n_extra_trial_vectors, "stability_settings.n_extra_trial_vectors");
-  ok &= check_field(ss.n_iter, "stability_settings.n_iter");
-  ok &=
-      check_field(ss.jacobi_davidson_start, "stability_settings.jacobi_davidson_start");
-  ok &= check_field(ss.seed, "stability_settings.seed");
-  ok &= check_field(ss.verbose, "stability_settings.verbose");
-  ok &= check_keyword(ss.diag_solver, "stability_settings.diag_solver");
+    /* check the nested stability settings, which share their type with the settings
+     * of a standalone stability check */
+    stability_settings_type ss = s.stability_settings;
+    ok &= check_field((uintptr_t)ss.precond, "stability_settings.precond");
+    ok &= check_field((uintptr_t)ss.project, "stability_settings.project");
+    ok &= check_field((uintptr_t)ss.get_extra_trial_vectors,
+                      "stability_settings.get_extra_trial_vectors");
+    ok &= check_field((uintptr_t)ss.conv_check, "stability_settings.conv_check");
+    ok &= check_field((uintptr_t)ss.logger, "stability_settings.logger");
+    ok &= check_field((uintptr_t)ss.context, "stability_settings.context");
+    ok &= check_field(ss.conv_tol, "stability_settings.conv_tol");
+    ok &= check_field(ss.stability_thresh, "stability_settings.stability_thresh");
+    ok &= check_field(ss.n_random_trial_vectors,
+                      "stability_settings.n_random_trial_vectors");
+    ok &= check_field(ss.n_extra_trial_vectors,
+                      "stability_settings.n_extra_trial_vectors");
+    ok &= check_field(ss.n_iter, "stability_settings.n_iter");
+    ok &= check_field(ss.jacobi_davidson_start,
+                      "stability_settings.jacobi_davidson_start");
+    ok &= check_field(ss.seed, "stability_settings.seed");
+    ok &= check_field(ss.verbose, "stability_settings.verbose");
+    ok &= check_keyword(ss.diag_solver, "stability_settings.diag_solver");
+  }
 
   return ok;
 }
@@ -642,35 +647,41 @@ bool test_state_layout(void) {
   if (!ok)
     return false;
 
-  /* check that every field is read back under its own name */
-  solver_state_type s = {0};
-  get_reference_solver_state_values(&s);
-  if (!is_c_bool(&s.max_precision_reached)) {
-    fprintf(stderr, "test_state_layout failed: Field max_precision_reached not stored "
-                    "as a C bool.\n");
-    ok = false;
-  } else {
-    ok &= check_state_field(s.max_precision_reached, "max_precision_reached");
-  }
-  ok &= check_state_field(s.func, "func");
-  ok &= check_state_field(s.grad_rms, "grad_rms");
-  ok &= check_state_field(s.trust_radius, "trust_radius");
-  ok &= check_state_field(s.relative_residual, "relative_residual");
-  ok &= check_state_field(s.level_shift, "level_shift");
-  ok &= check_state_field(s.step_size, "step_size");
-  ok &= check_state_field(s.macro_iteration, "macro_iteration");
-  ok &= check_state_field(s.micro_iteration, "micro_iteration");
-  ok &= check_state_field(s.jacobi_davidson_iteration, "jacobi_davidson_iteration");
-  ok &= check_state_field(s.n_update_orbs, "n_update_orbs");
-  ok &= check_state_field(s.n_obj_func, "n_obj_func");
-  ok &= check_state_field(s.n_hess_x, "n_hess_x");
+  /* check that every field is read back under its own name, from a state filled with
+   * zero and then with one bytes before, so that no reference value can match bytes
+   * the library did not write */
+  for (int fill = 0; fill < 2; fill++) {
+    solver_state_type s;
+    memset(&s, fill, sizeof(s));
+    get_reference_solver_state_values(&s);
+    if (!is_c_bool(&s.max_precision_reached)) {
+      fprintf(stderr,
+              "test_state_layout failed: Field max_precision_reached not stored "
+              "as a C bool.\n");
+      ok = false;
+    } else {
+      ok &= check_state_field(s.max_precision_reached, "max_precision_reached");
+    }
+    ok &= check_state_field(s.func, "func");
+    ok &= check_state_field(s.grad_rms, "grad_rms");
+    ok &= check_state_field(s.trust_radius, "trust_radius");
+    ok &= check_state_field(s.relative_residual, "relative_residual");
+    ok &= check_state_field(s.level_shift, "level_shift");
+    ok &= check_state_field(s.step_size, "step_size");
+    ok &= check_state_field(s.macro_iteration, "macro_iteration");
+    ok &= check_state_field(s.micro_iteration, "micro_iteration");
+    ok &= check_state_field(s.jacobi_davidson_iteration, "jacobi_davidson_iteration");
+    ok &= check_state_field(s.n_update_orbs, "n_update_orbs");
+    ok &= check_state_field(s.n_obj_func, "n_obj_func");
+    ok &= check_state_field(s.n_hess_x, "n_hess_x");
 
-  /* the nested state, which also describes a standalone stability check state */
-  stability_state_type ss = s.stability_state;
-  ok &= check_state_field(ss.min_eigval, "stability_state.min_eigval");
-  ok &= check_state_field(ss.residual_rms, "stability_state.residual_rms");
-  ok &= check_state_field(ss.iteration, "stability_state.iteration");
-  ok &= check_state_field(ss.n_hess_x, "stability_state.n_hess_x");
+    /* the nested state, which also describes a standalone stability check state */
+    stability_state_type ss = s.stability_state;
+    ok &= check_state_field(ss.min_eigval, "stability_state.min_eigval");
+    ok &= check_state_field(ss.residual_rms, "stability_state.residual_rms");
+    ok &= check_state_field(ss.iteration, "stability_state.iteration");
+    ok &= check_state_field(ss.n_hess_x, "stability_state.n_hess_x");
+  }
 
   return ok;
 }

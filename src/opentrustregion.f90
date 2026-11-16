@@ -2290,10 +2290,11 @@ contains
         !
         ! this subroutine orthonormalizes a vector with respect to a vector space,
         ! which keeps a vector within the range of the projection if the vector and the
-        ! space lie within it, so that neither has to be projected again; this
-        ! subroutine can additionally also return a linear transformation of the
-        ! orthogonalized vector if the linear transformations of the vector and the
-        ! vector space are provided
+        ! space lie within it, so that neither has to be projected again, and returns a
+        ! vector linearly dependent on the space as error_gram_schmidt_lin_dep without
+        ! a message; this subroutine can additionally also return a linear
+        ! transformation of the orthogonalized vector if the linear transformations of
+        ! the vector and the vector space are provided
         !
         real(rp), intent(inout) :: vector(:)
         real(rp), intent(in) :: space(:, :)
@@ -2324,11 +2325,13 @@ contains
                               "numerically zero.", verbosity_error, .true.)
             error = 1
             return
-        else if (n_vectors > n_param - 1) then
-            call settings%log("Number of vectors in Gram-Schmidt procedure larger "// &
-                              "than dimension of vector space.", verbosity_error, &
-                              .true.)
-            error = 1
+        end if
+
+        ! a space spanning the whole vector space leaves no direction to add, which the
+        ! projection below cannot reliably tell from its rounding errors for many
+        ! vectors
+        if (n_vectors >= n_param) then
+            error = error_gram_schmidt_lin_dep
             return
         end if
 
@@ -2865,7 +2868,7 @@ contains
             call split_string_by_space(message, max_length, substrings)
             if (associated(self%logger)) then
                 do i = 1, size(substrings)
-                    call self%logger(" "//substrings(i), self%context)
+                    call self%logger(" "//trim(substrings(i)), self%context)
                 end do
             else
                 if (.not. present(error)) then
@@ -2876,7 +2879,7 @@ contains
                     out_unit = stderr
                 end if
                 do i = 1, size(substrings)
-                    write(out_unit, '(A)') " "//substrings(i)
+                    write(out_unit, '(A)') " "//trim(substrings(i))
                 end do
             end if
             deallocate(substrings)
