@@ -6657,10 +6657,9 @@ contains
                                         error_gram_schmidt_lin_dep
 
         type(solver_settings_type) :: settings
-        real(rp) :: vector(n_param), lin_trans_vector(n_param), vector_small(2), &
-                    space(n_param, 2), symm_matrix(n_param, n_param), &
-                    lin_trans_space(n_param, 2), space_small(2, 2), eigvals(n_param), &
-                    eigvecs(n_param, n_param)
+        real(rp) :: vector(n_param), lin_trans_vector(n_param), space(n_param, 2), &
+                    symm_matrix(n_param, n_param), lin_trans_space(n_param, 2), &
+                    eigvals(n_param), eigvecs(n_param, n_param), noise(n_param, n_param)
         integer(ip) :: error
         type(test_context_type), target :: context
 
@@ -6796,15 +6795,20 @@ contains
             test_gram_schmidt = .false.
         end if
 
-        ! define vector in space that is already complete
-        call random_number(vector_small)
-        space_small = identity_matrix(2_ip)
+        ! define vector and a space spanning the whole vector space, which is
+        ! orthonormal only to rounding errors larger than the projection resolves, as a
+        ! reduced space built over many iterations, so that projecting the vector onto
+        ! it leaves a residue that the linear dependence check does not detect
+        call random_number(vector)
+        call ref_symm_mat_diag(generate_random_symm_matrix(n_param), eigvals, eigvecs)
+        call random_number(noise)
+        eigvecs = eigvecs + 1e-12_rp * noise
 
         ! perform Gram-Schmidt orthogonalization and determine if function correctly
         ! returns the linear dependence on a space spanning the whole vector space
         ! without printing an error message
         call setup_error_logging(settings, context)
-        call gram_schmidt(vector_small, space_small, settings, error)
+        call gram_schmidt(vector, eigvecs, settings, error)
         if (error /= error_gram_schmidt_lin_dep) then
             write(stderr, *) "test_gram_schmidt failed: Linear dependence not "// &
                 "returned for a space spanning the whole vector space."
