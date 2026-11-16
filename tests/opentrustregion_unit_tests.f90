@@ -561,7 +561,7 @@ contains
                 test_context => context
                 if (.not. allocated(test_context%log_message)) &
                     test_context%log_message = ""
-                test_context%log_message = test_context%log_message//trim(message)
+                test_context%log_message = test_context%log_message//message
             end select
         end if
 
@@ -7847,6 +7847,8 @@ contains
         use opentrustregion_core, only: solver_settings_type, print_message, &
                                         verbosity_debug, verbosity_warning
 
+        character(len=*), parameter :: long_message = &
+            repeat("This is a long test message. ", 8)
         type(solver_settings_type) :: settings
         type(test_context_type), target :: context
 
@@ -7857,9 +7859,11 @@ contains
         call setup_settings(settings, context)
 
         ! check if logging is correctly performed according to verbosity level when
-        ! logger is provided
+        ! logger is provided, comparing the lengths too since a comparison of strings
+        ! ignores trailing blanks
         call print_message(settings, "This is a test message.", verbosity_warning)
-        if (trim(context%log_message) /= " This is a test message.") then
+        if (context%log_message /= " This is a test message." .or. &
+            len(context%log_message) /= len(" This is a test message.")) then
             write(stderr, *) "test_print_message failed: Log message is not "// &
                 "printed correctly even though it should be according to verbosity "// &
                 "level."
@@ -7874,19 +7878,19 @@ contains
         end if
 
         ! check that a message longer than a line is split into several lines which
-        ! together reproduce the message, each line is logged with a leading space,
-        ! the logging function counts its calls in the host context
+        ! together reproduce the message, each line is logged with a leading space and
+        ! without trailing blanks, the logging function counts its calls in the host
+        ! context
         context%log_message = ""
         context%n_calls = 0
-        call print_message(settings, repeat("This is a long test message. ", 8), &
-                           verbosity_warning)
+        call print_message(settings, long_message, verbosity_warning)
         if (context%n_calls < 2) then
             write(stderr, *) "test_print_message failed: Long message is not split "// &
                 "into several lines."
             test_print_message = .false.
         end if
-        if (context%log_message /= &
-            " "//trim(repeat("This is a long test message. ", 8))) then
+        if (context%log_message /= " "//trim(long_message) .or. &
+            len(context%log_message) /= 1 + len_trim(long_message)) then
             write(stderr, *) "test_print_message failed: Lines of long message do "// &
                 "not reproduce the message."
             test_print_message = .false.

@@ -2848,7 +2848,7 @@ contains
             call split_string_by_space(message, max_length, substrings)
             if (associated(self%logger)) then
                 do i = 1, size(substrings)
-                    call self%logger(" "//substrings(i), self%context)
+                    call self%logger(" "//trim(substrings(i)), self%context)
                 end do
             else
                 if (.not. present(error)) then
@@ -2859,7 +2859,7 @@ contains
                     out_unit = stderr
                 end if
                 do i = 1, size(substrings)
-                    write(out_unit, '(A)') " "//substrings(i)
+                    write(out_unit, '(A)') " "//trim(substrings(i))
                 end do
             end if
             deallocate(substrings)
