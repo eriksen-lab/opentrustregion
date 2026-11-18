@@ -39,7 +39,7 @@ module opentrustregion_core
                            hess_symm_thres = 1e-12_rp, residual_norm_floor = 1e-12_rp, &
                            level_shift_local_thres = 1e-12_rp, &
                            newton_eigval_thresh = -1e-5_rp, &
-                           func_resolution_safety_factor = 10.0_rp
+                           func_resolution_safety_factor = 1e2_rp
 
     ! define verbosity levels
     integer(ip), parameter :: verbosity_silent = 0, verbosity_error = 1, &
@@ -329,8 +329,10 @@ contains
         ! initialize stability boolean
         stable = .true.
 
-        ! no step whose function change can not be resolved has been taken yet
+        ! no step whose function change can not be resolved has been taken yet, so
+        ! there is no gradient norm such a step has to lower either
         unresolved_step = .false.
+        last_grad_norm = huge(1.0_rp)
 
         ! initialize random number generator
         call init_rng(local_settings%seed)
